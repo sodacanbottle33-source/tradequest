@@ -1,0 +1,24 @@
+// The trading fee. Only MEMECOIN orders pay one (stocks do not), and only in Career: a 1v1 match has no fee, because both players start
+// equal and are scored on the published price. docs/world.md §6.6.
+//
+// ONE number, changed here and nowhere else: MEME_FEE_BPS, in basis points (hundredths of a percent) of the order's value.
+//   50 = 0.5 %.  Set it to 0 to turn the memecoin fee off.
+//
+//   • It is paid on EVERY memecoin order: buying, selling, shorting, covering, and the closing the market does by itself when a
+//     stop-loss or take-profit is reached.
+//   • The market's own liquidation (the margin is gone) carries no fee: the player has already lost everything he put in.
+//   • Opening a position (a buy, or a sell that opens a short) pays the fee ON TOP of the margin, out of the player's cash. Closing one
+//     (a sell, or a buy that covers a short) pays it OUT OF the money that comes back. It never takes more than that: a position that
+//     comes back with nothing pays no fee.
+//   • The fee is measured on the VALUE of the shares traded (what the book fills them for), not on the margin: a 50x order of $10 of cash
+//     is a $500 order and pays 0.5 % of $500.
+//   • The fee is rounded UP to a whole cent, so any real order pays at least 1 cent. It is not paid to anyone; it just leaves the game.
+
+/** The memecoin trading fee in basis points of the order's value (50 = 0.5 %). */
+export const MEME_FEE_BPS = 50;
+
+/** The fee in whole cents on an order worth `totalCents`, rounded UP. BigInt keeps it exact however large the order is. */
+export function feeOf(totalCents: number, bps: number): number {
+  if (!(bps > 0) || !(totalCents > 0)) return 0;
+  return Number((BigInt(totalCents) * BigInt(bps) + BigInt(9_999)) / BigInt(10_000));
+}

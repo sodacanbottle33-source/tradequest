@@ -1,0 +1,5326 @@
+﻿
+===== FILE: docs\dependencies.md =====
+
+# Dependencies and licences
+
+Check this list whenever a dependency is added. All current dependencies are free and open source; none are needed at runtime except React.
+
+| Package | Used for | Runtime? | Licence |
+|---------|----------|----------|---------|
+| react, react-dom | User interface | Yes | MIT |
+| vite | Dev server and build | No (dev only) | MIT |
+| @vitejs/plugin-react | React support for Vite | No | MIT |
+| vitest | Automated tests | No | MIT |
+| typescript | Type checking | No | Apache-2.0 |
+| @types/react, @types/react-dom, @types/node | Type definitions | No | MIT |
+
+Notes:
+
+- **No chart library.** The candlestick chart is a small hand-written SVG component (`src/ui/CandleChart.tsx`), so no TradingView attribution or extra licence is needed for Milestone 1.
+- **No external fonts, APIs or data sources.** All prices are generated locally by the TradeQuest engine.
+- `tools/reference_engine.py` uses only the Python standard library.
+- Licences above are the packages' published licences as generally known; confirm in each package's `LICENSE` file under `node_modules/` before any commercial launch.
+
+
+===== FILE: docs\rules.md =====
+
+# TradeQuest â€” Milestone 1 Rules (`docs/rules.md`)
+
+Status: **v0.3 â€” approved for implementation.**
+Scope: Milestone 1 only (single-player, one fictional stock, long-only, turn-based).
+
+Words like **must**, **must not** and **may** are used deliberately. If code and this document disagree, this document wins until it is changed on purpose.
+
+### Changes since v0.2 (clarifications only â€” no design changes)
+- Â§5.1: Mulberry32 may use the bitwise operators and `Math.imul` its implementation needs; the exact reference implementation is now written out.
+- Â§5.6: golden values must come from an independent reference implementation, never from the code under test.
+- Â§3.4â€“3.6: negative display values (percentages, P&L) round their **magnitude** half-up and then apply the sign. Fixes a contradiction: v0.2 said every rounded value was non-negative, but a return percentage can be negative.
+- Â§6.2: "whole positive number" defined exactly (digits only, no leading zero).
+- Â§4.7: actions that are not allowed in the current state (e.g. Next after the round is finished) return the state unchanged.
+
+### Changes since v0.1
+- Added 10 **history candles** before the 60 playable candles (70 candles generated in total). Timeline (Â§4), draw order (Â§5.3) and indexing changed accordingly.
+- The first order can now be submitted while viewing the last history candle and fills at the open of the first playable candle.
+- Resolved open questions 1, 2, 4 and the news question (Â§11). Replacing a pending order now shows a notice (Â§6.4).
+
+---
+
+## 1. Locked decisions
+
+| # | Decision |
+|---|----------|
+| D1 | Turn-based market. The player clicks **Next** to reveal one candle at a time. |
+| D2 | Whole shares only. The fictional stock's first price is between $20.00 and $50.00. |
+| D3 | Long positions only: buy shares, sell shares you own. No short selling, no leverage, no fees. |
+| D4 | All money and prices are stored as **integer cents**. Rounding rules are in Â§3. |
+| D5 | Orders fill at the **open of the next candle**, never at a price already shown. |
+| D6 | **10 history candles** are shown before the round. They give context only and can never be traded at. |
+| D7 | The round has exactly **60 playable candles**. Any open position is closed at the final close for the results screen. |
+| D8 | An order the player cannot afford at the fill price is **rejected entirely** (no partial fills). |
+| D9 | At most **one pending order**. Submitting a new one replaces it, and the player is told. |
+| D10 | Milestone 1 uses a **plain random walk**: no news, no events. |
+
+---
+
+## 2. Parameters
+
+Values marked *tunable* are first guesses to be adjusted through playtesting. Changing any engine parameter changes the market, so it requires an engine-version bump (Â§5.6).
+
+| Name | Value | Notes |
+|------|-------|-------|
+| `START_CASH` | 100000 | cents = $1,000.00 |
+| `HISTORY_LENGTH` | 10 | history candles, indices 1â€“10 |
+| `ROUND_LENGTH` | 60 | playable candles, indices 11â€“70 |
+| `TOTAL_CANDLES` | 70 | `HISTORY_LENGTH + ROUND_LENGTH` |
+| `FIRST_PLAYABLE` | 11 | index of the first playable candle |
+| `LAST_INDEX` | 70 | index of the last candle |
+| `START_PRICE_MIN` | 2000 | cents = $20.00 (open of candle 1) |
+| `START_PRICE_MAX` | 5000 | cents = $50.00 (open of candle 1) |
+| `MIN_PRICE` | 100 | cents = $1.00; no price may go below this |
+| `MAX_ORDER_QTY` | 1000000 | input sanity limit |
+| `DRIFT` | 0 | *tunable*; average return per candle |
+| `BODY_SIGMA` | 0.015 | *tunable*; typical openâ†’close move (1.5%) |
+| `GAP_SIGMA` | 0.002 | *tunable*; typical closeâ†’next-open gap (0.2%) |
+| `MAX_MOVE` | 0.10 | *tunable*; openâ†’close return clamped to Â±10% |
+| `MAX_GAP` | 0.02 | *tunable*; gap clamped to Â±2% |
+| `WICK_MAX` | 0.01 | *tunable*; wicks extend up to 1% beyond the body |
+
+Note: the $20â€“$50 range applies to the open of **candle 1** (the first history candle). The first playable candle will usually be close to that range but is not guaranteed to be inside it.
+
+---
+
+## 3. Money, units and rounding
+
+1. Every price, cash balance, cost basis, proceeds and P&L value is an **integer number of cents**.
+2. Share quantities are **integers â‰¥ 0**.
+3. Because price Ã— quantity is integer Ã— integer, **buying and selling never needs rounding**. Rounding happens only in the three places below.
+4. **Rounding rule (`roundHalfUp`)**: round to the nearest integer; exact halves round **up** (toward +âˆž). It is only ever applied to **non-negative** values.
+   - For a ratio of integers `a / b` (with `a â‰¥ 0`, `b > 0`), compute with integer math: `floor((2Â·a + b) / (2Â·b))`. Do not divide in floating point first.
+   - **Negative display values** (a negative return %, for example) are formatted by rounding the **magnitude** with `roundHalfUp` and then putting the minus sign back. So âˆ’0.005% shows as "âˆ’0.01%", the mirror image of +0.005% â†’ "0.01%". A value that rounds to zero shows without a sign ("0.00%").
+5. **Where rounding is used:**
+   - (a) **Price generation** (Â§5): each generated price is rounded to whole cents.
+   - (b) **Cost basis removed on a partial sell** (Â§7.3).
+   - (c) **Display only**: average entry price and percentage values. Displayed values are never fed back into calculations.
+6. Dollar display: `cents / 100` shown with exactly 2 decimals (e.g. 253336 â†’ "$2,533.36"). Percentages shown with 2 decimals.
+7. All integers must stay within JavaScript's safe-integer range. With the parameters above, values stay far below that limit; the code should still assert `Number.isSafeInteger` on stored values in development.
+
+---
+
+## 4. Round timeline and order of events
+
+### 4.1 Indexing
+
+There is **one global candle index `i` from 1 to 70**. All code uses this index.
+
+| Indices | Kind | Tradable? |
+|---------|------|-----------|
+| 1â€“10 | History candles | **Never.** No order can fill at any price of these candles. |
+| 11â€“70 | Playable candles | Orders fill at their **open**. End-of-round liquidation uses the **close of 70**. |
+
+For display, a playable candle shows its **round number** `r = i âˆ’ 10` ("Candle 1 of 60" â€¦ "Candle 60 of 60"). History candles are labelled "History" and are visually distinct on the chart (e.g. dimmed or behind a "Round starts" divider).
+
+### 4.2 Terms
+
+- **Current index `k`**: the newest candle the player can see (10 to 70).
+- **Visible candles**: candles 1..k, all four values (open, high, low, close).
+- **Mark price**: close of candle k. Used for unrealized P&L and equity.
+- **Pending order**: at most one order waiting to be filled on the next advance.
+
+### 4.3 Round start
+
+1. A seed is chosen (Â§8). All 70 candles are generated from it (Â§5).
+2. Account is set to: cash = `START_CASH`, shares = 0, cost basis = 0, realized P&L = 0, no trades, no pending order, no notices.
+3. **Candles 1â€“10 (all history) are shown immediately and in full.** k = 10. Mark price = closeâ‚â‚€. The round counter shows "Round starts next candle".
+4. The player may now submit an order. It fills at the **open of candle 11** (the first playable candle) at the earliest.
+
+So: the first decision is made with 10 candles of context, and the first possible fill is the open of the first playable candle â€” a price the player has not seen.
+
+### 4.4 Each turn (while 10 â‰¤ k â‰¤ 69)
+
+The player may, in any order and as many times as they like:
+
+- view candles 1..k and their account;
+- submit an order (Â§6), which becomes the pending order;
+- cancel the pending order;
+- submit a new order, which **replaces** the pending order (Â§6.4).
+
+Then the player clicks **Next**. The advance runs these steps **in this exact order**:
+
+1. Check k < 70. (If not, Next is not allowed â€” see Â§4.5.)
+2. Read candle k+1 from the generated sequence. It is not yet visible.
+3. If there is a pending order, process it at **fill price = openâ‚k+1â‚Ž**:
+   - re-validate it (Â§6.3);
+   - if valid, fill it and update the account (Â§7);
+   - if invalid, reject it, leave the account unchanged and show the player why.
+4. Clear the pending order (it was filled or rejected; it never carries over).
+5. Set k = k + 1. Candle k is now visible in full.
+6. Recompute mark price, unrealized P&L and equity at closeâ‚–.
+
+Consequences:
+- Because k starts at 10, the first advance reveals candle 11, so **every fill is at an index from 11 to 70**. History candles can never be traded at.
+- There are exactly **60 advances** in a round and at most **one player fill per advance** (so at most 60 player trades).
+- A fill price is always a price the player had **not** seen when they submitted the order.
+- The player's actions can never change any candle (Â§5.5).
+
+### 4.5 The last candle (k = 70)
+
+1. When k = 70, **order entry is disabled**: no submit, no Next. There is no candle 71 to fill at.
+2. There cannot be a pending order at this point (an order submitted at k = 69 was filled or rejected while advancing to 70).
+3. The only available action is **Finish round**.
+
+### 4.6 Finish round (end-of-round liquidation)
+
+1. If shares > 0, the engine sells **all** shares at **closeâ‚‡â‚€** using the normal sell accounting (Â§7.3) and records it as a trade of type `liquidation`.
+2. If shares = 0, no liquidation trade is recorded.
+3. The round state becomes `FINISHED`. No further actions change the account; Finish is idempotent (doing it twice changes nothing).
+4. Equity immediately before and after liquidation is identical (shares Ã— closeâ‚‡â‚€ becomes cash).
+5. The results screen shows: seed, final equity, total return in $ and %, total realized P&L, number of player trades, and the full trade history.
+
+> Liquidating at closeâ‚‡â‚€ is the one place a fill uses a price the player has already seen. This is acceptable because it is automatic, not a player decision, and only used to score the round.
+
+### 4.7 Round states
+
+`PLAYING` (k from 10 to 70) â†’ `FINISHED` (after Finish round). Reset (Â§9) can be used from either state.
+
+An action that is not available in the current state â€” Next at k = 70, Finish before k = 70, Cancel with no pending order, or any order action after `FINISHED` â€” **returns the state unchanged** (the UI disables these controls, so no notice is needed). Order submissions that fail validation while `PLAYING` (Â§6.2) leave the account and pending order unchanged but add a notice explaining why.
+
+### 4.8 Timeline summary
+
+| Player sees up to | Player can | Next reveals | A pending order fills at |
+|-------------------|-----------|--------------|--------------------------|
+| k = 10 (last history) | submit / cancel / replace | candle 11 (round 1) | openâ‚â‚ |
+| k = 11 (round 1) | submit / cancel / replace | candle 12 (round 2) | openâ‚â‚‚ |
+| â€¦ | â€¦ | â€¦ | â€¦ |
+| k = 69 (round 59) | submit / cancel / replace | candle 70 (round 60) | openâ‚‡â‚€ |
+| k = 70 (round 60) | Finish round only | â€” | liquidation at closeâ‚‡â‚€ |
+
+---
+
+## 5. Price engine
+
+### 5.1 Seeded random number generator (RNG)
+
+- Use **mulberry32**, a small, well-known 32-bit PRNG. Input: an unsigned 32-bit integer seed. Output: a stream of numbers `u` with 0 â‰¤ u < 1.
+- **Reference implementation** (this exact code is the definition; the bitwise operators `| ^ >>>` and `Math.imul` are required by it and are allowed here â€” they are exact 32-bit integer operations and behave identically in every JavaScript engine):
+
+  ```js
+  // state starts as the seed (unsigned 32-bit integer)
+  function next() {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  ```
+
+- These integer operations are allowed **only inside the RNG**. The candle generator must take every random number from this RNG, in the fixed draw order of Â§5.3.
+- **Why the same seed always gives the same candles:** a PRNG is not truly random. It is a fixed formula that turns an internal state into the next number and then updates the state. The seed is the starting state. Same seed â†’ same starting state â†’ the formula produces the **exact same stream of numbers, in the same order, every time**. If the candle generator (a) uses only that stream, (b) always consumes numbers in the same fixed order, and (c) does the same arithmetic, it must produce the same 70 candles.
+- That determinism breaks if any of these happen, so they are **forbidden** in the engine:
+  - calling `Math.random()`, `Date.now()` or anything else outside the seeded stream;
+  - skipping or adding draws depending on conditions (e.g. "only draw a gap if i > 1", or different draws for history vs playable candles);
+  - letting player actions consume random numbers;
+  - using `Math.exp`, `Math.log`, `Math.sin`, `Math.cos`, `Math.pow`. These may differ in the last bits between browsers, which would matter for multiplayer later. Only `+ âˆ’ Ã— Ã·`, `Math.floor`, `Math.abs`, `Math.min`, `Math.max` are used.
+
+### 5.2 Normal-ish random numbers without `log`/`cos`
+
+`z = (uâ‚ + uâ‚‚ + â€¦ + uâ‚â‚‚) âˆ’ 6`
+
+The sum of 12 uniform numbers has mean 6 and standard deviation 1, so `z` is approximately standard-normal and naturally bounded to [âˆ’6, +6]. Each `z` consumes exactly **12** draws.
+
+### 5.3 Exact generation sequence (fixed)
+
+History and playable candles are generated by **the same loop and the same formulas**. The only difference between them is how the game treats them (Â§4.1).
+
+1. Draw **1** `u` â†’ start price: `START_PRICE_MIN + floor(u Ã— (START_PRICE_MAX âˆ’ START_PRICE_MIN + 1))`.
+2. For each candle **i = 1, 2, â€¦, 70**, in order, draw exactly:
+   1. `zGap` (12 draws)
+   2. `zBody` (12 draws)
+   3. `uUp` (1 draw)
+   4. `uDown` (1 draw)
+
+Draw positions (1-based):
+
+| What | Draws |
+|------|-------|
+| Start price | 1 |
+| Candle i | `2 + 26Â·(iâˆ’1)` to `1 + 26Â·i` |
+| Candle 1 (history) | 2â€“27 |
+| Candle 10 (last history) | 236â€“261 |
+| Candle 11 (first playable) | 262â€“287 |
+| Candle 70 (last) | 1796â€“1821 |
+| **Total per round** | **1821** |
+
+Candle 1 still consumes its `zGap` even though it is not used.
+
+### 5.4 Candle formulas
+
+Let `clamp(x, lo, hi) = min(max(x, lo), hi)`. For candle i:
+
+- **Open**
+  - i = 1: `openâ‚ = startPrice`
+  - i â‰¥ 2: `gap = clamp(GAP_SIGMA Ã— zGap, âˆ’MAX_GAP, +MAX_GAP)`; `openáµ¢ = max(MIN_PRICE, roundHalfUp(closeáµ¢â‚‹â‚ Ã— (1 + gap)))`
+- **Close**
+  - `ret = clamp(DRIFT + BODY_SIGMA Ã— zBody, âˆ’MAX_MOVE, +MAX_MOVE)`
+  - `closeáµ¢ = max(MIN_PRICE, roundHalfUp(openáµ¢ Ã— (1 + ret)))`
+- **High**: `higháµ¢ = roundHalfUp(max(openáµ¢, closeáµ¢) Ã— (1 + uUp Ã— WICK_MAX))`
+- **Low**: `lowáµ¢ = max(MIN_PRICE, roundHalfUp(min(openáµ¢, closeáµ¢) Ã— (1 âˆ’ uDown Ã— WICK_MAX)))`
+
+(Here `roundHalfUp` of a floating-point value is `floor(x + 0.5)`; inputs are positive.)
+
+The gap into candle 11 is generated exactly like every other gap: the first playable open is closeâ‚â‚€ moved by a small random gap.
+
+**Guaranteed properties of every candle** (checked by tests):
+- all four values are integers â‰¥ `MIN_PRICE`;
+- `low â‰¤ min(open, close)` and `high â‰¥ max(open, close)`;
+- open-to-close move within Â±`MAX_MOVE` (before the `MIN_PRICE` floor and rounding);
+- gap from previous close within Â±`MAX_GAP` (before floor and rounding).
+
+### 5.5 Independence from the player
+
+All 70 candles are generated at round start from the seed alone. Trades, cancels, timing and clicks never touch the RNG. Therefore **the same seed gives the same market no matter how the player trades.**
+
+The UI and any state the UI reads must only expose candles 1..k. (In single-player, a determined user could inspect memory with dev tools; that is acceptable for Milestone 1 and is solved later with server-side rounds.)
+
+### 5.6 Engine version
+
+`ENGINE_VERSION = 1`. Any change to the formulas, draw order, candle counts or tunable parameters changes the candles for a given seed and must bump the version. A round is identified by `(ENGINE_VERSION, seed)`.
+
+**Golden values must be independent.** The expected RNG outputs and the candle snapshot used by the tests are produced by a separate reference implementation (`tools/reference_engine.py`, written in Python directly from this spec), never by running the TypeScript code being tested. Hand-computed candles (ENG-13, HIST-01) are worked out on paper from the formulas. If the TypeScript engine and the reference disagree, one of them is wrong and must be investigated â€” the fixture must not simply be regenerated to make a test pass. Regenerating the fixture is only allowed together with an `ENGINE_VERSION` bump.
+
+### 5.7 What this model is (and isn't)
+
+A plain random walk with small gaps â€” no trends, no news, no expectations. That is intentional for Milestone 1: it lets us test trading and accounting on a neutral market. News, expectations and surprises are Milestone 2 and will be added as additional, documented draws (with an engine-version bump).
+
+---
+
+## 6. Orders
+
+### 6.1 Order fields
+
+- `side`: `BUY` or `SELL`
+- `quantity`: integer
+- `submittedAt`: the index k when submitted
+
+### 6.2 Validation at submission
+
+An order is accepted as pending only if **all** of these hold:
+
+1. Round state is `PLAYING` and k < 70.
+2. Quantity is an integer with 1 â‰¤ quantity â‰¤ `MAX_ORDER_QTY`. The input text must consist only of the digits 0â€“9 and must not start with 0 (pattern `^[1-9][0-9]*$`): no decimals, signs, spaces, exponents, leading zeros or empty input.
+3. `SELL`: quantity â‰¤ shares held.
+4. `BUY`: estimated cost `quantity Ã— closeâ‚–` â‰¤ cash. This is only an **estimate**; the UI labels it "Est. cost at last close".
+
+If any check fails, the order is not accepted and the player sees which rule failed. A failed submission does **not** remove an existing pending order.
+
+### 6.3 Validation at fill (authoritative)
+
+Re-checked during advance step 3 with fill price `P = openâ‚k+1â‚Ž`:
+
+- `BUY`: `quantity Ã— P â‰¤ cash`. If not, the **whole order is rejected** â€” no partial fill. Message: "Order rejected: the price opened at $X. This order would cost $Y, but you have $Z."
+- `SELL`: `quantity â‰¤ shares held` (always true in Milestone 1, but checked defensively).
+
+Rejected orders do not appear in trade history; they appear as a notice.
+
+### 6.4 Replacing a pending order
+
+If a valid order is submitted while another is pending, the new order replaces the old one and the player sees a notice, e.g. "Previous order (BUY 5) replaced by BUY 8." Cancelling shows "Order cancelled."
+
+### 6.5 Helper: "Max" button (optional UI)
+
+Fills the quantity box with `floor(cash / closeâ‚–)` for buys, or shares held for sells. Because buys fill at the next open, a max buy can still be rejected if the price gaps up. This is expected and a good teaching moment.
+
+---
+
+## 7. Account accounting
+
+### 7.1 Account state
+
+| Field | Type | Start |
+|-------|------|-------|
+| `cash` | cents | 100000 |
+| `shares` | integer | 0 |
+| `costBasis` | cents â€” total cost of the shares currently held | 0 |
+| `realizedPnl` | cents â€” running total | 0 |
+| `trades` | list | empty |
+
+Average entry price is **not stored**; it is derived (Â§7.4).
+
+### 7.2 Buy fill (quantity q at price P)
+
+- `cost = q Ã— P`
+- `cash -= cost`
+- `shares += q`
+- `costBasis += cost`
+
+### 7.3 Sell fill (quantity q at price P, with q â‰¤ shares)
+
+- `proceeds = q Ã— P`
+- `removedBasis = roundHalfUp(costBasis Ã— q / shares)` (integer formula from Â§3.4, using values **before** this sell)
+- `tradePnl = proceeds âˆ’ removedBasis`
+- `cash += proceeds`
+- `shares -= q`
+- `costBasis -= removedBasis`
+- `realizedPnl += tradePnl`
+
+When q = shares (full close), `removedBasis = costBasis` exactly, so costBasis returns to 0 with no leftover cents.
+
+### 7.4 Derived values
+
+- **Average entry price** (display only): `roundHalfUp(costBasis / shares)` cents; "â€”" when shares = 0.
+- **Position value**: `shares Ã— markPrice`
+- **Unrealized P&L**: `shares Ã— markPrice âˆ’ costBasis`
+- **Equity**: `cash + shares Ã— markPrice`
+- **Total return**: `equity âˆ’ START_CASH`; percentage `(equity âˆ’ START_CASH) / START_CASH Ã— 100` (display only).
+
+### 7.5 Invariants (must always hold)
+
+1. `cash â‰¥ 0`, `shares â‰¥ 0`, `costBasis â‰¥ 0`, all integers.
+2. `shares = 0` â‡” `costBasis = 0`.
+3. **`equity = START_CASH + realizedPnl + unrealizedPnl`**, exactly, to the cent.
+4. `cash = START_CASH âˆ’ Î£(buy costs) + Î£(sell proceeds)`.
+5. Shares held = Î£(bought) âˆ’ Î£(sold).
+6. Every player trade has `candleIndex` between 11 and 70 and `price = openâ‚candleIndexâ‚Ž`; a liquidation trade has `candleIndex = 70` and `price = closeâ‚‡â‚€`.
+
+### 7.6 Trade record
+
+Each fill appends one record:
+
+`id` (1, 2, 3â€¦), `type` (`player` | `liquidation`), `side`, `candleIndex` (global index 11â€“70), `quantity`, `price`, `amount` (cost or proceeds), `tradePnl` (sells only), `cashAfter`, `sharesAfter`. The UI shows the round number (`candleIndex âˆ’ 10`).
+
+### 7.7 Worked example
+
+Start: cash 100000, k = 10.
+
+| Step | Fill | Cash | Shares | Cost basis | Realized | Notes |
+|------|------|------|--------|-----------|----------|-------|
+| 1 | BUY 10 @ 2500 (openâ‚â‚, round 1) | 75000 | 10 | 25000 | 0 | submitted while viewing candle 10 |
+| 2 | BUY 5 @ 2600 (openâ‚â‚‚) | 62000 | 15 | 38000 | 0 | avg shown $25.33 |
+| â€” | mark closeâ‚â‚‚ = 2700 | | | | | unrealized = 40500 âˆ’ 38000 = 2500; equity 102500 âœ“ |
+| 3 | SELL 4 @ 2650 (openâ‚â‚ƒ) | 72600 | 11 | 27867 | 467 | removed = roundHalfUp(38000Ã—4/15 = 10133.33) = 10133 |
+| â€” | mark closeâ‚â‚ƒ = 2650 | | | | | unrealized = 29150 âˆ’ 27867 = 1283; equity 101750 = 100000 + 467 + 1283 âœ“ |
+| 4 | SELL 11 @ 2400 (openâ‚â‚„) | 99000 | 0 | 0 | âˆ’1000 | removed 27867, tradePnl âˆ’1467 |
+
+Final equity 99000 = 100000 âˆ’ 1000 âœ“.
+
+---
+
+## 8. Seeds
+
+- A new round's seed is a random unsigned 32-bit integer from `crypto.getRandomValues` (the only real randomness; it is outside the engine).
+- The seed is shown on the results screen (and may be shown in a small debug area) so a round can be replayed or a bug reported.
+- Development builds may allow typing a seed manually.
+
+---
+
+## 9. Reset behaviour
+
+- **New round**: new random seed; everything in Â§4.3 is reset; candles 1â€“10 shown, k = 10.
+- **Replay this round**: same seed; everything reset; all 70 candles are identical to the previous attempt.
+- Both are available while `PLAYING` (with a confirmation prompt) and after `FINISHED` (no prompt).
+- Reset discards the pending order, trades and notices from the old round.
+- **No persistence in Milestone 1**: refreshing the page loses the round.
+
+---
+
+## 10. Product rules for Milestone 1
+
+- The stock and company are fictional and the UI shows a visible **SIMULATED** label.
+- The fictional ticker must be checked against real tickers before use (e.g. NOVA has been used as a real NYSE ticker). Milestone 1 uses **Quellaris Energy (QLRX)**; a web search on 2026-10-14 found no real listing under QLRX. Recheck before any public launch.
+- No fees, no shorting, no leverage, no limit/stop orders, no news.
+
+---
+
+## 11. Decisions log and open questions
+
+### Resolved in v0.2
+| Question | Decision |
+|----------|----------|
+| Unaffordable buy at fill | Reject the whole order with a clear message (D8). |
+| Pending order replacement | One pending order; new submission replaces it with a notice (D9). |
+| News in Milestone 1 | No; plain random walk (D10). |
+| History before the round | 10 history candles, not tradable, not counted in the 60 (D6). |
+
+### Still open
+1. **Benchmark on the results screen:** show "buy-and-hold" (max affordable shares bought at openâ‚â‚, held to closeâ‚‡â‚€) for comparison? Cheap and educational; does not affect the engine.
+2. **Tunable values:** the volatility numbers are guesses; expect to change them after the first playtests.
+
+
+===== FILE: docs\test-cases.md =====
+
+# TradeQuest â€” Milestone 1 Test Cases (`docs/test-cases.md`)
+
+Status: **v0.3** â€” companion to `docs/rules.md` v0.3. Section references (Â§) point to rules.md.
+
+Types: **U** = automated unit test, **P** = automated property test (many random seeds/action sequences), **M** = manual UI check.
+
+All money values are in cents unless shown with "$". Candle indices are **global** (1â€“10 history, 11â€“70 playable) unless marked "round".
+
+### General rules for the test suite
+
+- **Independent expected values.** Golden values (RNG-05, ENG-04, HIST-01's snapshot check) come from `tools/reference_engine.py`, a separate Python implementation written from the spec, and are stored in `tests/fixtures/`. Hand-computed cases (ENG-13, ENG-14, HIST-01) are worked out from the formulas and written into the test as literal numbers. **No expected value is ever produced by the TypeScript code under test.**
+- **Reproducible property tests.** Every P test runs from a fixed base seed. When a case fails, the error message must include the market seed and the full action sequence (as JSON) so the failure can be replayed exactly with `replayActions(seed, actions)`.
+- If a test exposes a bug, fix the code â€” do not weaken the test.
+
+### Changes since v0.2
+RNG-05, ENG-04 and the property-test reporting rules clarified (above). FLOW-02 strengthened. PNL-09 and R-09 now follow the negative-display rule of rules.md Â§3.4. Added PNL-12, ORD-21, PROP-01.
+
+### Changes since v0.1
+History candles added: candle counts (70), draw counts (1821), start index (k = 10), first fill (openâ‚â‚), last index (70) and liquidation (closeâ‚‡â‚€) updated. New tests: HIST-01 to HIST-07, FLOW-16 to FLOW-19, ORD-18 to ORD-20.
+
+---
+
+## 1. Rounding helper (Â§3)
+
+| ID | Type | Case | Expected |
+|----|------|------|----------|
+| R-01 | U | `roundHalfUp(7, 2)` (3.5) | 4 |
+| R-02 | U | `roundHalfUp(5, 2)` (2.5) | 3 |
+| R-03 | U | `roundHalfUp(10, 3)` (3.33) | 3 |
+| R-04 | U | `roundHalfUp(20, 3)` (6.67) | 7 |
+| R-05 | U | `roundHalfUp(0, 5)` | 0 |
+| R-06 | U | `roundHalfUp(380000, 15)` (25333.33) | 25333 |
+| R-07 | U | Exact division `roundHalfUp(38000, 1)` | 38000 |
+| R-08 | U | Large values near the documented maximum stay exact (compare against a BigInt calculation) | Equal |
+| R-09 | U | Dollar formatting: 253336 â†’ "$2,533.36"; 5 â†’ "$0.05"; 0 â†’ "$0.00"; âˆ’1467 â†’ "âˆ’$14.67" | As stated |
+
+## 2. Seeded RNG (Â§5.1â€“5.2)
+
+| ID | Type | Case | Expected |
+|----|------|------|----------|
+| RNG-01 | U | Same seed, two generators, first 10,000 outputs | Identical |
+| RNG-02 | U | Every output satisfies 0 â‰¤ u < 1 (10,000 outputs, several seeds) | True |
+| RNG-03 | U | Seeds 1 and 2 | Sequences differ |
+| RNG-04 | U | Seeds 0 and 4294967295 (edge values) | Work, no NaN |
+| RNG-05 | U | First 5 outputs for seed 12345, and outputs for seeds 0 and 4294967295 | Equal to the values produced by `tools/reference_engine.py` (independent implementation), stored as literals in the fixture; never regenerated unless ENGINE_VERSION bumps |
+| RNG-06 | U | Mean of 100,000 outputs | â‰ˆ 0.5 (within 0.01) |
+| RNG-07 | U | `z` helper uses exactly 12 draws and returns values in [âˆ’6, 6] | True |
+| RNG-08 | U | Mean â‰ˆ 0 and std. dev. â‰ˆ 1 for 100,000 `z` values | Within 0.02 |
+
+## 3. Candle generation (Â§5.3â€“5.6)
+
+| ID | Type | Case | Expected |
+|----|------|------|----------|
+| ENG-01 | U | Generate a round | Exactly 70 candles, indexed 1..70 |
+| ENG-02 | U | Same seed twice | Identical 70 candles (deep equality) |
+| ENG-03 | U | Different seeds | Different candles |
+| ENG-04 | U | Golden snapshot: seeds 12345, 1 and 4294967295, ENGINE_VERSION 1 | All 70 candles equal the snapshot produced by `tools/reference_engine.py` (independent implementation) |
+| ENG-05 | U | Draw count for one round | Exactly 1821 RNG draws |
+| ENG-06 | P | 1,000 random seeds: openâ‚ | Integer in [2000, 5000] |
+| ENG-07 | P | 1,000 seeds, every candle (history and playable) | All four values are integers â‰¥ 100 |
+| ENG-08 | P | Every candle | `low â‰¤ min(open, close)` and `high â‰¥ max(open, close)` |
+| ENG-09 | P | Every candle | Openâ†’close return within Â±10% (allowing Â±1 cent rounding, and floor at MIN_PRICE) |
+| ENG-10 | P | Every candle i â‰¥ 2 (including the gap into candle 11) | Gap from closeáµ¢â‚‹â‚ to openáµ¢ within Â±2% (allowing Â±1 cent rounding and floor) |
+| ENG-11 | U | Force extreme negative draws (stubbed RNG returning near-0 values) | Prices floor at 100, never below; low â‰¥ 100 |
+| ENG-12 | U | Force extreme positive draws | Moves capped at +10% / +2%; no crash, integers |
+| ENG-13 | U | Stubbed RNG with known values â†’ hand-computed candles 1 and 2 | Exact match (verifies formulas and draw order) |
+| ENG-14 | U | Candle 1 consumes its gap draw even though unused | Candle 2 matches hand-computed value from draws 28â€“53 |
+| ENG-15 | U | Engine source does not call `Math.random`, `Date.now`, `Math.exp/log/sin/cos/pow` | Static check / lint rule passes |
+
+## 4. History candles (Â§4.1, Â§4.3, Â§5.3)
+
+| ID | Type | Case | Expected |
+|----|------|------|----------|
+| HIST-01 | U | History and playable candles use the same generator | Candle 11 matches hand-computed value from draws 262â€“287 using closeâ‚â‚€ |
+| HIST-02 | U | Generator has no history/playable branch | Generating 70 candles equals generating candles 1â€“10 then continuing 11â€“70 from the same RNG state |
+| HIST-03 | U | At round start | Candles 1â€“10 visible; k = 10; mark price = closeâ‚â‚€ |
+| HIST-04 | U | Classifier: indices 1â€“10 | `isHistory = true`, not tradable |
+| HIST-05 | U | Classifier: indices 11â€“70 | Playable; round number = index âˆ’ 10 (11 â†’ 1, 70 â†’ 60) |
+| HIST-06 | P | Across many seeds and random action sequences | No trade ever has candleIndex â‰¤ 10 |
+| HIST-07 | M | Chart at round start | History candles visually distinct; "Round starts next candle" shown |
+
+## 5. Round flow and timing (Â§4)
+
+| ID | Type | Case | Expected |
+|----|------|------|----------|
+| FLOW-01 | U | New round | k = 10, state PLAYING, cash 100000, shares 0, no trades, no pending order |
+| FLOW-02 | U | UI-facing data never contains future candles. At start and after every advance, deep-scan the whole object returned by `getView(state)` (the only thing React components receive) | No candle object with index > k; none of the future candle objects appears anywhere in the view (checked by identity); the candle list has exactly k entries; the view has no field holding the full 70-candle list |
+| FLOW-03 | U | Advance once with no order | k = 11 (round 1); account unchanged except marks |
+| FLOW-04 | U | Advance 60 times | k = 70 (round 60) |
+| FLOW-05 | U | Advance at k = 70 | Not allowed; state unchanged |
+| FLOW-06 | U | Submit BUY at k = 10, advance | Fills at openâ‚â‚; trade.candleIndex = 11 |
+| FLOW-07 | U | Submit at any k in 10â€“69, advance | Fill price = openâ‚k+1â‚Ž (test with a seed where openâ‚k+1â‚Ž â‰  closeâ‚–) |
+| FLOW-08 | U | Order filled **before** candle k+1's close is used for marks | After advance: trade price = openâ‚k+1â‚Ž and mark = closeâ‚k+1â‚Ž |
+| FLOW-09 | U | Submit at k = 69, advance | Fills at openâ‚‡â‚€ |
+| FLOW-10 | U | Submit at k = 70 | Rejected: "no next candle"; no pending order |
+| FLOW-11 | U | Pending order after any advance | Always cleared (filled or rejected) |
+| FLOW-12 | U | Submit, cancel, advance | No fill; account unchanged; "Order cancelled" notice |
+| FLOW-13 | U | Submit BUY 5, then BUY 8, advance | Only BUY 8 fills |
+| FLOW-14 | U | At most one player fill per advance | True; at most 60 player trades per round |
+| FLOW-15 | U | Mark price equals closeâ‚– | True at start (closeâ‚â‚€) and after every advance |
+| FLOW-16 | U | Exactly 60 advances are possible per round | 61st advance rejected |
+| FLOW-17 | U | Round counter | Shows "Candle r of 60" with r = k âˆ’ 10 for k â‰¥ 11 |
+| FLOW-18 | M | UI at k = 70 | Buy/Sell/Next disabled; only Finish round enabled |
+| FLOW-19 | M | UI at k = 10 | Order entry enabled; Next reveals round candle 1 |
+
+## 6. Order validation (Â§6)
+
+| ID | Type | Case | Expected |
+|----|------|------|----------|
+| ORD-01 | U | Quantity "0" | Rejected at submission |
+| ORD-02 | U | Quantity "âˆ’3" | Rejected |
+| ORD-03 | U | Quantity "1.5" | Rejected |
+| ORD-04 | U | Quantity "" / " " / "abc" / "1e3" / "+5" / " 5" | All rejected |
+| ORD-05 | U | Quantity "1000001" (above MAX_ORDER_QTY) | Rejected |
+| ORD-06 | U | BUY 1 with enough cash | Accepted as pending |
+| ORD-07 | U | SELL with 0 shares held | Rejected at submission |
+| ORD-08 | U | SELL quantity > shares held | Rejected at submission |
+| ORD-09 | U | SELL quantity = shares held | Accepted |
+| ORD-10 | U | BUY where `qty Ã— closeâ‚– > cash` | Rejected at submission (estimate check) |
+| ORD-11 | U | BUY where `qty Ã— closeâ‚– = cash` exactly | Accepted at submission |
+| ORD-12 | U | BUY accepted, but `qty Ã— openâ‚k+1â‚Ž > cash` at fill (gap up) | Whole order rejected; account unchanged; notice with $X/$Y/$Z; no trade record |
+| ORD-13 | U | BUY where `qty Ã— openâ‚k+1â‚Ž = cash` exactly | Fills; cash becomes 0 |
+| ORD-14 | U | BUY where the price gapped **down** | Fills at the lower open; cost uses open, not the estimate |
+| ORD-15 | U | Rejected order | Not in trade history; shown as a notice |
+| ORD-16 | U | Submit while FINISHED | Rejected |
+| ORD-17 | U | "Max" buy helper | Sets `floor(cash / closeâ‚–)`; 0 when cash < closeâ‚– |
+| ORD-18 | U | First order at k = 10 uses closeâ‚â‚€ for the estimate | Estimate = qty Ã— closeâ‚â‚€ |
+| ORD-19 | U | Replace pending order | Notice "Previous order (BUY 5) replaced by BUY 8" |
+| ORD-20 | U | Invalid submission while an order is pending | Rejected; the existing pending order is kept |
+| ORD-21 | U | Quantity "05" (leading zero) | Rejected (rules.md Â§6.2) |
+
+## 7. Cash, shares and cost basis (Â§7.2â€“7.3)
+
+| ID | Type | Case | Expected |
+|----|------|------|----------|
+| ACC-01 | U | BUY 10 @ 2500 | cash 75000, shares 10, costBasis 25000 |
+| ACC-02 | U | Then BUY 5 @ 2600 | cash 62000, shares 15, costBasis 38000 |
+| ACC-03 | U | Then SELL 4 @ 2650 | proceeds 10600, removedBasis 10133, tradePnl 467, cash 72600, shares 11, costBasis 27867, realized 467 |
+| ACC-04 | U | Then SELL 11 @ 2400 | removedBasis 27867, tradePnl âˆ’1467, cash 99000, shares 0, costBasis 0, realized âˆ’1000 |
+| ACC-05 | U | Half-cent case: costBasis 1001, shares 2, SELL 1 | removedBasis 501 (500.5 rounds up), costBasis 500 |
+| ACC-06 | U | Continue ACC-05: SELL 1 | removedBasis 500, costBasis 0 â€” total removed 1001, no leftover |
+| ACC-07 | U | Full close always zeroes costBasis exactly | True for many random positions |
+| ACC-08 | U | Buy then sell at the same price | tradePnl 0; cash back to start |
+| ACC-09 | U | Sell at a loss | tradePnl negative; realized decreases |
+| ACC-10 | U | Buy 7 @ 3333, sell 1 seven times | Î£ removedBasis = 23331 exactly; costBasis ends at 0 |
+| ACC-11 | U | Trade record fields | id sequential from 1; type, side, candleIndex (11â€“70), qty, price, amount, tradePnl (sell only), cashAfter, sharesAfter all correct |
+| ACC-12 | U | Spend all cash, then try BUY 1 | Rejected; cash stays 0 |
+
+## 8. P&L, average entry and equity (Â§7.4)
+
+| ID | Type | Case | Expected |
+|----|------|------|----------|
+| PNL-01 | U | No position | unrealized 0; average entry "â€”"; equity = cash |
+| PNL-02 | U | 15 shares, costBasis 38000, mark 2700 | unrealized 2500; position value 40500 |
+| PNL-03 | U | Average entry display, 38000 / 15 | 2533 â†’ "$25.33" |
+| PNL-04 | U | Average entry after partial sell, 27867 / 11 | 2533 â†’ "$25.33" |
+| PNL-05 | U | Average entry never used in calculations | Changing display rounding changes no account value |
+| PNL-06 | U | Equity at start (k = 10) | 100000; return $0.00 / 0.00% |
+| PNL-07 | U | Equity after worked example step 3, mark 2650 | 101750 |
+| PNL-08 | U | Return % for equity 101750 | "1.75%" |
+| PNL-09 | U | Return % for equity 99000 | "âˆ’1.00%" |
+| PNL-10 | U | Unrealized P&L on advance with no trade | Changes only via mark price |
+| PNL-11 | U | Mark price at the MIN_PRICE floor | Values remain valid integers â‰¥ 0 |
+| PNL-12 | U | Negative display rounding: return âˆ’5 cents on 100000 (âˆ’0.005%) and +5 cents (+0.005%) | "âˆ’0.01%" and "0.01%"; âˆ’4 cents shows "0.00%" (no sign) |
+
+## 9. End of round (Â§4.5â€“4.6)
+
+| ID | Type | Case | Expected |
+|----|------|------|----------|
+| END-01 | U | Finish with shares > 0 | One `liquidation` trade: SELL all at closeâ‚‡â‚€; shares 0; costBasis 0 |
+| END-02 | U | Finish with shares = 0 | No liquidation trade |
+| END-03 | U | Equity immediately before vs after liquidation | Identical |
+| END-04 | U | After liquidation | unrealized 0; equity = cash = START_CASH + realized |
+| END-05 | U | Finish twice | Second call changes nothing |
+| END-06 | U | Finish when k < 70 | Not allowed |
+| END-07 | U | After FINISHED: submit, cancel, advance | All rejected; state unchanged |
+| END-08 | U | Results data | seed, final equity, return $ and %, realized P&L, player trade count (excludes liquidation), full history |
+| END-09 | U | Liquidation trade record | type `liquidation`, candleIndex 70, price closeâ‚‡â‚€ |
+
+## 10. Reset and replay (Â§8â€“9)
+
+| ID | Type | Case | Expected |
+|----|------|------|----------|
+| RST-01 | U | New round after trading | Account back to start; k = 10; no trades, pending order or notices |
+| RST-02 | U | New round | Uses a new seed (stubbed seed source) |
+| RST-03 | U | Replay this round | Same seed; all 70 candles identical to the previous attempt |
+| RST-04 | U | Replay with different trades | Candles still identical |
+| RST-05 | U | Reset with a pending order | Pending order discarded |
+| RST-06 | U | Reset from FINISHED | State PLAYING, k = 10 |
+| RST-07 | M | Reset while PLAYING | Confirmation prompt; cancelling keeps the round |
+| RST-08 | M | Reset after FINISHED | No prompt |
+| RST-09 | U | Seed source for new rounds | `crypto.getRandomValues`, outside the engine |
+
+## 11. Determinism and fairness (Â§5.5)
+
+| ID | Type | Case | Expected |
+|----|------|------|----------|
+| DET-01 | P | 200 seeds: candles with no trades vs with a random action sequence | Identical |
+| DET-02 | U | Timing between clicks | Does not affect candles or fills |
+| DET-03 | U | Two playthroughs with the same seed and same actions | Identical final account and trade history |
+| DET-04 | U | ENGINE_VERSION | Recorded with the round; golden snapshot fails if formulas change without a bump |
+
+## 12. Invariants (Â§7.5) â€” property tests
+
+Run each for many random seeds Ã— random sequences of valid **and** invalid actions (submit buy/sell with random quantities, cancel, replace, advance, finish, reset).
+
+| ID | Type | Invariant (checked after every action) |
+|----|------|------|
+| INV-01 | P | `cash â‰¥ 0`, `shares â‰¥ 0`, `costBasis â‰¥ 0`, all safe integers |
+| INV-02 | P | `shares = 0` â‡” `costBasis = 0` |
+| INV-03 | P | `equity = START_CASH + realizedPnl + unrealizedPnl` exactly |
+| INV-04 | P | `cash = START_CASH âˆ’ Î£ buy costs + Î£ sell proceeds` |
+| INV-05 | P | `shares = Î£ bought âˆ’ Î£ sold` |
+| INV-06 | P | `realizedPnl = Î£ tradePnl` over all sell records |
+| INV-07 | P | Player trades: 11 â‰¤ candleIndex â‰¤ 70 and price = openâ‚candleIndexâ‚Ž; liquidation: candleIndex 70, price closeâ‚‡â‚€ |
+| INV-08 | P | 10 â‰¤ k â‰¤ 70 at all times |
+| INV-09 | P | Rejected actions leave the account exactly unchanged |
+| PROP-01 | U | Force a property check to fail on purpose | Error message contains the market seed and the JSON action sequence, and `replayActions(seed, actions)` reproduces the same final state |
+
+## 13. Manual UI checklist (Milestone 1)
+
+| ID | Check |
+|----|-------|
+| UI-01 | SIMULATED label visible on the trading screen and results screen |
+| UI-02 | Chart shows only candles 1..k; no future candle appears early |
+| UI-03 | History candles look different from playable candles |
+| UI-04 | Est. cost labelled as an estimate at the last close |
+| UI-05 | Pending order clearly shown, with a Cancel button |
+| UI-06 | Replacement, cancellation and rejection notices are clear |
+| UI-07 | All money shows 2 decimals; negatives clearly marked |
+| UI-08 | Layout usable at phone width (â‰ˆ375px) and desktop |
+| UI-09 | Results screen shows the seed |
+
+
+===== FILE: src\app\seed.ts =====
+
+// The only source of real randomness: picking a seed for a NEW round (rules.md Â§8).
+// It lives outside the engine on purpose â€” the engine only ever uses the seeded RNG.
+
+export interface RandomValuesSource {
+  getRandomValues(array: Uint32Array<ArrayBuffer>): unknown;
+}
+
+/** Random unsigned 32-bit seed from crypto.getRandomValues. `source` is replaceable for tests. */
+export function randomSeed(source: RandomValuesSource = globalThis.crypto): number {
+  const buffer = new Uint32Array(1);
+  source.getRandomValues(buffer);
+  return buffer[0] ?? 0;
+}
+
+
+===== FILE: src\app\useRound.ts =====
+
+// React glue: holds the RoundState privately and exposes only the safe view (rules.md Â§5.5).
+import { useCallback, useMemo, useReducer } from 'react';
+import {
+  advance,
+  cancelOrder,
+  createRound,
+  finishRound,
+  getResults,
+  getView,
+  replayRound,
+  submitOrder,
+  type RoundResults,
+  type RoundState,
+  type RoundView,
+  type Side,
+} from '../engine';
+import { randomSeed } from './seed';
+
+type RoundAction =
+  | { type: 'submit'; side: Side; quantityText: string }
+  | { type: 'cancel' }
+  | { type: 'next' }
+  | { type: 'finish' }
+  | { type: 'newRound'; seed: number }
+  | { type: 'replay' };
+
+function reducer(state: RoundState, action: RoundAction): RoundState {
+  switch (action.type) {
+    case 'submit':
+      return submitOrder(state, action.side, action.quantityText);
+    case 'cancel':
+      return cancelOrder(state);
+    case 'next':
+      return advance(state);
+    case 'finish':
+      return finishRound(state);
+    case 'newRound':
+      return createRound(action.seed);
+    case 'replay':
+      return replayRound(state);
+  }
+}
+
+export interface RoundControls {
+  view: RoundView;
+  results: RoundResults | null;
+  submit: (side: Side, quantityText: string) => void;
+  cancel: () => void;
+  next: () => void;
+  finish: () => void;
+  newRound: () => void;
+  replay: () => void;
+}
+
+export function useRound(): RoundControls {
+  const [state, dispatch] = useReducer(reducer, undefined, () => createRound(randomSeed()));
+  const view = useMemo(() => getView(state), [state]);
+  const results = useMemo(() => getResults(state), [state]);
+
+  return {
+    view,
+    results,
+    submit: useCallback((side: Side, quantityText: string) => dispatch({ type: 'submit', side, quantityText }), []),
+    cancel: useCallback(() => dispatch({ type: 'cancel' }), []),
+    next: useCallback(() => dispatch({ type: 'next' }), []),
+    finish: useCallback(() => dispatch({ type: 'finish' }), []),
+    newRound: useCallback(() => dispatch({ type: 'newRound', seed: randomSeed() }), []),
+    replay: useCallback(() => dispatch({ type: 'replay' }), []),
+  };
+}
+
+
+===== FILE: src\engine\account.ts =====
+
+// Account accounting â€” see docs/rules.md Â§7.
+// Callers validate orders first; these functions throw only on programming errors.
+
+import { START_CASH } from './constants';
+import { assertMoney, roundHalfUpRatio } from './money';
+
+export interface Account {
+  /** Cents. */
+  readonly cash: number;
+  /** Whole shares held. */
+  readonly shares: number;
+  /** Cents â€” total cost of the shares currently held. */
+  readonly costBasis: number;
+  /** Cents â€” running total of realized P&L. */
+  readonly realizedPnl: number;
+}
+
+export function initialAccount(): Account {
+  return { cash: START_CASH, shares: 0, costBasis: 0, realizedPnl: 0 };
+}
+
+function checkFill(quantity: number, price: number): void {
+  if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error(`Invalid quantity ${quantity}`);
+  if (!Number.isSafeInteger(price) || price < 1) throw new Error(`Invalid price ${price}`);
+}
+
+function checkAccount(a: Account): Account {
+  assertMoney(a.cash, 'cash');
+  assertMoney(a.shares, 'shares');
+  assertMoney(a.costBasis, 'costBasis');
+  assertMoney(a.realizedPnl, 'realizedPnl');
+  return a;
+}
+
+/** Buy fill (Â§7.2). */
+export function applyBuy(account: Account, quantity: number, price: number): { account: Account; cost: number } {
+  checkFill(quantity, price);
+  const cost = quantity * price;
+  if (cost > account.cash) throw new Error(`Buy costs ${cost} but cash is ${account.cash}`);
+  return {
+    cost,
+    account: checkAccount({
+      cash: account.cash - cost,
+      shares: account.shares + quantity,
+      costBasis: account.costBasis + cost,
+      realizedPnl: account.realizedPnl,
+    }),
+  };
+}
+
+/** Sell fill (Â§7.3). removedBasis uses the values BEFORE the sell. */
+export function applySell(
+  account: Account,
+  quantity: number,
+  price: number,
+): { account: Account; proceeds: number; removedBasis: number; tradePnl: number } {
+  checkFill(quantity, price);
+  if (quantity > account.shares) throw new Error(`Cannot sell ${quantity}, holding ${account.shares}`);
+  const proceeds = quantity * price;
+  const removedBasis = roundHalfUpRatio(account.costBasis * quantity, account.shares);
+  const tradePnl = proceeds - removedBasis;
+  return {
+    proceeds,
+    removedBasis,
+    tradePnl,
+    account: checkAccount({
+      cash: account.cash + proceeds,
+      shares: account.shares - quantity,
+      costBasis: account.costBasis - removedBasis,
+      realizedPnl: account.realizedPnl + tradePnl,
+    }),
+  };
+}
+
+// ----- Derived values (Â§7.4) -----
+
+export function positionValue(account: Account, markPrice: number): number {
+  return account.shares * markPrice;
+}
+
+export function unrealizedPnl(account: Account, markPrice: number): number {
+  return account.shares * markPrice - account.costBasis;
+}
+
+export function equity(account: Account, markPrice: number): number {
+  return account.cash + account.shares * markPrice;
+}
+
+/** Display only. null when no shares are held. */
+export function averageEntry(account: Account): number | null {
+  return account.shares > 0 ? roundHalfUpRatio(account.costBasis, account.shares) : null;
+}
+
+
+===== FILE: src\engine\candles.ts =====
+
+// Deterministic candle generator â€” see docs/rules.md Â§5.3â€“5.5.
+// History and playable candles come from the SAME loop and formulas.
+
+import {
+  BODY_SIGMA,
+  DRIFT,
+  GAP_SIGMA,
+  HISTORY_LENGTH,
+  MAX_GAP,
+  MAX_MOVE,
+  MIN_PRICE,
+  START_PRICE_MAX,
+  START_PRICE_MIN,
+  TOTAL_CANDLES,
+  WICK_MAX,
+} from './constants';
+import { roundHalfUpFloat } from './money';
+import { Mulberry32, normalZ, type RandomSource } from './rng';
+
+export interface Candle {
+  /** Global index 1..70 (1â€“10 history, 11â€“70 playable). */
+  readonly index: number;
+  readonly open: number;
+  readonly high: number;
+  readonly low: number;
+  readonly close: number;
+}
+
+function clamp(x: number, lo: number, hi: number): number {
+  return Math.min(Math.max(x, lo), hi);
+}
+
+/** Start price from one uniform draw (Â§5.3 step 1). */
+export function startPriceFrom(u: number): number {
+  return START_PRICE_MIN + Math.floor(u * (START_PRICE_MAX - START_PRICE_MIN + 1));
+}
+
+export interface CandleStream {
+  readonly startPrice: number;
+  /** Generate the next candle. Always consumes exactly 26 draws. */
+  next(): Candle;
+}
+
+/** Creates a stream: draws the start price immediately, then one candle per next() call. */
+export function createCandleStream(rng: RandomSource): CandleStream {
+  const startPrice = startPriceFrom(rng.next());
+  let index = 0;
+  let prevClose = 0;
+
+  return {
+    startPrice,
+    next(): Candle {
+      index += 1;
+      // Fixed draw order: always all four, even when a value is unused (Â§5.3).
+      const zGap = normalZ(rng);
+      const zBody = normalZ(rng);
+      const uUp = rng.next();
+      const uDown = rng.next();
+
+      let open: number;
+      if (index === 1) {
+        open = startPrice;
+      } else {
+        const gap = clamp(GAP_SIGMA * zGap, -MAX_GAP, MAX_GAP);
+        open = Math.max(MIN_PRICE, roundHalfUpFloat(prevClose * (1 + gap)));
+      }
+
+      const ret = clamp(DRIFT + BODY_SIGMA * zBody, -MAX_MOVE, MAX_MOVE);
+      const close = Math.max(MIN_PRICE, roundHalfUpFloat(open * (1 + ret)));
+      const high = roundHalfUpFloat(Math.max(open, close) * (1 + uUp * WICK_MAX));
+      const low = Math.max(MIN_PRICE, roundHalfUpFloat(Math.min(open, close) * (1 - uDown * WICK_MAX)));
+
+      prevClose = close;
+      return { index, open, high, low, close };
+    },
+  };
+}
+
+/** Generates `count` candles from an RNG (default: a full round of 70). */
+export function generateCandlesFromRng(rng: RandomSource, count: number = TOTAL_CANDLES): Candle[] {
+  const stream = createCandleStream(rng);
+  const candles: Candle[] = [];
+  for (let i = 0; i < count; i += 1) candles.push(stream.next());
+  return candles;
+}
+
+/** All 70 candles for a seed. Same seed â†’ same candles, always. */
+export function generateCandles(seed: number): Candle[] {
+  return generateCandlesFromRng(new Mulberry32(seed));
+}
+
+/** History candles are indices 1â€“10 (Â§4.1). */
+export function isHistoryIndex(index: number): boolean {
+  return index >= 1 && index <= HISTORY_LENGTH;
+}
+
+/** Round number for display: index âˆ’ 10 (11 â†’ 1, 70 â†’ 60). 0 or less means history. */
+export function roundNumber(index: number): number {
+  return index - HISTORY_LENGTH;
+}
+
+
+===== FILE: src\engine\constants.ts =====
+
+// Milestone 1 parameters â€” see docs/rules.md Â§2.
+// Changing any engine parameter changes the market for a given seed and
+// requires bumping ENGINE_VERSION (rules.md Â§5.6).
+
+export const ENGINE_VERSION = 1;
+
+// Money is always integer cents.
+export const START_CASH = 100_000; // $1,000.00
+
+// Candle layout (global index 1..70).
+export const HISTORY_LENGTH = 10;
+export const ROUND_LENGTH = 60;
+export const TOTAL_CANDLES = HISTORY_LENGTH + ROUND_LENGTH; // 70
+export const FIRST_PLAYABLE = HISTORY_LENGTH + 1; // 11
+export const LAST_INDEX = TOTAL_CANDLES; // 70
+
+// Prices (cents).
+export const START_PRICE_MIN = 2_000; // $20.00
+export const START_PRICE_MAX = 5_000; // $50.00
+export const MIN_PRICE = 100; // $1.00
+
+// Orders.
+export const MAX_ORDER_QTY = 1_000_000;
+
+// Price model (tunable â€” rules.md Â§2).
+export const DRIFT = 0;
+export const BODY_SIGMA = 0.015;
+export const GAP_SIGMA = 0.002;
+export const MAX_MOVE = 0.1;
+export const MAX_GAP = 0.02;
+export const WICK_MAX = 0.01;
+
+// Random draws per candle: zGap (12) + zBody (12) + uUp (1) + uDown (1).
+export const DRAWS_PER_CANDLE = 26;
+export const DRAWS_PER_ROUND = 1 + TOTAL_CANDLES * DRAWS_PER_CANDLE; // 1821
+
+// Fictional company (rules.md Â§10).
+export const COMPANY_NAME = 'Quellaris Energy';
+export const TICKER = 'QLRX';
+
+
+===== FILE: src\engine\format.ts =====
+
+// Display formatting â€” see docs/rules.md Â§3.4â€“3.6.
+// Display values are never fed back into calculations.
+
+import { roundHalfUpRatio } from './money';
+
+const MINUS = 'âˆ’'; // "âˆ’", a real minus sign
+
+function groupThousands(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** 253336 â†’ "$2,533.36"; âˆ’1467 â†’ "âˆ’$14.67". */
+export function formatCents(cents: number): string {
+  const abs = Math.abs(cents);
+  const dollars = Math.floor(abs / 100);
+  const rest = abs % 100;
+  const text = `$${groupThousands(dollars)}.${String(rest).padStart(2, '0')}`;
+  return cents < 0 ? `${MINUS}${text}` : text;
+}
+
+/** Like formatCents but shows "+" for positive values (used for P&L). */
+export function formatSignedCents(cents: number): string {
+  return cents > 0 ? `+${formatCents(cents)}` : formatCents(cents);
+}
+
+/**
+ * Percentage `part / whole Ã— 100`, shown with 2 decimals.
+ * The magnitude is rounded half-up, then the sign is applied (Â§3.4);
+ * a value that rounds to zero has no sign.
+ */
+export function formatPercent(part: number, whole: number): string {
+  const hundredths = roundHalfUpRatio(Math.abs(part) * 10_000, whole);
+  const text = `${Math.floor(hundredths / 100)}.${String(hundredths % 100).padStart(2, '0')}%`;
+  return part < 0 && hundredths > 0 ? `${MINUS}${text}` : text;
+}
+
+/** Like formatPercent but shows "+" for positive values. */
+export function formatSignedPercent(part: number, whole: number): string {
+  const text = formatPercent(part, whole);
+  return part > 0 && text !== '0.00%' ? `+${text}` : text;
+}
+
+
+===== FILE: src\engine\index.ts =====
+
+// Public entry point of the trading engine. The engine has no React or browser dependencies.
+export * from './constants';
+export * from './money';
+export * from './format';
+export * from './rng';
+export * from './candles';
+export * from './account';
+export * from './orders';
+export * from './round';
+export * from './view';
+
+
+===== FILE: src\engine\money.ts =====
+
+// Integer-cent helpers â€” see docs/rules.md Â§3.
+
+function assertSafeInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`${name} must be a safe integer, got ${value}`);
+  }
+}
+
+/**
+ * roundHalfUp(a / b) for integers a â‰¥ 0, b > 0, computed exactly.
+ * Formula: floor((2a + b) / (2b)). The floating-point division only gives a
+ * first guess; the two correction loops make the result exact.
+ */
+export function roundHalfUpRatio(a: number, b: number): number {
+  assertSafeInteger(a, 'a');
+  assertSafeInteger(b, 'b');
+  if (a < 0) throw new Error(`roundHalfUpRatio needs a â‰¥ 0, got ${a}`);
+  if (b <= 0) throw new Error(`roundHalfUpRatio needs b > 0, got ${b}`);
+  const num = 2 * a + b;
+  const den = 2 * b;
+  assertSafeInteger(num, '2a + b');
+  return floorDiv(num, den);
+}
+
+/** floor(a / b) for integers a â‰¥ 0, b > 0, computed exactly. */
+export function floorDiv(a: number, b: number): number {
+  assertSafeInteger(a, 'a');
+  assertSafeInteger(b, 'b');
+  if (a < 0 || b <= 0) throw new Error(`floorDiv needs a â‰¥ 0 and b > 0, got ${a}, ${b}`);
+  let q = Math.floor(a / b);
+  while (q * b > a) q -= 1;
+  while ((q + 1) * b <= a) q += 1;
+  return q;
+}
+
+/** roundHalfUp of a positive floating-point price: floor(x + 0.5). Used only by the price engine (Â§5.4). */
+export function roundHalfUpFloat(x: number): number {
+  return Math.floor(x + 0.5);
+}
+
+/** Development check that a stored money/share value is a safe integer (Â§3.7). */
+export function assertMoney(value: number, name: string): void {
+  assertSafeInteger(value, name);
+}
+
+
+===== FILE: src\engine\orders.ts =====
+
+// Order types and quantity parsing â€” see docs/rules.md Â§6.
+
+import { MAX_ORDER_QTY } from './constants';
+
+export type Side = 'BUY' | 'SELL';
+
+export interface PendingOrder {
+  readonly side: Side;
+  readonly quantity: number;
+  /** Index k when the order was submitted. */
+  readonly submittedAt: number;
+}
+
+export type QuantityResult = { ok: true; value: number } | { ok: false; reason: string };
+
+const WHOLE_POSITIVE = /^[1-9][0-9]*$/;
+
+/** Parses the quantity text box (Â§6.2 rule 2). */
+export function parseQuantity(text: string): QuantityResult {
+  if (!WHOLE_POSITIVE.test(text)) {
+    return { ok: false, reason: 'Enter a whole number of shares (1 or more), digits only.' };
+  }
+  // Longer than 7 digits is always above MAX_ORDER_QTY; check length first so huge inputs never become numbers.
+  const value = text.length > 7 ? Infinity : Number(text);
+  if (value > MAX_ORDER_QTY) {
+    return { ok: false, reason: `The maximum order size is ${MAX_ORDER_QTY.toLocaleString('en-US')} shares.` };
+  }
+  return { ok: true, value };
+}
+
+export function describeOrder(side: Side, quantity: number): string {
+  return `${side} ${quantity}`;
+}
+
+
+===== FILE: src\engine\rng.ts =====
+
+// Seeded random number generator â€” see docs/rules.md Â§5.1â€“5.2.
+// This is the ONLY file in the engine allowed to use bitwise operators and Math.imul.
+
+export interface RandomSource {
+  /** Next number u with 0 â‰¤ u < 1. */
+  next(): number;
+}
+
+export class Mulberry32 implements RandomSource {
+  private state: number;
+  /** How many numbers have been drawn so far (used by tests to check draw order). */
+  draws = 0;
+
+  constructor(seed: number) {
+    if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) {
+      throw new Error(`Seed must be an unsigned 32-bit integer, got ${seed}`);
+    }
+    this.state = seed;
+  }
+
+  next(): number {
+    this.draws += 1;
+    this.state = (this.state + 0x6d2b79f5) | 0;
+    let t = Math.imul(this.state ^ (this.state >>> 15), 1 | this.state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+}
+
+/** Approximately standard-normal number: sum of 12 uniforms minus 6. Uses exactly 12 draws (Â§5.2). */
+export function normalZ(rng: RandomSource): number {
+  let sum = 0;
+  for (let i = 0; i < 12; i += 1) sum += rng.next();
+  return sum - 6;
+}
+
+
+===== FILE: src\engine\round.ts =====
+
+// Round flow â€” see docs/rules.md Â§4, Â§6, Â§9.
+// Every function is pure: it returns a new RoundState and never changes the old one.
+// React must not read RoundState directly; it reads getView(state) from view.ts.
+
+import { applyBuy, applySell, initialAccount, type Account } from './account';
+import { generateCandles, roundNumber, type Candle } from './candles';
+import { ENGINE_VERSION, HISTORY_LENGTH, LAST_INDEX, TOTAL_CANDLES } from './constants';
+import { formatCents, formatSignedCents } from './format';
+import { describeOrder, parseQuantity, type PendingOrder, type Side } from './orders';
+
+export type RoundStatus = 'PLAYING' | 'FINISHED';
+
+export interface Trade {
+  readonly id: number;
+  readonly type: 'player' | 'liquidation';
+  readonly side: Side;
+  /** Global candle index 11â€“70 whose open (player) or close (liquidation) was used. */
+  readonly candleIndex: number;
+  readonly quantity: number;
+  readonly price: number;
+  /** Cost (buy) or proceeds (sell), in cents. */
+  readonly amount: number;
+  /** Sells only; null for buys. */
+  readonly tradePnl: number | null;
+  readonly cashAfter: number;
+  readonly sharesAfter: number;
+}
+
+export type NoticeKind = 'info' | 'success' | 'error';
+
+export interface Notice {
+  readonly id: number;
+  readonly kind: NoticeKind;
+  readonly message: string;
+}
+
+export interface RoundState {
+  readonly engineVersion: number;
+  readonly seed: number;
+  /** All 70 candles. INTERNAL â€” never hand this to the UI (see view.ts). */
+  readonly candles: readonly Candle[];
+  /** Newest visible candle index (10..70). */
+  readonly k: number;
+  readonly status: RoundStatus;
+  readonly account: Account;
+  readonly pending: PendingOrder | null;
+  readonly trades: readonly Trade[];
+  readonly notices: readonly Notice[];
+  readonly nextNoticeId: number;
+}
+
+const MAX_NOTICES = 20;
+
+// ----- Creating rounds -----
+
+/** New round from a seed (Â§4.3). The seed comes from outside the engine (Â§8). */
+export function createRound(seed: number): RoundState {
+  return createRoundFromCandles(seed, generateCandles(seed));
+}
+
+/** Builds a round from given candles. Used by createRound and by tests that need exact prices. */
+export function createRoundFromCandles(seed: number, candles: readonly Candle[]): RoundState {
+  if (candles.length !== TOTAL_CANDLES) throw new Error(`A round needs ${TOTAL_CANDLES} candles`);
+  candles.forEach((c, i) => {
+    if (c.index !== i + 1) throw new Error(`Candle at position ${i} has index ${c.index}`);
+  });
+  return {
+    engineVersion: ENGINE_VERSION,
+    seed,
+    candles,
+    k: HISTORY_LENGTH,
+    status: 'PLAYING',
+    account: initialAccount(),
+    pending: null,
+    trades: [],
+    notices: [],
+    nextNoticeId: 1,
+  };
+}
+
+/** Replay: same seed, everything reset, identical candles (Â§9). */
+export function replayRound(state: RoundState): RoundState {
+  return createRound(state.seed);
+}
+
+// ----- Helpers -----
+
+export function candleAt(state: RoundState, index: number): Candle {
+  const candle = state.candles[index - 1];
+  if (!candle) throw new Error(`No candle ${index}`);
+  return candle;
+}
+
+/** Close of the newest visible candle (Â§4.2). */
+export function markPrice(state: RoundState): number {
+  return candleAt(state, state.k).close;
+}
+
+function addNotice(state: RoundState, kind: NoticeKind, message: string): RoundState {
+  const notices = [...state.notices, { id: state.nextNoticeId, kind, message }].slice(-MAX_NOTICES);
+  return { ...state, notices, nextNoticeId: state.nextNoticeId + 1 };
+}
+
+function candleLabel(index: number): string {
+  return `candle ${roundNumber(index)}`;
+}
+
+// ----- Player actions -----
+
+/** Submit an order (Â§6.2). Replaces any pending order (Â§6.4). */
+export function submitOrder(state: RoundState, side: Side, quantityText: string): RoundState {
+  if (state.status !== 'PLAYING') return state;
+  if (state.k >= LAST_INDEX) {
+    return addNotice(state, 'error', 'No next candle: this is the final candle. Finish the round to see your results.');
+  }
+
+  const parsed = parseQuantity(quantityText);
+  if (!parsed.ok) return addNotice(state, 'error', parsed.reason);
+  const quantity = parsed.value;
+  const { account } = state;
+
+  if (side === 'SELL') {
+    if (account.shares === 0) return addNotice(state, 'error', "You don't hold any shares to sell.");
+    if (quantity > account.shares) {
+      return addNotice(state, 'error', `You only hold ${account.shares} share${account.shares === 1 ? '' : 's'}.`);
+    }
+  } else {
+    const estimate = quantity * markPrice(state);
+    if (estimate > account.cash) {
+      return addNotice(
+        state,
+        'error',
+        `Not enough cash: estimated cost ${formatCents(estimate)} at the last close, but you have ${formatCents(account.cash)}.`,
+      );
+    }
+  }
+
+  const previous = state.pending;
+  const next: RoundState = { ...state, pending: { side, quantity, submittedAt: state.k } };
+  const message = previous
+    ? `Previous order (${describeOrder(previous.side, previous.quantity)}) replaced by ${describeOrder(side, quantity)}.`
+    : `Order placed: ${describeOrder(side, quantity)}. It fills at the next candle's open.`;
+  return addNotice(next, 'info', message);
+}
+
+export function cancelOrder(state: RoundState): RoundState {
+  if (state.status !== 'PLAYING' || state.pending === null) return state;
+  return addNotice({ ...state, pending: null }, 'info', 'Order cancelled.');
+}
+
+/** Reveal the next candle, filling any pending order at its open (Â§4.4, steps 1â€“6). */
+export function advance(state: RoundState): RoundState {
+  // 1. Check k < 70.
+  if (state.status !== 'PLAYING' || state.k >= LAST_INDEX) return state;
+
+  // 2. Read candle k+1 (not visible yet).
+  const nextIndex = state.k + 1;
+  const nextCandle = candleAt(state, nextIndex);
+  let result: RoundState = state;
+
+  // 3. Process the pending order at open(k+1).
+  const order = state.pending;
+  if (order) {
+    const price = nextCandle.open;
+    const { account } = state;
+    if (order.side === 'BUY') {
+      const cost = order.quantity * price;
+      if (cost > account.cash) {
+        result = addNotice(
+          result,
+          'error',
+          `Order rejected: the price opened at ${formatCents(price)}. This order would cost ${formatCents(cost)}, but you have ${formatCents(account.cash)}.`,
+        );
+      } else {
+        const fill = applyBuy(account, order.quantity, price);
+        result = recordTrade(result, fill.account, {
+          type: 'player',
+          side: 'BUY',
+          candleIndex: nextIndex,
+          quantity: order.quantity,
+          price,
+          amount: fill.cost,
+          tradePnl: null,
+        });
+        result = addNotice(
+          result,
+          'success',
+          `Bought ${order.quantity} at ${formatCents(price)} (${candleLabel(nextIndex)} open). Cost ${formatCents(fill.cost)}.`,
+        );
+      }
+    } else if (order.quantity > account.shares) {
+      result = addNotice(result, 'error', `Order rejected: you hold only ${account.shares} shares.`);
+    } else {
+      const fill = applySell(account, order.quantity, price);
+      result = recordTrade(result, fill.account, {
+        type: 'player',
+        side: 'SELL',
+        candleIndex: nextIndex,
+        quantity: order.quantity,
+        price,
+        amount: fill.proceeds,
+        tradePnl: fill.tradePnl,
+      });
+      result = addNotice(
+        result,
+        'success',
+        `Sold ${order.quantity} at ${formatCents(price)} (${candleLabel(nextIndex)} open). Realized P&L ${formatSignedCents(fill.tradePnl)}.`,
+      );
+    }
+  }
+
+  // 4. Clear the pending order. 5. Reveal candle k+1. (6. Marks are derived in view.ts.)
+  return { ...result, pending: null, k: nextIndex };
+}
+
+/** Finish the round: liquidate at close(70) and mark FINISHED (Â§4.6). Idempotent. */
+export function finishRound(state: RoundState): RoundState {
+  if (state.status !== 'PLAYING' || state.k !== LAST_INDEX) return state;
+  let result: RoundState = state;
+  const { account } = state;
+  if (account.shares > 0) {
+    const price = candleAt(state, LAST_INDEX).close;
+    const fill = applySell(account, account.shares, price);
+    result = recordTrade(result, fill.account, {
+      type: 'liquidation',
+      side: 'SELL',
+      candleIndex: LAST_INDEX,
+      quantity: account.shares,
+      price,
+      amount: fill.proceeds,
+      tradePnl: fill.tradePnl,
+    });
+    result = addNotice(
+      result,
+      'info',
+      `Round finished. Your remaining ${account.shares} shares were sold at the final close, ${formatCents(price)}.`,
+    );
+  } else {
+    result = addNotice(result, 'info', 'Round finished.');
+  }
+  return { ...result, status: 'FINISHED', pending: null };
+}
+
+function recordTrade(
+  state: RoundState,
+  account: Account,
+  t: Omit<Trade, 'id' | 'cashAfter' | 'sharesAfter'>,
+): RoundState {
+  const trade: Trade = {
+    ...t,
+    id: state.trades.length + 1,
+    cashAfter: account.cash,
+    sharesAfter: account.shares,
+  };
+  return { ...state, account, trades: [...state.trades, trade] };
+}
+
+
+===== FILE: src\engine\view.ts =====
+
+// The UI-facing view of a round. React components receive ONLY this object,
+// which contains candles 1..k and nothing from the future (rules.md Â§5.5, test FLOW-02).
+
+import { averageEntry, equity, positionValue, unrealizedPnl } from './account';
+import { isHistoryIndex, roundNumber, type Candle } from './candles';
+import { LAST_INDEX, ROUND_LENGTH, START_CASH } from './constants';
+import { floorDiv } from './money';
+import type { PendingOrder } from './orders';
+import { markPrice, type Notice, type RoundState, type RoundStatus, type Trade } from './round';
+
+export interface VisibleCandle extends Candle {
+  readonly kind: 'history' | 'playable';
+}
+
+export interface AccountView {
+  readonly cash: number;
+  readonly shares: number;
+  readonly costBasis: number;
+  /** Display only; null when no shares are held. */
+  readonly averageEntry: number | null;
+  readonly positionValue: number;
+  readonly unrealizedPnl: number;
+  readonly realizedPnl: number;
+  readonly equity: number;
+  /** equity âˆ’ START_CASH. */
+  readonly totalReturn: number;
+}
+
+export interface RoundView {
+  readonly engineVersion: number;
+  readonly seed: number;
+  readonly status: RoundStatus;
+  readonly k: number;
+  /** Playable candle number 1..60 of the newest candle; 0 while only history is shown. */
+  readonly roundNumber: number;
+  readonly roundLength: number;
+  /** Candles 1..k only. */
+  readonly candles: readonly VisibleCandle[];
+  readonly markPrice: number;
+  readonly account: AccountView;
+  readonly pending: PendingOrder | null;
+  readonly trades: readonly Trade[];
+  readonly notices: readonly Notice[];
+  readonly canSubmit: boolean;
+  readonly canAdvance: boolean;
+  readonly canFinish: boolean;
+  /** "Max" helpers (Â§6.5). */
+  readonly maxBuyQuantity: number;
+  readonly maxSellQuantity: number;
+}
+
+export function getView(state: RoundState): RoundView {
+  const mark = markPrice(state);
+  const { account } = state;
+  const eq = equity(account, mark);
+  const playing = state.status === 'PLAYING';
+
+  return {
+    engineVersion: state.engineVersion,
+    seed: state.seed,
+    status: state.status,
+    k: state.k,
+    roundNumber: Math.max(0, roundNumber(state.k)),
+    roundLength: ROUND_LENGTH,
+    candles: state.candles.slice(0, state.k).map((c) => ({
+      index: c.index,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      kind: isHistoryIndex(c.index) ? 'history' : 'playable',
+    })),
+    markPrice: mark,
+    account: {
+      cash: account.cash,
+      shares: account.shares,
+      costBasis: account.costBasis,
+      averageEntry: averageEntry(account),
+      positionValue: positionValue(account, mark),
+      unrealizedPnl: unrealizedPnl(account, mark),
+      realizedPnl: account.realizedPnl,
+      equity: eq,
+      totalReturn: eq - START_CASH,
+    },
+    pending: state.pending,
+    trades: state.trades,
+    notices: state.notices,
+    canSubmit: playing && state.k < LAST_INDEX,
+    canAdvance: playing && state.k < LAST_INDEX,
+    canFinish: playing && state.k === LAST_INDEX,
+    maxBuyQuantity: floorDiv(account.cash, mark),
+    maxSellQuantity: account.shares,
+  };
+}
+
+export interface RoundResults {
+  readonly seed: number;
+  readonly engineVersion: number;
+  readonly finalEquity: number;
+  readonly totalReturn: number;
+  readonly realizedPnl: number;
+  /** Player trades only (excludes the liquidation). */
+  readonly playerTradeCount: number;
+  readonly trades: readonly Trade[];
+}
+
+/** Results screen data (Â§4.6). null until the round is finished. */
+export function getResults(state: RoundState): RoundResults | null {
+  if (state.status !== 'FINISHED') return null;
+  const finalEquity = equity(state.account, markPrice(state));
+  return {
+    seed: state.seed,
+    engineVersion: state.engineVersion,
+    finalEquity,
+    totalReturn: finalEquity - START_CASH,
+    realizedPnl: state.account.realizedPnl,
+    playerTradeCount: state.trades.filter((t) => t.type === 'player').length,
+    trades: state.trades,
+  };
+}
+
+
+===== FILE: src\ui\AccountPanel.tsx =====
+
+import { formatCents, formatSignedCents, formatSignedPercent, START_CASH, type RoundView } from '../engine';
+
+function tone(value: number): string {
+  if (value > 0) return 'pos';
+  if (value < 0) return 'neg';
+  return '';
+}
+
+export function AccountPanel({ view }: { view: RoundView }) {
+  const a = view.account;
+  const rows: Array<[string, string, string?]> = [
+    ['Cash', formatCents(a.cash)],
+    ['Shares', String(a.shares)],
+    ['Avg entry', a.averageEntry === null ? 'â€”' : formatCents(a.averageEntry)],
+    ['Position value', formatCents(a.positionValue)],
+    ['Unrealized P&L', formatSignedCents(a.unrealizedPnl), tone(a.unrealizedPnl)],
+    ['Realized P&L', formatSignedCents(a.realizedPnl), tone(a.realizedPnl)],
+  ];
+
+  return (
+    <section className="card account" aria-label="Account">
+      <div className="equity">
+        <span className="label">Equity</span>
+        <span className="equity-value">{formatCents(a.equity)}</span>
+        <span className={`equity-return ${tone(a.totalReturn)}`}>
+          {formatSignedCents(a.totalReturn)} ({formatSignedPercent(a.totalReturn, START_CASH)})
+        </span>
+      </div>
+      <dl className="stats">
+        {rows.map(([label, value, cls]) => (
+          <div key={label} className="stat">
+            <dt>{label}</dt>
+            <dd className={cls ?? ''}>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+
+===== FILE: src\ui\CandleChart.tsx =====
+
+// Hand-made SVG candlestick chart: no chart library, so no extra licence or attribution needed.
+// It draws only the candles in the view (1..k); future slots stay empty.
+import { formatCents, HISTORY_LENGTH, TOTAL_CANDLES, type RoundView } from '../engine';
+import { roundCounterLabel } from './labels';
+
+const W = 720;
+const H = 340;
+const PAD = { top: 16, right: 64, bottom: 26, left: 8 };
+const PLOT_W = W - PAD.left - PAD.right;
+const PLOT_H = H - PAD.top - PAD.bottom;
+const SLOT = PLOT_W / TOTAL_CANDLES;
+
+interface Props {
+  view: RoundView;
+}
+
+export function CandleChart({ view }: Props) {
+  const { candles, markPrice } = view;
+  const current = candles[candles.length - 1];
+
+  let lo = Math.min(...candles.map((c) => c.low));
+  let hi = Math.max(...candles.map((c) => c.high));
+  const pad = Math.max((hi - lo) * 0.08, 10);
+  lo -= pad;
+  hi += pad;
+  const y = (price: number) => PAD.top + ((hi - price) / (hi - lo)) * PLOT_H;
+  const xCenter = (index: number) => PAD.left + (index - 0.5) * SLOT;
+  const bodyW = Math.max(2, SLOT * 0.62);
+
+  const ticks = [0, 1, 2, 3, 4].map((i) => lo + ((hi - lo) * i) / 4);
+  const dividerX = PAD.left + HISTORY_LENGTH * SLOT;
+
+  return (
+    <div className="chart">
+      <div className="chart-head">
+        <div className="chart-title">
+          <span className="round-counter">{roundCounterLabel(view)}</span>
+          {current && (
+            <span className="ohlc">
+              {current.kind === 'history' ? 'History Â· ' : ''}O {formatCents(current.open)} H {formatCents(current.high)} L{' '}
+              {formatCents(current.low)} C {formatCents(current.close)}
+            </span>
+          )}
+        </div>
+        <div className="legend">
+          <span className="legend-history">History (not tradable)</span>
+          <span className="legend-round">Round</span>
+        </div>
+      </div>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="chart-svg"
+        role="img"
+        aria-label={`Candlestick chart, ${candles.length} candles shown, last close ${formatCents(markPrice)}`}
+      >
+        <rect x={PAD.left} y={PAD.top} width={HISTORY_LENGTH * SLOT} height={PLOT_H} className="history-zone" />
+        {ticks.map((t) => (
+          <g key={t}>
+            <line x1={PAD.left} x2={PAD.left + PLOT_W} y1={y(t)} y2={y(t)} className="grid" />
+            <text x={W - PAD.right + 6} y={y(t) + 4} className="axis-label">
+              {(t / 100).toFixed(2)}
+            </text>
+          </g>
+        ))}
+        <line x1={dividerX} x2={dividerX} y1={PAD.top} y2={PAD.top + PLOT_H} className="divider" />
+        <text x={dividerX + 4} y={H - 8} className="divider-label">
+          Round starts â–¸
+        </text>
+        <text x={PAD.left + 4} y={H - 8} className="divider-label">
+          History
+        </text>
+
+        {candles.map((c) => {
+          const up = c.close >= c.open;
+          const top = y(Math.max(c.open, c.close));
+          const bottom = y(Math.min(c.open, c.close));
+          const cls = `candle ${up ? 'up' : 'down'} ${c.kind === 'history' ? 'is-history' : ''}`;
+          return (
+            <g key={c.index} className={cls}>
+              <line x1={xCenter(c.index)} x2={xCenter(c.index)} y1={y(c.high)} y2={y(c.low)} className="wick" />
+              <rect
+                x={xCenter(c.index) - bodyW / 2}
+                y={top}
+                width={bodyW}
+                height={Math.max(1, bottom - top)}
+                className="body"
+              />
+            </g>
+          );
+        })}
+
+        <line x1={PAD.left} x2={PAD.left + PLOT_W} y1={y(markPrice)} y2={y(markPrice)} className="mark-line" />
+        <rect x={W - PAD.right + 2} y={y(markPrice) - 10} width={PAD.right - 4} height={20} rx={3} className="mark-tag" />
+        <text x={W - PAD.right + 6} y={y(markPrice) + 4} className="mark-text">
+          {(markPrice / 100).toFixed(2)}
+        </text>
+      </svg>
+    </div>
+  );
+}
+
+
+===== FILE: src\ui\Header.tsx =====
+
+import { COMPANY_NAME, TICKER } from '../engine';
+
+interface Props {
+  onNewRound: () => void;
+  onReplay: () => void;
+}
+
+export function Header({ onNewRound, onReplay }: Props) {
+  return (
+    <header className="header">
+      <div className="brand">
+        <span className="logo" aria-hidden="true">â–²</span>
+        <span className="brand-name">TradeQuest</span>
+        <span className="badge-simulated" title="Fictional company, generated prices, virtual money">
+          SIMULATED
+        </span>
+      </div>
+      <div className="instrument">
+        <span className="ticker">{TICKER}</span>
+        <span className="company">{COMPANY_NAME} Â· fictional</span>
+      </div>
+      <div className="header-actions">
+        <button type="button" className="btn btn-ghost" onClick={onReplay}>
+          Replay this round
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={onNewRound}>
+          New round
+        </button>
+      </div>
+    </header>
+  );
+}
+
+
+===== FILE: src\ui\labels.ts =====
+
+// Small display helpers shared by components (kept separate so they can be unit-tested).
+import type { RoundView } from '../engine';
+
+/** Round counter text (FLOW-17): "Round starts next candle" at k = 10, then "Candle r of 60". */
+export function roundCounterLabel(view: Pick<RoundView, 'roundNumber' | 'roundLength'>): string {
+  return view.roundNumber === 0 ? 'Round starts next candle' : `Candle ${view.roundNumber} of ${view.roundLength}`;
+}
+
+/** Label for a trade's candle in the history table. */
+export function tradeCandleLabel(candleIndex: number, type: 'player' | 'liquidation'): string {
+  const r = candleIndex - 10;
+  return type === 'liquidation' ? `${r} (close)` : `${r} (open)`;
+}
+
+
+===== FILE: src\ui\NoticeList.tsx =====
+
+import type { Notice } from '../engine';
+
+/** Latest notices first (fills, rejections, replacements, cancellations). */
+export function NoticeList({ notices }: { notices: readonly Notice[] }) {
+  const latest = [...notices].reverse().slice(0, 4);
+  return (
+    <section className="notices" aria-live="polite" aria-label="Notices">
+      {latest.length === 0 ? (
+        <p className="notice info">Read the history candles, then place an order or press Next.</p>
+      ) : (
+        latest.map((n, i) => (
+          <p key={n.id} className={`notice ${n.kind} ${i === 0 ? 'newest' : ''}`}>
+            {n.message}
+          </p>
+        ))
+      )}
+    </section>
+  );
+}
+
+
+===== FILE: src\ui\OrderPanel.tsx =====
+
+import { useState, type FormEvent } from 'react';
+import { formatCents, parseQuantity, type RoundView, type Side } from '../engine';
+
+interface Props {
+  view: RoundView;
+  onSubmit: (side: Side, quantityText: string) => void;
+  onCancel: () => void;
+  onNext: () => void;
+  onFinish: () => void;
+}
+
+export function OrderPanel({ view, onSubmit, onCancel, onNext, onFinish }: Props) {
+  const [side, setSide] = useState<Side>('BUY');
+  const [qty, setQty] = useState('');
+  const parsed = parseQuantity(qty);
+  const estimate = parsed.ok ? parsed.value * view.markPrice : null;
+  const disabled = !view.canSubmit;
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    onSubmit(side, qty);
+  };
+  const fillMax = () => setQty(String(side === 'BUY' ? view.maxBuyQuantity : view.maxSellQuantity));
+
+  return (
+    <section className="card order" aria-label="Order entry">
+      <form onSubmit={submit}>
+        <fieldset disabled={disabled} className="order-fields">
+          <div className="segmented" role="group" aria-label="Order side">
+            <button type="button" className={side === 'BUY' ? 'seg active buy' : 'seg'} onClick={() => setSide('BUY')}>
+              Buy
+            </button>
+            <button type="button" className={side === 'SELL' ? 'seg active sell' : 'seg'} onClick={() => setSide('SELL')}>
+              Sell
+            </button>
+          </div>
+
+          <label className="qty-label" htmlFor="qty">
+            Shares
+          </label>
+          <div className="qty-row">
+            <input
+              id="qty"
+              className="qty-input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="0"
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+            />
+            <button type="button" className="btn btn-small" onClick={fillMax}>
+              Max
+            </button>
+          </div>
+          <p className="estimate">
+            {side === 'BUY' ? 'Est. cost at last close' : 'Est. proceeds at last close'}:{' '}
+            <strong>{estimate === null ? 'â€”' : formatCents(estimate)}</strong>
+            <span className="hint">Fills at the next candle's open, so the final price can differ.</span>
+          </p>
+          <button type="submit" className={`btn btn-wide ${side === 'BUY' ? 'btn-buy' : 'btn-sell'}`}>
+            Place {side === 'BUY' ? 'buy' : 'sell'} order
+          </button>
+        </fieldset>
+      </form>
+
+      <div className="pending" aria-live="polite">
+        {view.pending ? (
+          <>
+            <span>
+              Pending: <strong>{view.pending.side} {view.pending.quantity}</strong> â€” fills at next open
+            </span>
+            <button type="button" className="btn btn-small btn-ghost" onClick={onCancel}>
+              Cancel
+            </button>
+          </>
+        ) : (
+          <span className="muted">No pending order</span>
+        )}
+      </div>
+
+      {view.canFinish ? (
+        <div className="final">
+          <p>This is the final candle â€” no more orders. Finishing sells any shares at this candle's close.</p>
+          <button type="button" className="btn btn-wide btn-primary" onClick={onFinish}>
+            Finish round
+          </button>
+        </div>
+      ) : (
+        <button type="button" className="btn btn-wide btn-primary" onClick={onNext} disabled={!view.canAdvance}>
+          Next candle â†’
+        </button>
+      )}
+    </section>
+  );
+}
+
+
+===== FILE: src\ui\ResultsScreen.tsx =====
+
+import {
+  formatCents,
+  formatSignedCents,
+  formatSignedPercent,
+  START_CASH,
+  type RoundResults,
+  type RoundView,
+} from '../engine';
+import { CandleChart } from './CandleChart';
+import { TradeHistory } from './TradeHistory';
+
+interface Props {
+  view: RoundView;
+  results: RoundResults;
+  onNewRound: () => void;
+  onReplay: () => void;
+}
+
+export function ResultsScreen({ view, results, onNewRound, onReplay }: Props) {
+  const tone = results.totalReturn > 0 ? 'pos' : results.totalReturn < 0 ? 'neg' : '';
+  return (
+    <main className="results">
+      <section className="card results-summary">
+        <p className="eyebrow">
+          Round complete Â· <span className="badge-simulated small">SIMULATED</span>
+        </p>
+        <h1>{formatCents(results.finalEquity)}</h1>
+        <p className={`results-return ${tone}`}>
+          {formatSignedCents(results.totalReturn)} ({formatSignedPercent(results.totalReturn, START_CASH)}) vs.{' '}
+          {formatCents(START_CASH)} start
+        </p>
+        <dl className="stats results-stats">
+          <div className="stat">
+            <dt>Realized P&amp;L</dt>
+            <dd className={tone}>{formatSignedCents(results.realizedPnl)}</dd>
+          </div>
+          <div className="stat">
+            <dt>Your trades</dt>
+            <dd>{results.playerTradeCount}</dd>
+          </div>
+          <div className="stat">
+            <dt>Seed</dt>
+            <dd className="mono">{results.seed}</dd>
+          </div>
+          <div className="stat">
+            <dt>Engine</dt>
+            <dd>v{results.engineVersion}</dd>
+          </div>
+        </dl>
+        <p className="muted small-print">
+          Any shares still held at the end were sold automatically at the final candle's close. Replay uses the same
+          seed, so you get exactly the same candles.
+        </p>
+        <div className="results-actions">
+          <button type="button" className="btn btn-primary" onClick={onReplay}>
+            Replay this round
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={onNewRound}>
+            New round
+          </button>
+        </div>
+      </section>
+      <section className="card chart-card">
+        <CandleChart view={view} />
+      </section>
+      <section className="card history-card">
+        <h2>Trade history</h2>
+        <TradeHistory trades={results.trades} />
+      </section>
+    </main>
+  );
+}
+
+
+===== FILE: src\ui\TradeHistory.tsx =====
+
+import { formatCents, formatSignedCents, type Trade } from '../engine';
+import { tradeCandleLabel } from './labels';
+
+export function TradeHistory({ trades }: { trades: readonly Trade[] }) {
+  if (trades.length === 0) return <p className="muted">No trades yet.</p>;
+  return (
+    <div className="table-wrap">
+      <table className="trades">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Candle</th>
+            <th>Side</th>
+            <th className="num">Qty</th>
+            <th className="num">Price</th>
+            <th className="num">Amount</th>
+            <th className="num">P&amp;L</th>
+            <th className="num">Cash after</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...trades].reverse().map((t) => (
+            <tr key={t.id}>
+              <td>{t.id}</td>
+              <td>{tradeCandleLabel(t.candleIndex, t.type)}</td>
+              <td className={t.side === 'BUY' ? 'side-buy' : 'side-sell'}>
+                {t.side}
+                {t.type === 'liquidation' ? ' (auto)' : ''}
+              </td>
+              <td className="num">{t.quantity}</td>
+              <td className="num">{formatCents(t.price)}</td>
+              <td className="num">{formatCents(t.amount)}</td>
+              <td className={`num ${t.tradePnl === null ? '' : t.tradePnl > 0 ? 'pos' : t.tradePnl < 0 ? 'neg' : ''}`}>
+                {t.tradePnl === null ? 'â€”' : formatSignedCents(t.tradePnl)}
+              </td>
+              <td className="num">{formatCents(t.cashAfter)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+
+===== FILE: src\App.tsx =====
+
+import { useRound } from './app/useRound';
+import { AccountPanel } from './ui/AccountPanel';
+import { CandleChart } from './ui/CandleChart';
+import { Header } from './ui/Header';
+import { NoticeList } from './ui/NoticeList';
+import { OrderPanel } from './ui/OrderPanel';
+import { ResultsScreen } from './ui/ResultsScreen';
+import { TradeHistory } from './ui/TradeHistory';
+
+export function App() {
+  const round = useRound();
+  const { view, results } = round;
+
+  const confirmReset = (action: () => void, what: string) => () => {
+    if (view.status === 'PLAYING' && !window.confirm(`${what}? Your current round will be lost.`)) return;
+    action();
+  };
+
+  return (
+    <div className="app">
+      <Header
+        onNewRound={confirmReset(round.newRound, 'Start a new round')}
+        onReplay={confirmReset(round.replay, 'Replay this round from the start')}
+      />
+      {results ? (
+        <ResultsScreen view={view} results={results} onNewRound={round.newRound} onReplay={round.replay} />
+      ) : (
+        <main className="layout">
+          <section className="card chart-card" aria-label="Price chart">
+            <CandleChart view={view} />
+          </section>
+          <aside className="side">
+            <OrderPanel view={view} onSubmit={round.submit} onCancel={round.cancel} onNext={round.next} onFinish={round.finish} />
+            <NoticeList notices={view.notices} />
+            <AccountPanel view={view} />
+          </aside>
+          <section className="card history-card" aria-label="Trade history">
+            <h2>Trade history</h2>
+            <TradeHistory trades={view.trades} />
+          </section>
+        </main>
+      )}
+      <footer className="footer">
+        Simulated market for education only. QLRX and Quellaris Energy are fictional; prices are generated by the
+        TradeQuest engine (v{view.engineVersion}) and are not real market data. Seed {view.seed}.
+      </footer>
+    </div>
+  );
+}
+
+
+===== FILE: src\main.tsx =====
+
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+import './styles.css';
+
+const root = document.getElementById('root');
+if (!root) throw new Error('Missing #root element');
+
+createRoot(root).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+
+
+===== FILE: tests\fixtures\reference-v1.json =====
+
+{
+ "engineVersion": 1,
+ "generatedBy": "tools/reference_engine.py (independent Python reference)",
+ "rngFirstFive": {
+  "12345": [
+   0.9797282677609473,
+   0.3067522644996643,
+   0.484205421525985,
+   0.817934412509203,
+   0.5094283693470061
+  ],
+  "0": [
+   0.26642920868471265,
+   0.0003297457005828619,
+   0.2232720274478197,
+   0.1462021479383111,
+   0.46732782293111086
+  ],
+  "4294967295": [
+   0.8964226141106337,
+   0.189478256739676,
+   0.7156526781618595,
+   0.9440599093213677,
+   0.8452364315744489
+  ]
+ },
+ "drawCounts": {
+  "12345": 1821,
+  "1": 1821,
+  "4294967295": 1821
+ },
+ "candles": {
+  "12345": [
+   {
+    "index": 1,
+    "open": 4940,
+    "high": 5061,
+    "low": 4924,
+    "close": 5057
+   },
+   {
+    "index": 2,
+    "open": 5047,
+    "high": 5088,
+    "low": 5011,
+    "close": 5062
+   },
+   {
+    "index": 3,
+    "open": 5055,
+    "high": 5101,
+    "low": 5021,
+    "close": 5033
+   },
+   {
+    "index": 4,
+    "open": 5046,
+    "high": 5137,
+    "low": 5028,
+    "close": 5136
+   },
+   {
+    "index": 5,
+    "open": 5139,
+    "high": 5156,
+    "low": 5042,
+    "close": 5072
+   },
+   {
+    "index": 6,
+    "open": 5097,
+    "high": 5097,
+    "low": 5022,
+    "close": 5053
+   },
+   {
+    "index": 7,
+    "open": 5060,
+    "high": 5107,
+    "low": 5027,
+    "close": 5105
+   },
+   {
+    "index": 8,
+    "open": 5110,
+    "high": 5117,
+    "low": 5026,
+    "close": 5029
+   },
+   {
+    "index": 9,
+    "open": 5032,
+    "high": 5043,
+    "low": 4922,
+    "close": 4941
+   },
+   {
+    "index": 10,
+    "open": 4952,
+    "high": 4958,
+    "low": 4916,
+    "close": 4920
+   },
+   {
+    "index": 11,
+    "open": 4938,
+    "high": 4963,
+    "low": 4892,
+    "close": 4949
+   },
+   {
+    "index": 12,
+    "open": 4961,
+    "high": 5033,
+    "low": 4915,
+    "close": 5005
+   },
+   {
+    "index": 13,
+    "open": 4995,
+    "high": 5025,
+    "low": 4904,
+    "close": 4951
+   },
+   {
+    "index": 14,
+    "open": 4963,
+    "high": 4981,
+    "low": 4922,
+    "close": 4958
+   },
+   {
+    "index": 15,
+    "open": 4938,
+    "high": 5004,
+    "low": 4933,
+    "close": 4992
+   },
+   {
+    "index": 16,
+    "open": 4997,
+    "high": 5039,
+    "low": 4950,
+    "close": 4951
+   },
+   {
+    "index": 17,
+    "open": 4952,
+    "high": 5061,
+    "low": 4926,
+    "close": 5031
+   },
+   {
+    "index": 18,
+    "open": 5047,
+    "high": 5087,
+    "low": 5026,
+    "close": 5069
+   },
+   {
+    "index": 19,
+    "open": 5071,
+    "high": 5223,
+    "low": 5028,
+    "close": 5181
+   },
+   {
+    "index": 20,
+    "open": 5184,
+    "high": 5253,
+    "low": 5183,
+    "close": 5248
+   },
+   {
+    "index": 21,
+    "open": 5238,
+    "high": 5356,
+    "low": 5202,
+    "close": 5350
+   },
+   {
+    "index": 22,
+    "open": 5348,
+    "high": 5449,
+    "low": 5309,
+    "close": 5425
+   },
+   {
+    "index": 23,
+    "open": 5426,
+    "high": 5435,
+    "low": 5350,
+    "close": 5400
+   },
+   {
+    "index": 24,
+    "open": 5415,
+    "high": 5439,
+    "low": 5316,
+    "close": 5353
+   },
+   {
+    "index": 25,
+    "open": 5363,
+    "high": 5424,
+    "low": 5353,
+    "close": 5420
+   },
+   {
+    "index": 26,
+    "open": 5419,
+    "high": 5461,
+    "low": 5383,
+    "close": 5427
+   },
+   {
+    "index": 27,
+    "open": 5425,
+    "high": 5511,
+    "low": 5402,
+    "close": 5457
+   },
+   {
+    "index": 28,
+    "open": 5457,
+    "high": 5496,
+    "low": 5347,
+    "close": 5378
+   },
+   {
+    "index": 29,
+    "open": 5393,
+    "high": 5436,
+    "low": 5351,
+    "close": 5379
+   },
+   {
+    "index": 30,
+    "open": 5379,
+    "high": 5528,
+    "low": 5373,
+    "close": 5492
+   },
+   {
+    "index": 31,
+    "open": 5482,
+    "high": 5562,
+    "low": 5472,
+    "close": 5509
+   },
+   {
+    "index": 32,
+    "open": 5504,
+    "high": 5546,
+    "low": 5428,
+    "close": 5480
+   },
+   {
+    "index": 33,
+    "open": 5483,
+    "high": 5530,
+    "low": 5461,
+    "close": 5464
+   },
+   {
+    "index": 34,
+    "open": 5473,
+    "high": 5498,
+    "low": 5382,
+    "close": 5418
+   },
+   {
+    "index": 35,
+    "open": 5429,
+    "high": 5444,
+    "low": 5273,
+    "close": 5283
+   },
+   {
+    "index": 36,
+    "open": 5300,
+    "high": 5394,
+    "low": 5259,
+    "close": 5385
+   },
+   {
+    "index": 37,
+    "open": 5391,
+    "high": 5407,
+    "low": 5282,
+    "close": 5295
+   },
+   {
+    "index": 38,
+    "open": 5291,
+    "high": 5303,
+    "low": 5248,
+    "close": 5278
+   },
+   {
+    "index": 39,
+    "open": 5260,
+    "high": 5298,
+    "low": 5187,
+    "close": 5188
+   },
+   {
+    "index": 40,
+    "open": 5197,
+    "high": 5289,
+    "low": 5169,
+    "close": 5281
+   },
+   {
+    "index": 41,
+    "open": 5289,
+    "high": 5373,
+    "low": 5270,
+    "close": 5355
+   },
+   {
+    "index": 42,
+    "open": 5364,
+    "high": 5431,
+    "low": 5355,
+    "close": 5391
+   },
+   {
+    "index": 43,
+    "open": 5394,
+    "high": 5500,
+    "low": 5363,
+    "close": 5480
+   },
+   {
+    "index": 44,
+    "open": 5480,
+    "high": 5509,
+    "low": 5389,
+    "close": 5415
+   },
+   {
+    "index": 45,
+    "open": 5399,
+    "high": 5524,
+    "low": 5396,
+    "close": 5507
+   },
+   {
+    "index": 46,
+    "open": 5509,
+    "high": 5577,
+    "low": 5479,
+    "close": 5558
+   },
+   {
+    "index": 47,
+    "open": 5532,
+    "high": 5557,
+    "low": 5410,
+    "close": 5415
+   },
+   {
+    "index": 48,
+    "open": 5423,
+    "high": 5488,
+    "low": 5420,
+    "close": 5467
+   },
+   {
+    "index": 49,
+    "open": 5465,
+    "high": 5468,
+    "low": 5392,
+    "close": 5437
+   },
+   {
+    "index": 50,
+    "open": 5426,
+    "high": 5476,
+    "low": 5299,
+    "close": 5351
+   },
+   {
+    "index": 51,
+    "open": 5343,
+    "high": 5402,
+    "low": 5336,
+    "close": 5382
+   },
+   {
+    "index": 52,
+    "open": 5386,
+    "high": 5408,
+    "low": 5336,
+    "close": 5407
+   },
+   {
+    "index": 53,
+    "open": 5402,
+    "high": 5433,
+    "low": 5244,
+    "close": 5277
+   },
+   {
+    "index": 54,
+    "open": 5284,
+    "high": 5300,
+    "low": 5218,
+    "close": 5223
+   },
+   {
+    "index": 55,
+    "open": 5214,
+    "high": 5236,
+    "low": 5105,
+    "close": 5138
+   },
+   {
+    "index": 56,
+    "open": 5137,
+    "high": 5173,
+    "low": 5105,
+    "close": 5144
+   },
+   {
+    "index": 57,
+    "open": 5153,
+    "high": 5215,
+    "low": 5142,
+    "close": 5178
+   },
+   {
+    "index": 58,
+    "open": 5184,
+    "high": 5286,
+    "low": 5135,
+    "close": 5244
+   },
+   {
+    "index": 59,
+    "open": 5245,
+    "high": 5326,
+    "low": 5207,
+    "close": 5299
+   },
+   {
+    "index": 60,
+    "open": 5304,
+    "high": 5331,
+    "low": 5266,
+    "close": 5282
+   },
+   {
+    "index": 61,
+    "open": 5278,
+    "high": 5318,
+    "low": 5227,
+    "close": 5317
+   },
+   {
+    "index": 62,
+    "open": 5307,
+    "high": 5392,
+    "low": 5285,
+    "close": 5367
+   },
+   {
+    "index": 63,
+    "open": 5374,
+    "high": 5402,
+    "low": 5279,
+    "close": 5327
+   },
+   {
+    "index": 64,
+    "open": 5321,
+    "high": 5335,
+    "low": 5274,
+    "close": 5288
+   },
+   {
+    "index": 65,
+    "open": 5286,
+    "high": 5295,
+    "low": 5235,
+    "close": 5257
+   },
+   {
+    "index": 66,
+    "open": 5256,
+    "high": 5328,
+    "low": 5228,
+    "close": 5304
+   },
+   {
+    "index": 67,
+    "open": 5307,
+    "high": 5358,
+    "low": 5182,
+    "close": 5234
+   },
+   {
+    "index": 68,
+    "open": 5235,
+    "high": 5267,
+    "low": 5217,
+    "close": 5257
+   },
+   {
+    "index": 69,
+    "open": 5275,
+    "high": 5330,
+    "low": 5233,
+    "close": 5290
+   },
+   {
+    "index": 70,
+    "open": 5282,
+    "high": 5294,
+    "low": 5219,
+    "close": 5266
+   }
+  ],
+  "1": [
+   {
+    "index": 1,
+    "open": 3881,
+    "high": 3912,
+    "low": 3757,
+    "close": 3768
+   },
+   {
+    "index": 2,
+    "open": 3771,
+    "high": 3808,
+    "low": 3665,
+    "close": 3692
+   },
+   {
+    "index": 3,
+    "open": 3704,
+    "high": 3751,
+    "low": 3689,
+    "close": 3747
+   },
+   {
+    "index": 4,
+    "open": 3745,
+    "high": 3765,
+    "low": 3639,
+    "close": 3647
+   },
+   {
+    "index": 5,
+    "open": 3654,
+    "high": 3665,
+    "low": 3588,
+    "close": 3621
+   },
+   {
+    "index": 6,
+    "open": 3621,
+    "high": 3633,
+    "low": 3576,
+    "close": 3585
+   },
+   {
+    "index": 7,
+    "open": 3585,
+    "high": 3610,
+    "low": 3529,
+    "close": 3539
+   },
+   {
+    "index": 8,
+    "open": 3533,
+    "high": 3538,
+    "low": 3519,
+    "close": 3529
+   },
+   {
+    "index": 9,
+    "open": 3520,
+    "high": 3585,
+    "low": 3501,
+    "close": 3556
+   },
+   {
+    "index": 10,
+    "open": 3551,
+    "high": 3585,
+    "low": 3520,
+    "close": 3532
+   },
+   {
+    "index": 11,
+    "open": 3535,
+    "high": 3557,
+    "low": 3484,
+    "close": 3485
+   },
+   {
+    "index": 12,
+    "open": 3498,
+    "high": 3535,
+    "low": 3476,
+    "close": 3508
+   },
+   {
+    "index": 13,
+    "open": 3497,
+    "high": 3538,
+    "low": 3465,
+    "close": 3522
+   },
+   {
+    "index": 14,
+    "open": 3526,
+    "high": 3560,
+    "low": 3496,
+    "close": 3519
+   },
+   {
+    "index": 15,
+    "open": 3505,
+    "high": 3505,
+    "low": 3433,
+    "close": 3438
+   },
+   {
+    "index": 16,
+    "open": 3438,
+    "high": 3440,
+    "low": 3423,
+    "close": 3435
+   },
+   {
+    "index": 17,
+    "open": 3437,
+    "high": 3481,
+    "low": 3409,
+    "close": 3468
+   },
+   {
+    "index": 18,
+    "open": 3468,
+    "high": 3490,
+    "low": 3455,
+    "close": 3472
+   },
+   {
+    "index": 19,
+    "open": 3463,
+    "high": 3481,
+    "low": 3441,
+    "close": 3479
+   },
+   {
+    "index": 20,
+    "open": 3491,
+    "high": 3499,
+    "low": 3471,
+    "close": 3473
+   },
+   {
+    "index": 21,
+    "open": 3476,
+    "high": 3518,
+    "low": 3449,
+    "close": 3514
+   },
+   {
+    "index": 22,
+    "open": 3499,
+    "high": 3515,
+    "low": 3496,
+    "close": 3513
+   },
+   {
+    "index": 23,
+    "open": 3513,
+    "high": 3579,
+    "low": 3512,
+    "close": 3544
+   },
+   {
+    "index": 24,
+    "open": 3529,
+    "high": 3548,
+    "low": 3508,
+    "close": 3528
+   },
+   {
+    "index": 25,
+    "open": 3537,
+    "high": 3637,
+    "low": 3532,
+    "close": 3623
+   },
+   {
+    "index": 26,
+    "open": 3624,
+    "high": 3738,
+    "low": 3617,
+    "close": 3710
+   },
+   {
+    "index": 27,
+    "open": 3692,
+    "high": 3702,
+    "low": 3668,
+    "close": 3689
+   },
+   {
+    "index": 28,
+    "open": 3672,
+    "high": 3704,
+    "low": 3672,
+    "close": 3680
+   },
+   {
+    "index": 29,
+    "open": 3686,
+    "high": 3727,
+    "low": 3676,
+    "close": 3703
+   },
+   {
+    "index": 30,
+    "open": 3696,
+    "high": 3803,
+    "low": 3666,
+    "close": 3777
+   },
+   {
+    "index": 31,
+    "open": 3781,
+    "high": 3796,
+    "low": 3701,
+    "close": 3727
+   },
+   {
+    "index": 32,
+    "open": 3727,
+    "high": 3782,
+    "low": 3705,
+    "close": 3749
+   },
+   {
+    "index": 33,
+    "open": 3760,
+    "high": 3792,
+    "low": 3734,
+    "close": 3765
+   },
+   {
+    "index": 34,
+    "open": 3767,
+    "high": 3800,
+    "low": 3671,
+    "close": 3683
+   },
+   {
+    "index": 35,
+    "open": 3685,
+    "high": 3751,
+    "low": 3685,
+    "close": 3715
+   },
+   {
+    "index": 36,
+    "open": 3708,
+    "high": 3713,
+    "low": 3647,
+    "close": 3667
+   },
+   {
+    "index": 37,
+    "open": 3668,
+    "high": 3773,
+    "low": 3641,
+    "close": 3743
+   },
+   {
+    "index": 38,
+    "open": 3739,
+    "high": 3831,
+    "low": 3730,
+    "close": 3800
+   },
+   {
+    "index": 39,
+    "open": 3791,
+    "high": 3803,
+    "low": 3760,
+    "close": 3782
+   },
+   {
+    "index": 40,
+    "open": 3783,
+    "high": 3808,
+    "low": 3725,
+    "close": 3741
+   },
+   {
+    "index": 41,
+    "open": 3753,
+    "high": 3836,
+    "low": 3752,
+    "close": 3828
+   },
+   {
+    "index": 42,
+    "open": 3825,
+    "high": 3873,
+    "low": 3797,
+    "close": 3852
+   },
+   {
+    "index": 43,
+    "open": 3866,
+    "high": 3931,
+    "low": 3841,
+    "close": 3893
+   },
+   {
+    "index": 44,
+    "open": 3893,
+    "high": 3921,
+    "low": 3809,
+    "close": 3830
+   },
+   {
+    "index": 45,
+    "open": 3825,
+    "high": 3861,
+    "low": 3739,
+    "close": 3756
+   },
+   {
+    "index": 46,
+    "open": 3761,
+    "high": 3772,
+    "low": 3738,
+    "close": 3757
+   },
+   {
+    "index": 47,
+    "open": 3759,
+    "high": 3764,
+    "low": 3622,
+    "close": 3643
+   },
+   {
+    "index": 48,
+    "open": 3652,
+    "high": 3658,
+    "low": 3643,
+    "close": 3653
+   },
+   {
+    "index": 49,
+    "open": 3652,
+    "high": 3693,
+    "low": 3618,
+    "close": 3691
+   },
+   {
+    "index": 50,
+    "open": 3695,
+    "high": 3709,
+    "low": 3685,
+    "close": 3690
+   },
+   {
+    "index": 51,
+    "open": 3694,
+    "high": 3757,
+    "low": 3684,
+    "close": 3746
+   },
+   {
+    "index": 52,
+    "open": 3750,
+    "high": 3828,
+    "low": 3739,
+    "close": 3814
+   },
+   {
+    "index": 53,
+    "open": 3803,
+    "high": 3837,
+    "low": 3795,
+    "close": 3795
+   },
+   {
+    "index": 54,
+    "open": 3786,
+    "high": 3811,
+    "low": 3706,
+    "close": 3733
+   },
+   {
+    "index": 55,
+    "open": 3740,
+    "high": 3869,
+    "low": 3727,
+    "close": 3845
+   },
+   {
+    "index": 56,
+    "open": 3851,
+    "high": 3872,
+    "low": 3806,
+    "close": 3816
+   },
+   {
+    "index": 57,
+    "open": 3806,
+    "high": 3973,
+    "low": 3795,
+    "close": 3967
+   },
+   {
+    "index": 58,
+    "open": 3976,
+    "high": 4010,
+    "low": 3891,
+    "close": 3903
+   },
+   {
+    "index": 59,
+    "open": 3889,
+    "high": 3923,
+    "low": 3842,
+    "close": 3878
+   },
+   {
+    "index": 60,
+    "open": 3873,
+    "high": 3987,
+    "low": 3861,
+    "close": 3963
+   },
+   {
+    "index": 61,
+    "open": 3955,
+    "high": 4040,
+    "low": 3952,
+    "close": 4004
+   },
+   {
+    "index": 62,
+    "open": 3997,
+    "high": 4030,
+    "low": 3901,
+    "close": 3908
+   },
+   {
+    "index": 63,
+    "open": 3925,
+    "high": 3938,
+    "low": 3895,
+    "close": 3903
+   },
+   {
+    "index": 64,
+    "open": 3895,
+    "high": 3928,
+    "low": 3850,
+    "close": 3851
+   },
+   {
+    "index": 65,
+    "open": 3846,
+    "high": 3859,
+    "low": 3765,
+    "close": 3796
+   },
+   {
+    "index": 66,
+    "open": 3794,
+    "high": 3827,
+    "low": 3788,
+    "close": 3820
+   },
+   {
+    "index": 67,
+    "open": 3816,
+    "high": 3847,
+    "low": 3730,
+    "close": 3753
+   },
+   {
+    "index": 68,
+    "open": 3742,
+    "high": 3782,
+    "low": 3710,
+    "close": 3755
+   },
+   {
+    "index": 69,
+    "open": 3755,
+    "high": 3787,
+    "low": 3666,
+    "close": 3699
+   },
+   {
+    "index": 70,
+    "open": 3702,
+    "high": 3704,
+    "low": 3670,
+    "close": 3682
+   }
+  ],
+  "4294967295": [
+   {
+    "index": 1,
+    "open": 4690,
+    "high": 4773,
+    "low": 4666,
+    "close": 4769
+   },
+   {
+    "index": 2,
+    "open": 4751,
+    "high": 4847,
+    "low": 4722,
+    "close": 4800
+   },
+   {
+    "index": 3,
+    "open": 4797,
+    "high": 4863,
+    "low": 4761,
+    "close": 4840
+   },
+   {
+    "index": 4,
+    "open": 4845,
+    "high": 4857,
+    "low": 4713,
+    "close": 4759
+   },
+   {
+    "index": 5,
+    "open": 4766,
+    "high": 4784,
+    "low": 4580,
+    "close": 4613
+   },
+   {
+    "index": 6,
+    "open": 4611,
+    "high": 4615,
+    "low": 4591,
+    "close": 4613
+   },
+   {
+    "index": 7,
+    "open": 4620,
+    "high": 4700,
+    "low": 4597,
+    "close": 4686
+   },
+   {
+    "index": 8,
+    "open": 4679,
+    "high": 4734,
+    "low": 4649,
+    "close": 4714
+   },
+   {
+    "index": 9,
+    "open": 4706,
+    "high": 4772,
+    "low": 4698,
+    "close": 4726
+   },
+   {
+    "index": 10,
+    "open": 4721,
+    "high": 4753,
+    "low": 4721,
+    "close": 4730
+   },
+   {
+    "index": 11,
+    "open": 4719,
+    "high": 4749,
+    "low": 4641,
+    "close": 4680
+   },
+   {
+    "index": 12,
+    "open": 4683,
+    "high": 4688,
+    "low": 4563,
+    "close": 4606
+   },
+   {
+    "index": 13,
+    "open": 4598,
+    "high": 4734,
+    "low": 4571,
+    "close": 4688
+   },
+   {
+    "index": 14,
+    "open": 4690,
+    "high": 4728,
+    "low": 4609,
+    "close": 4614
+   },
+   {
+    "index": 15,
+    "open": 4620,
+    "high": 4653,
+    "low": 4578,
+    "close": 4644
+   },
+   {
+    "index": 16,
+    "open": 4654,
+    "high": 4680,
+    "low": 4427,
+    "close": 4432
+   },
+   {
+    "index": 17,
+    "open": 4433,
+    "high": 4448,
+    "low": 4406,
+    "close": 4437
+   },
+   {
+    "index": 18,
+    "open": 4438,
+    "high": 4496,
+    "low": 4429,
+    "close": 4457
+   },
+   {
+    "index": 19,
+    "open": 4462,
+    "high": 4491,
+    "low": 4391,
+    "close": 4408
+   },
+   {
+    "index": 20,
+    "open": 4405,
+    "high": 4503,
+    "low": 4362,
+    "close": 4482
+   },
+   {
+    "index": 21,
+    "open": 4492,
+    "high": 4546,
+    "low": 4477,
+    "close": 4533
+   },
+   {
+    "index": 22,
+    "open": 4538,
+    "high": 4551,
+    "low": 4405,
+    "close": 4449
+   },
+   {
+    "index": 23,
+    "open": 4442,
+    "high": 4492,
+    "low": 4418,
+    "close": 4483
+   },
+   {
+    "index": 24,
+    "open": 4478,
+    "high": 4549,
+    "low": 4440,
+    "close": 4511
+   },
+   {
+    "index": 25,
+    "open": 4523,
+    "high": 4612,
+    "low": 4483,
+    "close": 4575
+   },
+   {
+    "index": 26,
+    "open": 4579,
+    "high": 4638,
+    "low": 4567,
+    "close": 4634
+   },
+   {
+    "index": 27,
+    "open": 4633,
+    "high": 4813,
+    "low": 4596,
+    "close": 4771
+   },
+   {
+    "index": 28,
+    "open": 4758,
+    "high": 4792,
+    "low": 4708,
+    "close": 4745
+   },
+   {
+    "index": 29,
+    "open": 4759,
+    "high": 4906,
+    "low": 4726,
+    "close": 4861
+   },
+   {
+    "index": 30,
+    "open": 4864,
+    "high": 4902,
+    "low": 4656,
+    "close": 4674
+   },
+   {
+    "index": 31,
+    "open": 4656,
+    "high": 4672,
+    "low": 4624,
+    "close": 4649
+   },
+   {
+    "index": 32,
+    "open": 4637,
+    "high": 4786,
+    "low": 4603,
+    "close": 4761
+   },
+   {
+    "index": 33,
+    "open": 4762,
+    "high": 4780,
+    "low": 4684,
+    "close": 4709
+   },
+   {
+    "index": 34,
+    "open": 4702,
+    "high": 4771,
+    "low": 4681,
+    "close": 4724
+   },
+   {
+    "index": 35,
+    "open": 4738,
+    "high": 4803,
+    "low": 4703,
+    "close": 4784
+   },
+   {
+    "index": 36,
+    "open": 4770,
+    "high": 4843,
+    "low": 4743,
+    "close": 4803
+   },
+   {
+    "index": 37,
+    "open": 4810,
+    "high": 4810,
+    "low": 4699,
+    "close": 4736
+   },
+   {
+    "index": 38,
+    "open": 4739,
+    "high": 4761,
+    "low": 4662,
+    "close": 4706
+   },
+   {
+    "index": 39,
+    "open": 4715,
+    "high": 4949,
+    "low": 4690,
+    "close": 4903
+   },
+   {
+    "index": 40,
+    "open": 4911,
+    "high": 4949,
+    "low": 4873,
+    "close": 4907
+   },
+   {
+    "index": 41,
+    "open": 4899,
+    "high": 4942,
+    "low": 4853,
+    "close": 4939
+   },
+   {
+    "index": 42,
+    "open": 4932,
+    "high": 5008,
+    "low": 4895,
+    "close": 5008
+   },
+   {
+    "index": 43,
+    "open": 5017,
+    "high": 5066,
+    "low": 4958,
+    "close": 4992
+   },
+   {
+    "index": 44,
+    "open": 4981,
+    "high": 5006,
+    "low": 4938,
+    "close": 4954
+   },
+   {
+    "index": 45,
+    "open": 4959,
+    "high": 5076,
+    "low": 4944,
+    "close": 5041
+   },
+   {
+    "index": 46,
+    "open": 5052,
+    "high": 5055,
+    "low": 4973,
+    "close": 5007
+   },
+   {
+    "index": 47,
+    "open": 4995,
+    "high": 5087,
+    "low": 4965,
+    "close": 5040
+   },
+   {
+    "index": 48,
+    "open": 5053,
+    "high": 5100,
+    "low": 4949,
+    "close": 4998
+   },
+   {
+    "index": 49,
+    "open": 4993,
+    "high": 5029,
+    "low": 4966,
+    "close": 5021
+   },
+   {
+    "index": 50,
+    "open": 5020,
+    "high": 5079,
+    "low": 4991,
+    "close": 5051
+   },
+   {
+    "index": 51,
+    "open": 5048,
+    "high": 5111,
+    "low": 5023,
+    "close": 5084
+   },
+   {
+    "index": 52,
+    "open": 5113,
+    "high": 5276,
+    "low": 5090,
+    "close": 5246
+   },
+   {
+    "index": 53,
+    "open": 5252,
+    "high": 5333,
+    "low": 5247,
+    "close": 5314
+   },
+   {
+    "index": 54,
+    "open": 5317,
+    "high": 5338,
+    "low": 5209,
+    "close": 5237
+   },
+   {
+    "index": 55,
+    "open": 5251,
+    "high": 5252,
+    "low": 5211,
+    "close": 5240
+   },
+   {
+    "index": 56,
+    "open": 5251,
+    "high": 5285,
+    "low": 5201,
+    "close": 5206
+   },
+   {
+    "index": 57,
+    "open": 5198,
+    "high": 5223,
+    "low": 5107,
+    "close": 5111
+   },
+   {
+    "index": 58,
+    "open": 5094,
+    "high": 5104,
+    "low": 4983,
+    "close": 5002
+   },
+   {
+    "index": 59,
+    "open": 5003,
+    "high": 5053,
+    "low": 4852,
+    "close": 4890
+   },
+   {
+    "index": 60,
+    "open": 4896,
+    "high": 4935,
+    "low": 4833,
+    "close": 4861
+   },
+   {
+    "index": 61,
+    "open": 4875,
+    "high": 4883,
+    "low": 4865,
+    "close": 4875
+   },
+   {
+    "index": 62,
+    "open": 4882,
+    "high": 5015,
+    "low": 4881,
+    "close": 4976
+   },
+   {
+    "index": 63,
+    "open": 4973,
+    "high": 4992,
+    "low": 4828,
+    "close": 4846
+   },
+   {
+    "index": 64,
+    "open": 4847,
+    "high": 4928,
+    "low": 4810,
+    "close": 4894
+   },
+   {
+    "index": 65,
+    "open": 4906,
+    "high": 4917,
+    "low": 4758,
+    "close": 4796
+   },
+   {
+    "index": 66,
+    "open": 4798,
+    "high": 4802,
+    "low": 4747,
+    "close": 4763
+   },
+   {
+    "index": 67,
+    "open": 4760,
+    "high": 4790,
+    "low": 4730,
+    "close": 4737
+   },
+   {
+    "index": 68,
+    "open": 4744,
+    "high": 4834,
+    "low": 4713,
+    "close": 4796
+   },
+   {
+    "index": 69,
+    "open": 4784,
+    "high": 4823,
+    "low": 4726,
+    "close": 4761
+   },
+   {
+    "index": 70,
+    "open": 4756,
+    "high": 4800,
+    "low": 4700,
+    "close": 4743
+   }
+  ]
+ }
+}
+
+
+===== FILE: tests\helpers\exposure.ts =====
+
+// FLOW-02: checks that the UI-facing view never contains future candles.
+import type { RoundState, RoundView } from '../../src/engine';
+
+function isCandleLike(v: unknown): v is { index: number } {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as Record<string, unknown>).index === 'number' &&
+    'open' in v &&
+    'close' in v
+  );
+}
+
+/** Throws if anything in `view` reveals a candle after k. */
+export function assertNoFutureCandles(view: RoundView, state: RoundState): void {
+  const k = state.k;
+  const future = new Set<unknown>(state.candles.slice(k));
+  if (view.candles.length !== k) throw new Error(`view has ${view.candles.length} candles, expected ${k}`);
+
+  const seen = new Set<unknown>();
+  const walk = (value: unknown, path: string): void => {
+    if (typeof value !== 'object' || value === null || seen.has(value)) return;
+    seen.add(value);
+    if (future.has(value)) throw new Error(`future candle object exposed at ${path}`);
+    if (value === state.candles) throw new Error(`full candle list exposed at ${path}`);
+    if (isCandleLike(value) && value.index > k) throw new Error(`candle ${value.index} exposed at ${path} (k = ${k})`);
+    if (Array.isArray(value) && value.length > k && value.some(isCandleLike)) {
+      throw new Error(`list of ${value.length} candles exposed at ${path}`);
+    }
+    for (const [key, child] of Object.entries(value)) walk(child, `${path}.${key}`);
+  };
+  walk(view, 'view');
+}
+
+
+===== FILE: tests\helpers\property.ts =====
+
+// Reproducible property testing (test-cases.md "General rules").
+// Every case uses a fixed seed; a failure reports the market seed and the full
+// action sequence, which replayActions() can run again exactly.
+
+import {
+  advance,
+  cancelOrder,
+  createRound,
+  finishRound,
+  getView,
+  Mulberry32,
+  replayRound,
+  submitOrder,
+  type RoundState,
+  type Side,
+} from '../../src/engine';
+
+export type Action =
+  | { type: 'submit'; side: Side; qty: string }
+  | { type: 'cancel' }
+  | { type: 'advance' }
+  | { type: 'finish' }
+  | { type: 'replay' };
+
+export function applyAction(state: RoundState, action: Action): RoundState {
+  switch (action.type) {
+    case 'submit':
+      return submitOrder(state, action.side, action.qty);
+    case 'cancel':
+      return cancelOrder(state);
+    case 'advance':
+      return advance(state);
+    case 'finish':
+      return finishRound(state);
+    case 'replay':
+      return replayRound(state);
+  }
+}
+
+/** Re-runs a recorded action sequence from scratch. */
+export function replayActions(seed: number, actions: readonly Action[]): RoundState {
+  return actions.reduce(applyAction, createRound(seed));
+}
+
+const INVALID_QUANTITIES = ['0', '-3', '1.5', '', ' ', 'abc', '1e3', '+5', ' 5', '05', '1000001'];
+
+/** Picks a random action â€” valid and invalid ones (test-cases.md Â§12). */
+export function randomAction(rng: Mulberry32, state: RoundState): Action {
+  const r = rng.next();
+  if (state.k === 70 && r < 0.3) return { type: 'finish' };
+  if (r < 0.42) return { type: 'advance' };
+  if (r < 0.84) {
+    const side: Side = rng.next() < 0.55 ? 'BUY' : 'SELL';
+    const v = getView(state);
+    const q = rng.next();
+    let qty: string;
+    if (q < 0.1) qty = INVALID_QUANTITIES[Math.floor(rng.next() * INVALID_QUANTITIES.length)] ?? '0';
+    else if (q < 0.3) qty = String(side === 'BUY' ? Math.max(1, v.maxBuyQuantity) : Math.max(1, v.maxSellQuantity));
+    else {
+      const cap = side === 'BUY' ? v.maxBuyQuantity : v.maxSellQuantity;
+      qty = String(1 + Math.floor(rng.next() * (cap + 3)));
+    }
+    return { type: 'submit', side, qty };
+  }
+  if (r < 0.93) return { type: 'cancel' };
+  if (r < 0.995) return { type: 'finish' };
+  return { type: 'replay' };
+}
+
+export class PropertyFailure extends Error {
+  constructor(
+    readonly seed: number,
+    readonly actions: readonly Action[],
+    cause: unknown,
+  ) {
+    super(
+      `Property failed for market seed ${seed} after ${actions.length} actions.\n` +
+        `Reproduce with: replayActions(${seed}, ${JSON.stringify(actions)})\n` +
+        `Cause: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = 'PropertyFailure';
+  }
+}
+
+export interface PropertyOptions {
+  cases: number;
+  baseSeed: number;
+  steps: number;
+}
+
+/**
+ * Runs `cases` random action sequences. After every action, `check(next, prev, action)` runs.
+ * Any thrown error is re-thrown as a PropertyFailure with the seed and actions.
+ */
+export function forEachRandomRun(
+  options: PropertyOptions,
+  check: (next: RoundState, prev: RoundState, action: Action) => void,
+): void {
+  for (let i = 0; i < options.cases; i += 1) {
+    const seed = (options.baseSeed + Math.imul(i, 0x9e3779b1)) >>> 0;
+    const actionRng = new Mulberry32((seed ^ 0x5bd1e995) >>> 0);
+    const actions: Action[] = [];
+    let state = createRound(seed);
+    try {
+      for (let step = 0; step < options.steps; step += 1) {
+        const action = randomAction(actionRng, state);
+        actions.push(action);
+        const next = applyAction(state, action);
+        check(next, state, action);
+        state = next;
+      }
+    } catch (err) {
+      throw new PropertyFailure(seed, actions, err);
+    }
+  }
+}
+
+
+===== FILE: tests\helpers\rounds.ts =====
+
+// Test helpers: build rounds with exact, hand-chosen prices.
+
+import {
+  createRoundFromCandles,
+  TOTAL_CANDLES,
+  advance,
+  type Candle,
+  type RandomSource,
+  type RoundState,
+} from '../../src/engine';
+
+type CandleOverride = Partial<Omit<Candle, 'index'>>;
+
+/**
+ * 70 flat candles at `price`, with optional overrides by global index.
+ * high/low default to max/min of open and close so every candle stays valid.
+ */
+export function makeCandles(price: number, overrides: Record<number, CandleOverride> = {}): Candle[] {
+  const candles: Candle[] = [];
+  for (let index = 1; index <= TOTAL_CANDLES; index += 1) {
+    const o = overrides[index] ?? {};
+    const open = o.open ?? price;
+    const close = o.close ?? price;
+    candles.push({
+      index,
+      open,
+      close,
+      high: o.high ?? Math.max(open, close),
+      low: o.low ?? Math.min(open, close),
+    });
+  }
+  return candles;
+}
+
+export function makeRound(price: number, overrides: Record<number, CandleOverride> = {}, seed = 42): RoundState {
+  return createRoundFromCandles(seed, makeCandles(price, overrides));
+}
+
+/** Advance until the newest visible candle is `k`. */
+export function advanceTo(state: RoundState, k: number): RoundState {
+  let s = state;
+  while (s.k < k) {
+    const next = advance(s);
+    if (next === s) throw new Error(`Could not advance past ${s.k}`);
+    s = next;
+  }
+  return s;
+}
+
+/** RNG stub: returns scripted values by 1-based draw position, `fallback` otherwise. Counts draws. */
+export class ScriptedRng implements RandomSource {
+  draws = 0;
+  constructor(
+    private readonly script: Record<number, number> = {},
+    private readonly fallback = 0.5,
+  ) {}
+  next(): number {
+    this.draws += 1;
+    return this.script[this.draws] ?? this.fallback;
+  }
+}
+
+/** Fills positions [from, from+count) of a script with one value. */
+export function fill(script: Record<number, number>, from: number, count: number, value: number): void {
+  for (let p = from; p < from + count; p += 1) script[p] = value;
+}
+
+
+===== FILE: tests\account.test.ts =====
+
+// ACC-01 â€¦ ACC-12 and PNL-01 â€¦ PNL-11 â€” test-cases.md Â§7â€“8, plus the worked example (rules.md Â§7.7).
+import { describe, expect, it } from 'vitest';
+import {
+  advance,
+  applyBuy,
+  applySell,
+  averageEntry,
+  equity,
+  formatCents,
+  formatPercent,
+  getView,
+  initialAccount,
+  MIN_PRICE,
+  Mulberry32,
+  positionValue,
+  START_CASH,
+  submitOrder,
+  unrealizedPnl,
+  type Account,
+} from '../src/engine';
+import { makeRound } from './helpers/rounds';
+
+const buy = (a: Account, q: number, p: number) => applyBuy(a, q, p).account;
+
+describe('Cash, shares and cost basis (Â§7.2â€“7.3)', () => {
+  const a1 = buy(initialAccount(), 10, 2500);
+  const a2 = buy(a1, 5, 2600);
+  const sell3 = applySell(a2, 4, 2650);
+  const sell4 = applySell(sell3.account, 11, 2400);
+
+  it('ACC-01: BUY 10 @ 2500', () => {
+    expect(a1).toEqual({ cash: 75000, shares: 10, costBasis: 25000, realizedPnl: 0 });
+  });
+
+  it('ACC-02: then BUY 5 @ 2600', () => {
+    expect(a2).toEqual({ cash: 62000, shares: 15, costBasis: 38000, realizedPnl: 0 });
+  });
+
+  it('ACC-03: then SELL 4 @ 2650', () => {
+    expect(sell3.proceeds).toBe(10600);
+    expect(sell3.removedBasis).toBe(10133);
+    expect(sell3.tradePnl).toBe(467);
+    expect(sell3.account).toEqual({ cash: 72600, shares: 11, costBasis: 27867, realizedPnl: 467 });
+  });
+
+  it('ACC-04: then SELL 11 @ 2400', () => {
+    expect(sell4.removedBasis).toBe(27867);
+    expect(sell4.tradePnl).toBe(-1467);
+    expect(sell4.account).toEqual({ cash: 99000, shares: 0, costBasis: 0, realizedPnl: -1000 });
+  });
+
+  it('ACC-05 / ACC-06: half-cent case rounds up first, leaving no leftover cents', () => {
+    const start: Account = { cash: 0, shares: 2, costBasis: 1001, realizedPnl: 0 };
+    const first = applySell(start, 1, 500);
+    expect(first.removedBasis).toBe(501);
+    expect(first.account.costBasis).toBe(500);
+    const second = applySell(first.account, 1, 500);
+    expect(second.removedBasis).toBe(500);
+    expect(second.account.costBasis).toBe(0);
+  });
+
+  it('ACC-07: a full close always zeroes the cost basis exactly', () => {
+    const rng = new Mulberry32(77);
+    for (let i = 0; i < 5000; i += 1) {
+      const shares = 1 + Math.floor(rng.next() * 5000);
+      const costBasis = Math.floor(rng.next() * 50_000_000);
+      const r = applySell({ cash: 0, shares, costBasis, realizedPnl: 0 }, shares, 1 + Math.floor(rng.next() * 9000));
+      expect(r.removedBasis).toBe(costBasis);
+      expect(r.account.costBasis).toBe(0);
+    }
+  });
+
+  it('ACC-08: buy then sell at the same price â†’ P&L 0, cash back to start', () => {
+    const r = applySell(buy(initialAccount(), 7, 3123), 7, 3123);
+    expect(r.tradePnl).toBe(0);
+    expect(r.account.cash).toBe(START_CASH);
+  });
+
+  it('ACC-09: selling at a loss gives negative P&L', () => {
+    const r = applySell(buy(initialAccount(), 10, 3000), 10, 2900);
+    expect(r.tradePnl).toBe(-1000);
+    expect(r.account.realizedPnl).toBe(-1000);
+  });
+
+  it('ACC-10: buy 7 @ 3333, sell 1 seven times â†’ removed bases sum to 23331', () => {
+    let a = buy(initialAccount(), 7, 3333);
+    let removed = 0;
+    for (let i = 0; i < 7; i += 1) {
+      const r = applySell(a, 1, 3333);
+      removed += r.removedBasis;
+      a = r.account;
+    }
+    expect(removed).toBe(23331);
+    expect(a.costBasis).toBe(0);
+  });
+
+  it('ACC-11: trade records have the right fields (worked example through a round)', () => {
+    const s = advance(submitOrder(makeRound(2500), 'BUY', '10'));
+    expect(s.trades[0]).toEqual({
+      id: 1,
+      type: 'player',
+      side: 'BUY',
+      candleIndex: 11,
+      quantity: 10,
+      price: 2500,
+      amount: 25000,
+      tradePnl: null,
+      cashAfter: 75000,
+      sharesAfter: 10,
+    });
+    const s2 = advance(submitOrder(s, 'SELL', '4'));
+    expect(s2.trades[1]).toEqual({
+      id: 2,
+      type: 'player',
+      side: 'SELL',
+      candleIndex: 12,
+      quantity: 4,
+      price: 2500,
+      amount: 10000,
+      tradePnl: 0,
+      cashAfter: 85000,
+      sharesAfter: 6,
+    });
+  });
+
+  it('ACC-12: after spending all cash, BUY 1 is rejected and cash stays 0', () => {
+    const s = advance(submitOrder(makeRound(2500), 'BUY', '40'));
+    const after = submitOrder(s, 'BUY', '1');
+    expect(after.pending).toBeNull();
+    expect(after.account.cash).toBe(0);
+  });
+
+  it('applyBuy/applySell refuse invalid fills', () => {
+    expect(() => applyBuy(initialAccount(), 41, 2500)).toThrow();
+    expect(() => applySell(initialAccount(), 1, 2500)).toThrow();
+    expect(() => applyBuy(initialAccount(), 1.5, 2500)).toThrow();
+  });
+});
+
+describe('P&L, average entry and equity (Â§7.4)', () => {
+  it('PNL-01: no position â†’ unrealized 0, no average entry, equity = cash', () => {
+    const a = initialAccount();
+    expect(unrealizedPnl(a, 2500)).toBe(0);
+    expect(averageEntry(a)).toBeNull();
+    expect(equity(a, 2500)).toBe(a.cash);
+  });
+
+  it('PNL-02: 15 shares, basis 38000, mark 2700', () => {
+    const a: Account = { cash: 62000, shares: 15, costBasis: 38000, realizedPnl: 0 };
+    expect(unrealizedPnl(a, 2700)).toBe(2500);
+    expect(positionValue(a, 2700)).toBe(40500);
+  });
+
+  it('PNL-03 / PNL-04: average entry display', () => {
+    expect(averageEntry({ cash: 0, shares: 15, costBasis: 38000, realizedPnl: 0 })).toBe(2533);
+    expect(formatCents(2533)).toBe('$25.33');
+    expect(averageEntry({ cash: 0, shares: 11, costBasis: 27867, realizedPnl: 0 })).toBe(2533);
+  });
+
+  it('PNL-05: average entry is never used in calculations', () => {
+    // Same account values, so every derived value is identical regardless of how the average would round.
+    const a: Account = { cash: 62000, shares: 15, costBasis: 38000, realizedPnl: 0 };
+    const avg = averageEntry(a)!;
+    expect(avg * a.shares).not.toBe(a.costBasis); // rounding would have changed the basisâ€¦
+    expect(unrealizedPnl(a, 2700)).toBe(15 * 2700 - 38000); // â€¦but the calculation uses costBasis
+    expect(applySell(a, 4, 2650).removedBasis).toBe(10133);
+  });
+
+  it('PNL-06: equity at start is 100000 and return is 0.00%', () => {
+    const v = getView(makeRound(2500));
+    expect(v.account.equity).toBe(100000);
+    expect(v.account.totalReturn).toBe(0);
+    expect(formatPercent(v.account.totalReturn, START_CASH)).toBe('0.00%');
+  });
+
+  it('PNL-07 + worked example (rules.md Â§7.7) through a real round', () => {
+    let s = makeRound(2500, {
+      11: { open: 2500, close: 2500 },
+      12: { open: 2600, close: 2700 },
+      13: { open: 2650, close: 2650 },
+      14: { open: 2400, close: 2400 },
+    });
+    s = advance(submitOrder(s, 'BUY', '10')); // k = 11
+    expect(s.account).toEqual({ cash: 75000, shares: 10, costBasis: 25000, realizedPnl: 0 });
+    s = advance(submitOrder(s, 'BUY', '5')); // k = 12
+    let v = getView(s);
+    expect(v.account.averageEntry).toBe(2533);
+    expect(v.account.unrealizedPnl).toBe(2500);
+    expect(v.account.equity).toBe(102500);
+    s = advance(submitOrder(s, 'SELL', '4')); // k = 13
+    v = getView(s);
+    expect(s.account).toEqual({ cash: 72600, shares: 11, costBasis: 27867, realizedPnl: 467 });
+    expect(v.account.unrealizedPnl).toBe(1283);
+    expect(v.account.equity).toBe(101750);
+    expect(v.account.equity).toBe(START_CASH + s.account.realizedPnl + v.account.unrealizedPnl);
+    s = advance(submitOrder(s, 'SELL', '11')); // k = 14
+    expect(s.account).toEqual({ cash: 99000, shares: 0, costBasis: 0, realizedPnl: -1000 });
+    expect(s.trades[3]!.tradePnl).toBe(-1467);
+    expect(getView(s).account.equity).toBe(99000);
+  });
+
+  it('PNL-10: with no trade, unrealized P&L changes only through the mark price', () => {
+    let s = advance(submitOrder(makeRound(2500, { 12: { close: 2550 } }), 'BUY', '10'));
+    const before = getView(s).account;
+    s = advance(s);
+    const after = getView(s).account;
+    expect(after.cash).toBe(before.cash);
+    expect(after.costBasis).toBe(before.costBasis);
+    expect(after.unrealizedPnl - before.unrealizedPnl).toBe(10 * (2550 - 2500));
+  });
+
+  it('PNL-11: values stay valid integers â‰¥ 0 at the MIN_PRICE floor', () => {
+    const s = advance(advance(submitOrder(makeRound(MIN_PRICE), 'BUY', '1000')));
+    const v = getView(s);
+    expect(v.account.cash).toBe(0);
+    for (const x of [v.account.positionValue, v.account.equity, v.account.costBasis, v.markPrice]) {
+      expect(Number.isSafeInteger(x) && x >= 0).toBe(true);
+    }
+  });
+});
+
+
+===== FILE: tests\candles.test.ts =====
+
+// ENG-01 â€¦ ENG-14 â€” test-cases.md Â§3.
+import { describe, expect, it } from 'vitest';
+import {
+  DRAWS_PER_ROUND,
+  ENGINE_VERSION,
+  generateCandles,
+  generateCandlesFromRng,
+  MAX_GAP,
+  MAX_MOVE,
+  MIN_PRICE,
+  Mulberry32,
+  START_PRICE_MAX,
+  START_PRICE_MIN,
+  type Candle,
+} from '../src/engine';
+import reference from './fixtures/reference-v1.json';
+import { fill, ScriptedRng } from './helpers/rounds';
+
+const SEEDS_1000 = Array.from({ length: 1000 }, (_, i) => (i * 2654435761) >>> 0);
+
+function forEveryCandle(seeds: number[], check: (c: Candle, prev: Candle | undefined, seed: number) => void): void {
+  for (const seed of seeds) {
+    const candles = generateCandles(seed);
+    candles.forEach((c, i) => {
+      try {
+        check(c, candles[i - 1], seed);
+      } catch (err) {
+        throw new Error(`seed ${seed}, candle ${c.index}: ${(err as Error).message}`);
+      }
+    });
+  }
+}
+
+describe('Candle generation (Â§5.3â€“5.6)', () => {
+  it('ENG-01: a round has exactly 70 candles indexed 1..70', () => {
+    const candles = generateCandles(12345);
+    expect(candles).toHaveLength(70);
+    candles.forEach((c, i) => expect(c.index).toBe(i + 1));
+  });
+
+  it('ENG-02: same seed twice gives identical candles', () => {
+    expect(generateCandles(98765)).toEqual(generateCandles(98765));
+  });
+
+  it('ENG-03: different seeds give different candles', () => {
+    expect(generateCandles(1)).not.toEqual(generateCandles(2));
+  });
+
+  it('ENG-04: candles match the independent Python reference for seeds 12345, 1 and 4294967295', () => {
+    expect(reference.engineVersion).toBe(ENGINE_VERSION);
+    const golden = reference.candles as Record<string, Candle[]>;
+    for (const seed of ['12345', '1', '4294967295']) {
+      expect(generateCandles(Number(seed))).toEqual(golden[seed]);
+    }
+  });
+
+  it('ENG-05: one round uses exactly 1821 draws', () => {
+    const rng = new Mulberry32(12345);
+    generateCandlesFromRng(rng);
+    expect(rng.draws).toBe(1821);
+    expect(DRAWS_PER_ROUND).toBe(1821);
+    expect((reference.drawCounts as Record<string, number>)['12345']).toBe(1821);
+  });
+
+  it('ENG-06: open of candle 1 is an integer in [2000, 5000] (1,000 seeds)', () => {
+    for (const seed of SEEDS_1000) {
+      const open1 = generateCandles(seed)[0]!.open;
+      expect(Number.isInteger(open1)).toBe(true);
+      expect(open1 >= START_PRICE_MIN && open1 <= START_PRICE_MAX).toBe(true);
+    }
+  });
+
+  it('ENG-07 / ENG-08: every candle has integer values â‰¥ 100 and a valid high/low (1,000 seeds)', () => {
+    forEveryCandle(SEEDS_1000, (c) => {
+      for (const v of [c.open, c.high, c.low, c.close]) {
+        if (!Number.isInteger(v) || v < MIN_PRICE) throw new Error(`bad value ${v}`);
+      }
+      if (c.low > Math.min(c.open, c.close)) throw new Error('low above body');
+      if (c.high < Math.max(c.open, c.close)) throw new Error('high below body');
+    });
+  });
+
+  it('ENG-09 / ENG-10: body moves within Â±10% and gaps within Â±2% (allowing 1 cent and the floor)', () => {
+    forEveryCandle(SEEDS_1000, (c, prev) => {
+      if (c.close !== MIN_PRICE && Math.abs(c.close - c.open) > c.open * MAX_MOVE + 1) {
+        throw new Error(`body move too large: ${c.open} â†’ ${c.close}`);
+      }
+      if (prev && c.open !== MIN_PRICE && Math.abs(c.open - prev.close) > prev.close * MAX_GAP + 1) {
+        throw new Error(`gap too large: ${prev.close} â†’ ${c.open}`);
+      }
+    });
+  });
+
+  it('ENG-11: extreme negative draws floor every price at 100', () => {
+    const candles = generateCandlesFromRng(new ScriptedRng({}, 0));
+    expect(candles[0]!.open).toBe(2000);
+    for (const c of candles) {
+      expect(Math.min(c.open, c.high, c.low, c.close)).toBeGreaterThanOrEqual(MIN_PRICE);
+    }
+    expect(candles[69]).toEqual({ index: 70, open: 100, high: 100, low: 100, close: 100 });
+  });
+
+  it('ENG-12: extreme positive draws stay within the caps and remain safe integers', () => {
+    const candles = generateCandlesFromRng(new ScriptedRng({}, 0.9999999999));
+    candles.forEach((c, i) => {
+      for (const v of [c.open, c.high, c.low, c.close]) expect(Number.isSafeInteger(v)).toBe(true);
+      expect(c.close - c.open).toBeLessThanOrEqual(c.open * MAX_MOVE + 1);
+      const prev = candles[i - 1];
+      if (prev) expect(c.open - prev.close).toBeLessThanOrEqual(prev.close * MAX_GAP + 1);
+    });
+  });
+
+  it('ENG-13 / ENG-14: hand-computed candles 1 and 2 from scripted draws (candle 2 uses draws 28â€“53)', () => {
+    // Worked out on paper from rules.md Â§5.4 (also cross-checked with tools/reference_engine.py):
+    // draw 1 = 0.25 â†’ start = 2000 + floor(0.25 Ã— 3001) = 2750
+    // candle 1: zGap draws 2â€“13 (0.5, unused); zBody draws 14â€“25 = 0.625 â†’ z = 1.5 â†’ ret = 0.0225
+    //   close = floor(2750 Ã— 1.0225 + 0.5) = floor(2812.375) = 2812
+    //   uUp (26) = 0.5 â†’ high = floor(2812 Ã— 1.005 + 0.5) = floor(2826.56) = 2826
+    //   uDown (27) = 0.25 â†’ low = floor(2750 Ã— 0.9975 + 0.5) = floor(2743.625) = 2743
+    // candle 2: zGap draws 28â€“39 = 0.25 â†’ z = âˆ’3 â†’ gap = âˆ’0.006 â†’ open = floor(2812 Ã— 0.994 + 0.5) = 2795
+    //   zBody draws 40â€“51 = 0.375 â†’ z = âˆ’1.5 â†’ close = floor(2795 Ã— 0.9775 + 0.5) = floor(2732.61) = 2732
+    //   uUp (52) = 0 â†’ high = 2795; uDown (53) = 0.5 â†’ low = floor(2732 Ã— 0.995 + 0.5) = floor(2718.84) = 2718
+    const script: Record<number, number> = { 1: 0.25, 26: 0.5, 27: 0.25, 52: 0, 53: 0.5 };
+    fill(script, 2, 12, 0.5);
+    fill(script, 14, 12, 0.625);
+    fill(script, 28, 12, 0.25);
+    fill(script, 40, 12, 0.375);
+    const rng = new ScriptedRng(script, 0.5);
+    const [c1, c2] = generateCandlesFromRng(rng, 2);
+    expect(c1).toEqual({ index: 1, open: 2750, high: 2826, low: 2743, close: 2812 });
+    expect(c2).toEqual({ index: 2, open: 2795, high: 2795, low: 2718, close: 2732 });
+    expect(rng.draws).toBe(53);
+  });
+});
+
+
+===== FILE: tests\end-and-reset.test.ts =====
+
+// END-01 â€¦ END-09, RST-01 â€¦ RST-09, DET-02 â€¦ DET-04 â€” test-cases.md Â§9â€“11.
+import { describe, expect, it } from 'vitest';
+import {
+  advance,
+  cancelOrder,
+  createRound,
+  ENGINE_VERSION,
+  finishRound,
+  generateCandles,
+  getResults,
+  getView,
+  replayRound,
+  START_CASH,
+  submitOrder,
+  type RoundState,
+} from '../src/engine';
+import { randomSeed } from '../src/app/seed';
+import reference from './fixtures/reference-v1.json';
+import { applyAction, type Action } from './helpers/property';
+import { advanceTo, makeRound } from './helpers/rounds';
+
+/** Holds 10 shares bought at 2500, sitting at k = 70 with close(70) = 2600. */
+function atEndHolding10(): RoundState {
+  const s = advance(submitOrder(makeRound(2500, { 70: { close: 2600 } }), 'BUY', '10'));
+  return advanceTo(s, 70);
+}
+
+describe('End of round (Â§4.5â€“4.6)', () => {
+  it('END-01 / END-09: finishing with shares sells all at close(70) as a liquidation trade', () => {
+    const s = finishRound(atEndHolding10());
+    const last = s.trades[s.trades.length - 1]!;
+    expect(last).toEqual({
+      id: 2,
+      type: 'liquidation',
+      side: 'SELL',
+      candleIndex: 70,
+      quantity: 10,
+      price: 2600,
+      amount: 26000,
+      tradePnl: 1000,
+      cashAfter: 101000,
+      sharesAfter: 0,
+    });
+    expect(s.account.shares).toBe(0);
+    expect(s.account.costBasis).toBe(0);
+    expect(s.status).toBe('FINISHED');
+  });
+
+  it('END-02: finishing with no shares records no liquidation trade', () => {
+    const s = finishRound(advanceTo(makeRound(2500), 70));
+    expect(s.trades).toHaveLength(0);
+    expect(s.status).toBe('FINISHED');
+  });
+
+  it('END-03 / END-04: equity is identical before and after liquidation', () => {
+    const before = atEndHolding10();
+    const equityBefore = getView(before).account.equity;
+    const after = finishRound(before);
+    const v = getView(after);
+    expect(v.account.equity).toBe(equityBefore);
+    expect(v.account.unrealizedPnl).toBe(0);
+    expect(v.account.equity).toBe(after.account.cash);
+    expect(after.account.cash).toBe(START_CASH + after.account.realizedPnl);
+  });
+
+  it('END-05: finishing twice changes nothing', () => {
+    const once = finishRound(atEndHolding10());
+    expect(finishRound(once)).toBe(once);
+  });
+
+  it('END-06: finish before k = 70 is not allowed', () => {
+    const s = advanceTo(makeRound(2500), 69);
+    expect(finishRound(s)).toBe(s);
+  });
+
+  it('END-07: after FINISHED, submit, cancel and advance all leave the state unchanged', () => {
+    const s = finishRound(atEndHolding10());
+    expect(submitOrder(s, 'BUY', '1')).toBe(s);
+    expect(cancelOrder(s)).toBe(s);
+    expect(advance(s)).toBe(s);
+  });
+
+  it('END-08: results data', () => {
+    const playing = atEndHolding10();
+    expect(getResults(playing)).toBeNull();
+    const r = getResults(finishRound(playing))!;
+    expect(r.seed).toBe(42);
+    expect(r.engineVersion).toBe(ENGINE_VERSION);
+    expect(r.finalEquity).toBe(101000);
+    expect(r.totalReturn).toBe(1000);
+    expect(r.realizedPnl).toBe(1000);
+    expect(r.playerTradeCount).toBe(1);
+    expect(r.trades).toHaveLength(2);
+  });
+});
+
+describe('Reset and replay (Â§8â€“9)', () => {
+  it('RST-01 / RST-05: a new round after trading starts clean (no trades, pending order or notices)', () => {
+    let s = submitOrder(advance(submitOrder(createRound(5), 'BUY', '3')), 'BUY', '1');
+    expect(s.pending).not.toBeNull();
+    s = createRound(6);
+    expect(s.k).toBe(10);
+    expect(s.trades).toHaveLength(0);
+    expect(s.pending).toBeNull();
+    expect(s.notices).toHaveLength(0);
+    expect(s.account.cash).toBe(START_CASH);
+  });
+
+  it('RST-02 / RST-09: new rounds take their seed from crypto.getRandomValues (stubbed here)', () => {
+    const fake = {
+      getRandomValues(array: Uint32Array<ArrayBuffer>) {
+        array[0] = 0xdeadbeef;
+        return array;
+      },
+    };
+    const seed = randomSeed(fake);
+    expect(seed).toBe(3735928559);
+    expect(createRound(seed).seed).toBe(3735928559);
+    const real = randomSeed();
+    expect(Number.isInteger(real) && real >= 0 && real <= 0xffffffff).toBe(true);
+  });
+
+  it('RST-03 / RST-04 / RST-06: replay gives identical candles regardless of trades, from PLAYING or FINISHED', () => {
+    let s = advance(submitOrder(createRound(31415), 'BUY', '5'));
+    s = advanceTo(s, 70);
+    const replayed = replayRound(finishRound(s));
+    expect(replayed.status).toBe('PLAYING');
+    expect(replayed.k).toBe(10);
+    expect(replayed.trades).toHaveLength(0);
+    expect(replayed.candles).toEqual(s.candles);
+    expect(replayed.candles).toEqual(generateCandles(31415));
+    expect(replayRound(s).candles).toEqual(createRound(31415).candles);
+  });
+});
+
+describe('Determinism (Â§5.5)', () => {
+  const script: Action[] = [
+    { type: 'submit', side: 'BUY', qty: '7' },
+    { type: 'advance' },
+    { type: 'advance' },
+    { type: 'submit', side: 'SELL', qty: '3' },
+    { type: 'advance' },
+    { type: 'submit', side: 'BUY', qty: '2' },
+    { type: 'cancel' },
+    { type: 'advance' },
+  ];
+
+  it('DET-02: waiting between clicks changes nothing', async () => {
+    const fast = script.reduce(applyAction, createRound(2718));
+    let slow = createRound(2718);
+    for (const a of script) {
+      await new Promise((r) => setTimeout(r, 3));
+      slow = applyAction(slow, a);
+    }
+    expect(slow).toEqual(fast);
+  });
+
+  it('DET-03: same seed + same actions â†’ identical final account and history', () => {
+    const a = script.reduce(applyAction, createRound(1618));
+    const b = script.reduce(applyAction, createRound(1618));
+    expect(a).toEqual(b);
+  });
+
+  it('DET-04: the engine version is recorded with the round and matches the golden fixture', () => {
+    expect(createRound(1).engineVersion).toBe(ENGINE_VERSION);
+    expect(reference.engineVersion).toBe(ENGINE_VERSION);
+  });
+});
+
+
+===== FILE: tests\flow.test.ts =====
+
+// FLOW-01 â€¦ FLOW-17 â€” test-cases.md Â§5. (FLOW-18/19 are manual UI checks.)
+import { describe, expect, it } from 'vitest';
+import {
+  advance,
+  cancelOrder,
+  createRound,
+  generateCandles,
+  getView,
+  START_CASH,
+  submitOrder,
+  type RoundState,
+} from '../src/engine';
+import { roundCounterLabel } from '../src/ui/labels';
+import { assertNoFutureCandles } from './helpers/exposure';
+import { advanceTo, makeRound } from './helpers/rounds';
+
+const lastNotice = (s: RoundState) => s.notices[s.notices.length - 1]?.message ?? '';
+
+describe('Round flow and timing (Â§4)', () => {
+  it('FLOW-01: a new round starts at k = 10, PLAYING, with starting cash and nothing else', () => {
+    const s = createRound(12345);
+    expect(s.k).toBe(10);
+    expect(s.status).toBe('PLAYING');
+    expect(s.account).toEqual({ cash: START_CASH, shares: 0, costBasis: 0, realizedPnl: 0 });
+    expect(s.trades).toHaveLength(0);
+    expect(s.pending).toBeNull();
+    expect(s.notices).toHaveLength(0);
+  });
+
+  it('FLOW-02: the UI-facing view never contains future candles (start and every advance)', () => {
+    let s = submitOrder(createRound(12345), 'BUY', '3');
+    assertNoFutureCandles(getView(s), s);
+    while (s.k < 70) {
+      s = submitOrder(advance(s), s.account.shares > 0 ? 'SELL' : 'BUY', '1');
+      assertNoFutureCandles(getView(s), s);
+    }
+  });
+
+  it('FLOW-03: advancing with no order reveals candle 11 and changes only the marks', () => {
+    const s0 = createRound(12345);
+    const s1 = advance(s0);
+    expect(s1.k).toBe(11);
+    expect(s1.account).toEqual(s0.account);
+    expect(getView(s1).markPrice).toBe(generateCandles(12345)[10]!.close);
+  });
+
+  it('FLOW-04 / FLOW-16: exactly 60 advances are possible; the 61st is refused', () => {
+    let s = createRound(7);
+    let count = 0;
+    for (;;) {
+      const next = advance(s);
+      if (next === s) break;
+      s = next;
+      count += 1;
+    }
+    expect(count).toBe(60);
+    expect(s.k).toBe(70);
+  });
+
+  it('FLOW-05: advance at k = 70 returns the state unchanged', () => {
+    const s = advanceTo(createRound(7), 70);
+    expect(advance(s)).toBe(s);
+  });
+
+  it('FLOW-06: a BUY submitted at k = 10 fills at the open of candle 11', () => {
+    const s = advance(submitOrder(makeRound(2500, { 11: { open: 2510, close: 2530 } }), 'BUY', '10'));
+    expect(s.trades).toHaveLength(1);
+    expect(s.trades[0]!.candleIndex).toBe(11);
+    expect(s.trades[0]!.price).toBe(2510);
+  });
+
+  it('FLOW-07: for every k in 10â€“69 the fill price is open(k+1), never close(k)', () => {
+    const candles = generateCandles(12345);
+    let s = createRound(12345);
+    let differing = 0;
+    while (s.k < 70) {
+      const k = s.k;
+      s = submitOrder(s, s.account.shares > 0 ? 'SELL' : 'BUY', '1');
+      s = advance(s);
+      const trade = s.trades[s.trades.length - 1]!;
+      expect(trade.candleIndex).toBe(k + 1);
+      expect(trade.price).toBe(candles[k]!.open);
+      if (candles[k]!.open !== candles[k - 1]!.close) differing += 1;
+    }
+    expect(s.trades).toHaveLength(60);
+    expect(differing).toBeGreaterThan(30); // the seed really has gaps, so open â‰  previous close is tested
+  });
+
+  it('FLOW-08: the order fills at open(k+1) and the mark then moves to close(k+1)', () => {
+    const s = advance(submitOrder(makeRound(2500, { 11: { open: 2400, close: 2600 } }), 'BUY', '10'));
+    expect(s.trades[0]!.price).toBe(2400);
+    const v = getView(s);
+    expect(v.markPrice).toBe(2600);
+    expect(v.account.unrealizedPnl).toBe(10 * 2600 - 24000);
+  });
+
+  it('FLOW-09: an order submitted at k = 69 fills at open(70)', () => {
+    const s69 = advanceTo(makeRound(2500, { 70: { open: 2555, close: 2560 } }), 69);
+    const s70 = advance(submitOrder(s69, 'BUY', '1'));
+    expect(s70.trades[0]!.candleIndex).toBe(70);
+    expect(s70.trades[0]!.price).toBe(2555);
+  });
+
+  it('FLOW-10: submitting at k = 70 is rejected with "no next candle"', () => {
+    const s70 = advanceTo(makeRound(2500), 70);
+    const after = submitOrder(s70, 'BUY', '1');
+    expect(after.pending).toBeNull();
+    expect(lastNotice(after)).toMatch(/No next candle/);
+  });
+
+  it('FLOW-11: the pending order is always cleared after an advance (filled or rejected)', () => {
+    const filled = advance(submitOrder(makeRound(2500), 'BUY', '1'));
+    expect(filled.pending).toBeNull();
+    const rejected = advance(submitOrder(makeRound(2000, { 11: { open: 2100 } }), 'BUY', '50'));
+    expect(rejected.trades).toHaveLength(0);
+    expect(rejected.pending).toBeNull();
+  });
+
+  it('FLOW-12: submit, cancel, advance â†’ no fill, account unchanged, "Order cancelled"', () => {
+    const s0 = makeRound(2500);
+    const cancelled = cancelOrder(submitOrder(s0, 'BUY', '5'));
+    expect(lastNotice(cancelled)).toBe('Order cancelled.');
+    const s1 = advance(cancelled);
+    expect(s1.trades).toHaveLength(0);
+    expect(s1.account).toEqual(s0.account);
+  });
+
+  it('FLOW-13: BUY 5 then BUY 8 â†’ only BUY 8 fills', () => {
+    const s = advance(submitOrder(submitOrder(makeRound(2500), 'BUY', '5'), 'BUY', '8'));
+    expect(s.trades).toHaveLength(1);
+    expect(s.trades[0]!.quantity).toBe(8);
+  });
+
+  it('FLOW-14: at most one player fill per advance (60 per round)', () => {
+    let s = createRound(55);
+    while (s.k < 70) {
+      const before = s.trades.length;
+      s = advance(submitOrder(submitOrder(s, 'BUY', '1'), 'BUY', '1'));
+      expect(s.trades.length - before).toBeLessThanOrEqual(1);
+    }
+    expect(s.trades.length).toBeLessThanOrEqual(60);
+  });
+
+  it('FLOW-15: the mark price is close(k), at the start and after every advance', () => {
+    const candles = generateCandles(999);
+    let s = createRound(999);
+    expect(getView(s).markPrice).toBe(candles[9]!.close);
+    while (s.k < 70) {
+      s = advance(s);
+      expect(getView(s).markPrice).toBe(candles[s.k - 1]!.close);
+    }
+  });
+
+  it('FLOW-17: the round counter shows "Candle r of 60" with r = k âˆ’ 10', () => {
+    let s = createRound(3);
+    expect(roundCounterLabel(getView(s))).toBe('Round starts next candle');
+    s = advance(s);
+    expect(roundCounterLabel(getView(s))).toBe('Candle 1 of 60');
+    s = advanceTo(s, 70);
+    expect(roundCounterLabel(getView(s))).toBe('Candle 60 of 60');
+  });
+});
+
+
+===== FILE: tests\history.test.ts =====
+
+// HIST-01 â€¦ HIST-05 â€” test-cases.md Â§4. (HIST-06 is in invariants.test.ts; HIST-07 is manual.)
+import { describe, expect, it } from 'vitest';
+import {
+  createCandleStream,
+  createRound,
+  generateCandles,
+  generateCandlesFromRng,
+  getView,
+  isHistoryIndex,
+  Mulberry32,
+  roundNumber,
+} from '../src/engine';
+import { fill, ScriptedRng } from './helpers/rounds';
+
+describe('History candles', () => {
+  it('HIST-01: candle 11 uses draws 262â€“287 and close of candle 10 (hand-computed)', () => {
+    // All other draws are 0.5: start = 2000 + floor(0.5 Ã— 3001) = 3500; z = 0 â†’ candles 1â€“10 close at 3500.
+    // Candle 11: zGap (262â€“273) = 0.25 â†’ z = âˆ’3 â†’ open = floor(3500 Ã— 0.994 + 0.5) = 3479
+    //            zBody (274â€“285) = 0.375 â†’ z = âˆ’1.5 â†’ close = floor(3479 Ã— 0.9775 + 0.5) = floor(3401.22) = 3401
+    //            uUp (286) = 0 â†’ high = 3479; uDown (287) = 0.5 â†’ low = floor(3401 Ã— 0.995 + 0.5) = floor(3384.495) = 3384
+    const script: Record<number, number> = { 286: 0, 287: 0.5 };
+    fill(script, 262, 12, 0.25);
+    fill(script, 274, 12, 0.375);
+    const rng = new ScriptedRng(script, 0.5);
+    const candles = generateCandlesFromRng(rng, 11);
+    expect(candles[9]!.close).toBe(3500);
+    expect(candles[10]).toEqual({ index: 11, open: 3479, high: 3479, low: 3384, close: 3401 });
+    expect(rng.draws).toBe(287);
+  });
+
+  it('HIST-02: no history/playable branch â€” 10 then 60 from one stream equals all 70', () => {
+    const stream = createCandleStream(new Mulberry32(2468));
+    const firstTen = Array.from({ length: 10 }, () => stream.next());
+    const nextSixty = Array.from({ length: 60 }, () => stream.next());
+    expect([...firstTen, ...nextSixty]).toEqual(generateCandles(2468));
+  });
+
+  it('HIST-03: at round start candles 1â€“10 are visible, k = 10, mark = close of candle 10', () => {
+    const state = createRound(12345);
+    const view = getView(state);
+    expect(view.k).toBe(10);
+    expect(view.candles.map((c) => c.index)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(view.markPrice).toBe(generateCandles(12345)[9]!.close);
+    expect(view.roundNumber).toBe(0);
+  });
+
+  it('HIST-04: indices 1â€“10 are history and shown as history', () => {
+    for (let i = 1; i <= 10; i += 1) expect(isHistoryIndex(i)).toBe(true);
+    expect(getView(createRound(1)).candles.every((c) => c.kind === 'history')).toBe(true);
+  });
+
+  it('HIST-05: indices 11â€“70 are playable; round number = index âˆ’ 10', () => {
+    for (let i = 11; i <= 70; i += 1) expect(isHistoryIndex(i)).toBe(false);
+    expect(roundNumber(11)).toBe(1);
+    expect(roundNumber(70)).toBe(60);
+  });
+});
+
+
+===== FILE: tests\invariants.test.ts =====
+
+// INV-01 â€¦ INV-09, HIST-06, DET-01, FLOW-02 (randomized) and PROP-01 â€” test-cases.md Â§11â€“12.
+import { describe, expect, it } from 'vitest';
+import {
+  candleAt,
+  generateCandles,
+  getView,
+  LAST_INDEX,
+  START_CASH,
+  type RoundState,
+} from '../src/engine';
+import { assertNoFutureCandles } from './helpers/exposure';
+import { forEachRandomRun, PropertyFailure, replayActions, type Action } from './helpers/property';
+
+function check(condition: boolean, message: string): void {
+  if (!condition) throw new Error(message);
+}
+
+/** Every invariant from rules.md Â§7.5, checked after every action. */
+function checkInvariants(next: RoundState, prev: RoundState): void {
+  const { account: a, trades } = next;
+  const v = getView(next);
+
+  // INV-01
+  for (const [name, value] of Object.entries(a)) {
+    check(Number.isSafeInteger(value), `${name} is not a safe integer: ${value}`);
+  }
+  check(a.cash >= 0 && a.shares >= 0 && a.costBasis >= 0, `negative value in ${JSON.stringify(a)}`);
+  // INV-02
+  check((a.shares === 0) === (a.costBasis === 0), `shares/costBasis mismatch ${JSON.stringify(a)}`);
+  // INV-03
+  check(
+    v.account.equity === START_CASH + a.realizedPnl + v.account.unrealizedPnl,
+    `equity ${v.account.equity} â‰  start + realized ${a.realizedPnl} + unrealized ${v.account.unrealizedPnl}`,
+  );
+  // INV-04, INV-05, INV-06
+  let cash = START_CASH;
+  let shares = 0;
+  let realized = 0;
+  for (const t of trades) {
+    if (t.side === 'BUY') {
+      cash -= t.amount;
+      shares += t.quantity;
+    } else {
+      cash += t.amount;
+      shares -= t.quantity;
+      realized += t.tradePnl ?? Number.NaN;
+    }
+  }
+  check(cash === a.cash, `INV-04: cash ${a.cash} â‰  rebuilt ${cash}`);
+  check(shares === a.shares, `INV-05: shares ${a.shares} â‰  rebuilt ${shares}`);
+  check(realized === a.realizedPnl, `INV-06: realized ${a.realizedPnl} â‰  Î£ tradePnl ${realized}`);
+  // INV-07 and HIST-06
+  for (const t of trades) {
+    if (t.type === 'player') {
+      check(t.candleIndex >= 11 && t.candleIndex <= 70, `player trade at candle ${t.candleIndex}`);
+      check(t.price === candleAt(next, t.candleIndex).open, `trade ${t.id} price ${t.price} â‰  open`);
+    } else {
+      check(t.candleIndex === LAST_INDEX, `liquidation at ${t.candleIndex}`);
+      check(t.price === candleAt(next, LAST_INDEX).close, `liquidation price ${t.price} â‰  close(70)`);
+    }
+  }
+  // INV-08
+  check(next.k >= 10 && next.k <= 70, `k out of range: ${next.k}`);
+  // INV-09: if no trade happened (and the round was not reset), the account must be unchanged.
+  const reset = next.k < prev.k;
+  if (!reset && next.trades.length === prev.trades.length) {
+    check(JSON.stringify(next.account) === JSON.stringify(prev.account), 'account changed without a trade');
+  }
+  // FLOW-14: at most one fill per action.
+  if (!reset) check(next.trades.length - prev.trades.length <= 1, 'more than one fill in one action');
+}
+
+describe('Invariants under random play (Â§7.5)', () => {
+  it('INV-01 â€¦ INV-09, HIST-06, FLOW-14 hold after every action (300 runs Ã— 200 actions)', () => {
+    forEachRandomRun({ cases: 300, baseSeed: 20261014, steps: 200 }, checkInvariants);
+  });
+
+  it('FLOW-02 (randomized): the view never exposes future candles', () => {
+    forEachRandomRun({ cases: 60, baseSeed: 777, steps: 150 }, (next) => assertNoFutureCandles(getView(next), next));
+  });
+
+  it('DET-01: candles never depend on player actions (200 seeds)', () => {
+    forEachRandomRun({ cases: 200, baseSeed: 4242, steps: 120 }, (next) => {
+      check(JSON.stringify(next.candles) === JSON.stringify(generateCandles(next.seed)), 'candles changed');
+    });
+  });
+
+  it('the random runs actually reach the end of rounds and make trades', () => {
+    let finished = 0;
+    let liquidations = 0;
+    let trades = 0;
+    forEachRandomRun({ cases: 100, baseSeed: 99, steps: 200 }, (next, prev) => {
+      if (next.status === 'FINISHED' && prev.status === 'PLAYING') {
+        finished += 1;
+        if (next.trades.some((t) => t.type === 'liquidation')) liquidations += 1;
+      }
+      if (next.trades.length > prev.trades.length) trades += 1;
+    });
+    expect(finished).toBeGreaterThan(20);
+    expect(liquidations).toBeGreaterThan(5);
+    expect(trades).toBeGreaterThan(500);
+  });
+});
+
+describe('Reproducible failures', () => {
+  it('PROP-01: a failure reports the seed and actions, and replayActions reproduces it', () => {
+    let failure: PropertyFailure | null = null;
+    try {
+      forEachRandomRun({ cases: 5, baseSeed: 123, steps: 40 }, (next) => {
+        if (next.trades.length > 0) throw new Error('deliberate failure on first trade');
+      });
+    } catch (err) {
+      failure = err as PropertyFailure;
+    }
+    expect(failure).not.toBeNull();
+    const f = failure!;
+    expect(f.message).toContain(`market seed ${f.seed}`);
+    expect(f.message).toContain(JSON.stringify(f.actions));
+    const reproduced = replayActions(f.seed, f.actions as Action[]);
+    expect(reproduced.trades.length).toBeGreaterThan(0);
+    expect(replayActions(f.seed, f.actions as Action[])).toEqual(reproduced);
+  });
+});
+
+
+===== FILE: tests\money.test.ts =====
+
+// R-01 â€¦ R-09, PNL-08/09/12 formatting â€” test-cases.md Â§1, Â§8.
+import { describe, expect, it } from 'vitest';
+import {
+  floorDiv,
+  formatCents,
+  formatPercent,
+  formatSignedCents,
+  roundHalfUpRatio,
+  START_CASH,
+} from '../src/engine';
+import { Mulberry32 } from '../src/engine';
+
+describe('roundHalfUpRatio (Â§3.4)', () => {
+  it('R-01: 7/2 = 3.5 â†’ 4', () => expect(roundHalfUpRatio(7, 2)).toBe(4));
+  it('R-02: 5/2 = 2.5 â†’ 3', () => expect(roundHalfUpRatio(5, 2)).toBe(3));
+  it('R-03: 10/3 = 3.33 â†’ 3', () => expect(roundHalfUpRatio(10, 3)).toBe(3));
+  it('R-04: 20/3 = 6.67 â†’ 7', () => expect(roundHalfUpRatio(20, 3)).toBe(7));
+  it('R-05: 0/5 â†’ 0', () => expect(roundHalfUpRatio(0, 5)).toBe(0));
+  it('R-06: 380000/15 = 25333.33 â†’ 25333', () => expect(roundHalfUpRatio(380000, 15)).toBe(25333));
+  it('R-07: exact division 38000/1 â†’ 38000', () => expect(roundHalfUpRatio(38000, 1)).toBe(38000));
+
+  it('R-08: large values stay exact (compared with BigInt)', () => {
+    const rng = new Mulberry32(2024);
+    for (let i = 0; i < 20000; i += 1) {
+      const a = Math.floor(rng.next() * 1e15);
+      const b = 1 + Math.floor(rng.next() * 1e6);
+      const expected = Number((2n * BigInt(a) + BigInt(b)) / (2n * BigInt(b)));
+      expect(roundHalfUpRatio(a, b)).toBe(expected);
+      expect(floorDiv(a, b)).toBe(Number(BigInt(a) / BigInt(b)));
+    }
+    // Exact halves at large magnitudes still round up.
+    expect(roundHalfUpRatio(2 * 999_999_999_999 + 1, 2)).toBe(1_000_000_000_000);
+  });
+
+  it('rejects negative numerators, zero denominators and non-integers', () => {
+    expect(() => roundHalfUpRatio(-1, 2)).toThrow();
+    expect(() => roundHalfUpRatio(1, 0)).toThrow();
+    expect(() => roundHalfUpRatio(1.5, 2)).toThrow();
+  });
+});
+
+describe('Display formatting (Â§3.4â€“3.6)', () => {
+  it('R-09: dollar formatting', () => {
+    expect(formatCents(253336)).toBe('$2,533.36');
+    expect(formatCents(5)).toBe('$0.05');
+    expect(formatCents(0)).toBe('$0.00');
+    expect(formatCents(-1467)).toBe('âˆ’$14.67');
+    expect(formatCents(123456789)).toBe('$1,234,567.89');
+  });
+
+  it('signed P&L shows + for gains', () => {
+    expect(formatSignedCents(467)).toBe('+$4.67');
+    expect(formatSignedCents(0)).toBe('$0.00');
+    expect(formatSignedCents(-1467)).toBe('âˆ’$14.67');
+  });
+
+  it('PNL-08: return % for equity 101750 is 1.75%', () => {
+    expect(formatPercent(101750 - START_CASH, START_CASH)).toBe('1.75%');
+  });
+
+  it('PNL-09: return % for equity 99000 is âˆ’1.00%', () => {
+    expect(formatPercent(99000 - START_CASH, START_CASH)).toBe('âˆ’1.00%');
+  });
+
+  it('PNL-12: negative values round their magnitude half-up, then get the sign', () => {
+    expect(formatPercent(-5, START_CASH)).toBe('âˆ’0.01%');
+    expect(formatPercent(5, START_CASH)).toBe('0.01%');
+    expect(formatPercent(-4, START_CASH)).toBe('0.00%');
+    expect(formatPercent(0, START_CASH)).toBe('0.00%');
+  });
+});
+
+
+===== FILE: tests\orders.test.ts =====
+
+// ORD-01 â€¦ ORD-21 â€” test-cases.md Â§6.
+import { describe, expect, it } from 'vitest';
+import { advance, finishRound, getView, parseQuantity, submitOrder, type RoundState } from '../src/engine';
+import { advanceTo, makeRound } from './helpers/rounds';
+
+const lastNotice = (s: RoundState) => s.notices[s.notices.length - 1]?.message ?? '';
+
+/** Round at k = 10 with close(10) = 2500 that already holds 10 shares bought at open(11) = 2500, now at k = 11. */
+function holding10(): RoundState {
+  return advance(submitOrder(makeRound(2500), 'BUY', '10'));
+}
+
+describe('Quantity input (Â§6.2 rule 2)', () => {
+  it('ORD-01 â€¦ ORD-05, ORD-21: invalid quantity texts are rejected', () => {
+    for (const text of ['0', '-3', 'âˆ’3', '1.5', '', ' ', 'abc', '1e3', '+5', ' 5', '5 ', '05', '1000001', '99999999999']) {
+      expect(parseQuantity(text).ok).toBe(false);
+      const s = submitOrder(makeRound(2500), 'BUY', text);
+      expect(s.pending).toBeNull();
+    }
+  });
+
+  it('accepts whole positive numbers up to 1,000,000', () => {
+    expect(parseQuantity('1')).toEqual({ ok: true, value: 1 });
+    expect(parseQuantity('1000000')).toEqual({ ok: true, value: 1000000 });
+  });
+});
+
+describe('Validation at submission (Â§6.2)', () => {
+  it('ORD-06: BUY 1 with enough cash is accepted as pending', () => {
+    expect(submitOrder(makeRound(2500), 'BUY', '1').pending).toEqual({ side: 'BUY', quantity: 1, submittedAt: 10 });
+  });
+
+  it('ORD-07: SELL with 0 shares is rejected', () => {
+    const s = submitOrder(makeRound(2500), 'SELL', '1');
+    expect(s.pending).toBeNull();
+    expect(lastNotice(s)).toMatch(/don't hold any shares/);
+  });
+
+  it('ORD-08: SELL more than held is rejected', () => {
+    const s = submitOrder(holding10(), 'SELL', '11');
+    expect(s.pending).toBeNull();
+    expect(lastNotice(s)).toMatch(/only hold 10 shares/);
+  });
+
+  it('ORD-09: SELL exactly the shares held is accepted', () => {
+    expect(submitOrder(holding10(), 'SELL', '10').pending?.quantity).toBe(10);
+  });
+
+  it('ORD-10: BUY whose estimate exceeds cash is rejected', () => {
+    const s = submitOrder(makeRound(2500), 'BUY', '41'); // 41 Ã— 2500 = 102500 > 100000
+    expect(s.pending).toBeNull();
+    expect(lastNotice(s)).toMatch(/Not enough cash/);
+  });
+
+  it('ORD-11: BUY whose estimate equals cash is accepted', () => {
+    expect(submitOrder(makeRound(2500), 'BUY', '40').pending?.quantity).toBe(40);
+  });
+
+  it('ORD-16: submitting after FINISHED changes nothing', () => {
+    const finished = finishRound(advanceTo(makeRound(2500), 70));
+    expect(submitOrder(finished, 'BUY', '1')).toBe(finished);
+  });
+
+  it('ORD-17: the Max buy helper is floor(cash / close(k)), and 0 when cash < close(k)', () => {
+    expect(getView(makeRound(3000)).maxBuyQuantity).toBe(33);
+    const allIn = advance(submitOrder(makeRound(2500), 'BUY', '40'));
+    expect(allIn.account.cash).toBe(0);
+    expect(getView(allIn).maxBuyQuantity).toBe(0);
+  });
+
+  it('ORD-18: the first order at k = 10 uses close(10) for the estimate', () => {
+    const s = makeRound(2500, { 10: { close: 2000 } });
+    expect(submitOrder(s, 'BUY', '50').pending?.quantity).toBe(50); // 50 Ã— 2000 = 100000 OK
+    expect(submitOrder(s, 'BUY', '51').pending).toBeNull(); //         51 Ã— 2000 = 102000 too much
+  });
+
+  it('ORD-19: replacing a pending order shows a replacement notice', () => {
+    const s = submitOrder(submitOrder(makeRound(2500), 'BUY', '5'), 'BUY', '8');
+    expect(s.pending?.quantity).toBe(8);
+    expect(lastNotice(s)).toBe('Previous order (BUY 5) replaced by BUY 8.');
+  });
+
+  it('ORD-20: an invalid submission keeps the existing pending order', () => {
+    const s = submitOrder(submitOrder(makeRound(2500), 'BUY', '5'), 'BUY', 'abc');
+    expect(s.pending).toEqual({ side: 'BUY', quantity: 5, submittedAt: 10 });
+  });
+});
+
+describe('Validation at fill (Â§6.3)', () => {
+  it('ORD-12: a gap up that makes the BUY unaffordable rejects the whole order', () => {
+    const s0 = submitOrder(makeRound(2000, { 11: { open: 2010 } }), 'BUY', '50'); // estimate 100000 = cash
+    expect(s0.pending?.quantity).toBe(50);
+    const s1 = advance(s0);
+    expect(s1.trades).toHaveLength(0);
+    expect(s1.account).toEqual(s0.account);
+    expect(lastNotice(s1)).toBe(
+      'Order rejected: the price opened at $20.10. This order would cost $1,005.00, but you have $1,000.00.',
+    );
+  });
+
+  it('ORD-13: a BUY costing exactly the cash at fill is filled, leaving 0 cash', () => {
+    const s = advance(submitOrder(makeRound(2500), 'BUY', '40'));
+    expect(s.trades).toHaveLength(1);
+    expect(s.account.cash).toBe(0);
+  });
+
+  it('ORD-14: a gap down fills at the lower open', () => {
+    const s = advance(submitOrder(makeRound(2500, { 11: { open: 2400 } }), 'BUY', '40'));
+    expect(s.trades[0]!.price).toBe(2400);
+    expect(s.trades[0]!.amount).toBe(96000);
+    expect(s.account.cash).toBe(4000);
+  });
+
+  it('ORD-15: a rejected order is not in trade history but appears as a notice', () => {
+    const s = advance(submitOrder(makeRound(2000, { 11: { open: 2100 } }), 'BUY', '50'));
+    expect(s.trades).toHaveLength(0);
+    expect(s.notices.some((n) => n.kind === 'error' && n.message.startsWith('Order rejected'))).toBe(true);
+  });
+});
+
+
+===== FILE: tests\rng.test.ts =====
+
+// RNG-01 â€¦ RNG-08 â€” test-cases.md Â§2.
+import { describe, expect, it } from 'vitest';
+import { Mulberry32, normalZ } from '../src/engine';
+import reference from './fixtures/reference-v1.json';
+import { ScriptedRng } from './helpers/rounds';
+
+function take(seed: number, n: number): number[] {
+  const rng = new Mulberry32(seed);
+  return Array.from({ length: n }, () => rng.next());
+}
+
+describe('Mulberry32 (Â§5.1)', () => {
+  it('RNG-01: same seed gives the same 10,000 outputs', () => {
+    expect(take(777, 10000)).toEqual(take(777, 10000));
+  });
+
+  it('RNG-02: every output is in [0, 1)', () => {
+    for (const seed of [0, 1, 12345, 4294967295, 99999]) {
+      for (const u of take(seed, 10000)) {
+        expect(u >= 0 && u < 1).toBe(true);
+      }
+    }
+  });
+
+  it('RNG-03: seeds 1 and 2 give different sequences', () => {
+    expect(take(1, 10)).not.toEqual(take(2, 10));
+  });
+
+  it('RNG-04: edge seeds 0 and 4294967295 work without NaN', () => {
+    for (const seed of [0, 4294967295]) {
+      for (const u of take(seed, 1000)) expect(Number.isNaN(u)).toBe(false);
+    }
+  });
+
+  it('RNG-04b: invalid seeds are refused', () => {
+    expect(() => new Mulberry32(-1)).toThrow();
+    expect(() => new Mulberry32(4294967296)).toThrow();
+    expect(() => new Mulberry32(1.5)).toThrow();
+  });
+
+  it('RNG-05: outputs match the independent Python reference (tools/reference_engine.py)', () => {
+    const golden = reference.rngFirstFive as Record<string, number[]>;
+    for (const seed of ['12345', '0', '4294967295']) {
+      expect(take(Number(seed), 5)).toEqual(golden[seed]);
+    }
+  });
+
+  it('RNG-06: mean of 100,000 outputs â‰ˆ 0.5', () => {
+    const values = take(4242, 100000);
+    const mean = values.reduce((s, v) => s + v, 0) / values.length;
+    expect(Math.abs(mean - 0.5)).toBeLessThan(0.01);
+  });
+});
+
+describe('normalZ (Â§5.2)', () => {
+  it('RNG-07: uses exactly 12 draws and stays within [âˆ’6, 6]', () => {
+    const stub = new ScriptedRng({}, 0.999999);
+    const z = normalZ(stub);
+    expect(stub.draws).toBe(12);
+    expect(z).toBeLessThanOrEqual(6);
+    expect(normalZ(new ScriptedRng({}, 0))).toBe(-6);
+    const rng = new Mulberry32(5);
+    for (let i = 0; i < 10000; i += 1) {
+      const v = normalZ(rng);
+      expect(v >= -6 && v <= 6).toBe(true);
+    }
+  });
+
+  it('RNG-08: mean â‰ˆ 0 and standard deviation â‰ˆ 1 over 100,000 values', () => {
+    const rng = new Mulberry32(31337);
+    const n = 100000;
+    let sum = 0;
+    let sumSq = 0;
+    for (let i = 0; i < n; i += 1) {
+      const z = normalZ(rng);
+      sum += z;
+      sumSq += z * z;
+    }
+    const mean = sum / n;
+    const sd = Math.sqrt(sumSq / n - mean * mean);
+    expect(Math.abs(mean)).toBeLessThan(0.02);
+    expect(Math.abs(sd - 1)).toBeLessThan(0.02);
+  });
+});
+
+
+===== FILE: tests\static.test.ts =====
+
+// ENG-15 and engine isolation â€” the engine must stay deterministic and React-free.
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const engineDir = resolve(process.cwd(), 'src', 'engine');
+const files = readdirSync(engineDir).filter((f) => f.endsWith('.ts'));
+
+function source(file: string): string {
+  // Strip comments so documentation that mentions forbidden calls doesn't count.
+  return readFileSync(join(engineDir, file), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*$/gm, '');
+}
+
+describe('Engine source rules', () => {
+  it('ENG-15: no Math.random, Date.now, time or non-basic Math functions anywhere in the engine', () => {
+    expect(files.length).toBeGreaterThan(5);
+    const forbidden =
+      /Math\.(random|exp|log|log2|log10|sin|cos|tan|pow|sqrt|cbrt|hypot)\b|Date\.now|new Date|performance\.now|crypto\./;
+    for (const f of files) {
+      const match = source(f).match(forbidden);
+      expect(match ? `${f}: ${match[0]}` : null).toBeNull();
+    }
+  });
+
+  it('Math.imul is used only by the RNG', () => {
+    for (const f of files) {
+      if (f !== 'rng.ts') expect(source(f).includes('Math.imul')).toBe(false);
+    }
+  });
+
+  it('the engine does not import React, the UI or the app layer', () => {
+    for (const f of files) {
+      expect(/from ['"](react|react-dom|\.\.\/ui|\.\.\/app)/.test(source(f))).toBe(false);
+    }
+  });
+});
+
+
+===== FILE: tools\reference_engine.py =====
+
+"""
+TradeQuest â€” independent reference implementation of the price engine.
+
+Purpose: produce the golden values used by the TypeScript tests (RNG-05, ENG-04)
+WITHOUT running the TypeScript code under test (docs/rules.md Â§5.6).
+
+It is written directly from docs/rules.md Â§5 in a different language. If the
+TypeScript engine and this script disagree, one of them has a bug: investigate,
+don't just regenerate the fixture. Regenerate only with an ENGINE_VERSION bump.
+
+Usage (Python 3.8+, no packages needed):
+    python tools/reference_engine.py > tests/fixtures/reference-v1.json
+"""
+
+import json
+import math
+
+ENGINE_VERSION = 1
+
+TOTAL_CANDLES = 70
+START_PRICE_MIN = 2000
+START_PRICE_MAX = 5000
+MIN_PRICE = 100
+DRIFT = 0
+BODY_SIGMA = 0.015
+GAP_SIGMA = 0.002
+MAX_MOVE = 0.10
+MAX_GAP = 0.02
+WICK_MAX = 0.01
+
+MASK32 = 0xFFFFFFFF
+
+
+def imul(a, b):
+    """Low 32 bits of a * b (what JavaScript's Math.imul returns, as an unsigned bit pattern)."""
+    return (a * b) & MASK32
+
+
+class Mulberry32:
+    """mulberry32, keeping every value as an unsigned 32-bit integer."""
+
+    def __init__(self, seed):
+        assert 0 <= seed <= MASK32
+        self.state = seed
+        self.draws = 0
+
+    def next(self):
+        self.draws += 1
+        self.state = (self.state + 0x6D2B79F5) & MASK32
+        s = self.state
+        t = imul(s ^ (s >> 15), 1 | s)
+        t = ((t + imul(t ^ (t >> 7), 61 | t)) & MASK32) ^ t
+        return ((t ^ (t >> 14)) & MASK32) / 4294967296
+
+
+def normal_z(rng):
+    total = 0.0
+    for _ in range(12):
+        total += rng.next()
+    return total - 6
+
+
+def round_half_up(x):
+    return math.floor(x + 0.5)
+
+
+def clamp(x, lo, hi):
+    return min(max(x, lo), hi)
+
+
+def generate(rng, count=TOTAL_CANDLES):
+    start = START_PRICE_MIN + math.floor(rng.next() * (START_PRICE_MAX - START_PRICE_MIN + 1))
+    candles = []
+    prev_close = None
+    for i in range(1, count + 1):
+        z_gap = normal_z(rng)
+        z_body = normal_z(rng)
+        u_up = rng.next()
+        u_down = rng.next()
+        if i == 1:
+            o = start
+        else:
+            gap = clamp(GAP_SIGMA * z_gap, -MAX_GAP, MAX_GAP)
+            o = max(MIN_PRICE, round_half_up(prev_close * (1 + gap)))
+        ret = clamp(DRIFT + BODY_SIGMA * z_body, -MAX_MOVE, MAX_MOVE)
+        c = max(MIN_PRICE, round_half_up(o * (1 + ret)))
+        h = round_half_up(max(o, c) * (1 + u_up * WICK_MAX))
+        lo = max(MIN_PRICE, round_half_up(min(o, c) * (1 - u_down * WICK_MAX)))
+        candles.append({"index": i, "open": o, "high": h, "low": lo, "close": c})
+        prev_close = c
+    return candles
+
+
+def main():
+    rng_seeds = [12345, 0, 4294967295]
+    candle_seeds = [12345, 1, 4294967295]
+
+    rng_outputs = {}
+    for seed in rng_seeds:
+        r = Mulberry32(seed)
+        rng_outputs[str(seed)] = [r.next() for _ in range(5)]
+
+    candles = {}
+    draw_counts = {}
+    for seed in candle_seeds:
+        r = Mulberry32(seed)
+        candles[str(seed)] = generate(r)
+        draw_counts[str(seed)] = r.draws
+
+    print(json.dumps({
+        "engineVersion": ENGINE_VERSION,
+        "generatedBy": "tools/reference_engine.py (independent Python reference)",
+        "rngFirstFive": rng_outputs,
+        "drawCounts": draw_counts,
+        "candles": candles,
+    }, indent=1))
+
+
+if __name__ == "__main__":
+    main()
+
+
+===== FILE: package.json =====
+
+{
+  "name": "tradequest",
+  "private": true,
+  "version": "0.1.0",
+  "description": "TradeQuest â€” a trading education simulator (Milestone 1: single-player, fictional stock).",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.5",
+    "vitest": "^3.2.4"
+  }
+}
+
+
+===== FILE: README.md =====
+
+# TradeQuest â€” Milestone 1
+
+A trading-education simulator. Milestone 1 is a single-player round on one **fictional** stock (Quellaris Energy, QLRX) with $1,000 of virtual cash: 10 history candles for context, then 60 playable candles, revealed one at a time. Everything is simulated â€” no real companies, prices or money.
+
+The rules live in [`docs/rules.md`](docs/rules.md) and the test plan in [`docs/test-cases.md`](docs/test-cases.md). If the code and the rules disagree, the rules win.
+
+## Requirements
+
+- **Node.js 20.19+ or 22.12+** (check with `node -v`). Download the LTS version from nodejs.org if needed.
+- Windows, macOS or Linux. Commands below work in PowerShell, Command Prompt or a terminal.
+- Optional: Python 3, only if you want to re-run the independent reference engine.
+
+## Run it
+
+```bash
+npm install        # first time only â€” downloads Vite, React, Vitest, TypeScript
+npm run dev        # starts the site; open the address it prints (usually http://localhost:5173)
+```
+
+Other commands:
+
+| Command | What it does |
+|---------|--------------|
+| `npm test` | Runs all automated tests once (Vitest) |
+| `npm run test:watch` | Re-runs tests when you save a file |
+| `npm run typecheck` | Checks TypeScript types |
+| `npm run build` | Type-checks, then builds the site into `dist/` |
+| `npm run preview` | Serves the built `dist/` folder |
+
+## How to play
+
+1. Read the 10 grey history candles. They cannot be traded at.
+2. Choose Buy or Sell, type a whole number of shares (or press **Max**) and press **Place order**. The estimate uses the last close; the order actually fills at the **next candle's open**.
+3. Press **Next candle â†’**. Your order fills (or is rejected if you can no longer afford it) and the next candle appears.
+4. After candle 60, press **Finish round**. Any shares you still hold are sold at the final close.
+5. On the results screen, **Replay this round** gives you exactly the same candles (same seed); **New round** gives a new market.
+
+## Project structure
+
+```
+docs/            rules.md (the spec), test-cases.md, dependencies.md
+src/engine/      the trading engine â€” pure TypeScript, no React, fully tested
+  constants.ts   all parameters (start cash, candle counts, volatilityâ€¦)
+  money.ts       integer-cent rounding helpers
+  format.ts      $ and % display formatting
+  rng.ts         Mulberry32 seeded random numbers
+  candles.ts     deterministic candle generator
+  account.ts     cash, shares, cost basis, P&L, equity
+  orders.ts      order types and quantity parsing
+  round.ts       round flow: submit, cancel, next, finish, replay
+  view.ts        the safe view React receives (only candles 1..k)
+src/app/         React glue: useRound hook, seed picking (crypto)
+src/ui/          React components (chart, order panel, account, notices, history, results)
+tests/           Vitest tests, helpers and the golden fixture
+tools/           reference_engine.py â€” independent Python engine for golden values
+```
+
+The engine never imports React, and React never sees the full list of 70 candles â€” only `getView(state)`, which contains candles 1..k.
+
+## Tests and golden values
+
+- `tests/fixtures/reference-v1.json` was produced by `python tools/reference_engine.py`, an independent Python implementation of the price engine written from the spec. The TypeScript tests compare against it; it is **never** generated from the TypeScript code.
+- Only regenerate it together with an `ENGINE_VERSION` bump (rules.md Â§5.6).
+- Randomized property tests print the market seed and the exact action list when they fail, so you can reproduce the failure with `replayActions(seed, actions)` from `tests/helpers/property.ts`.
+
+## Deliberately not in Milestone 1
+
+News, short selling, leverage, fees, limit/stop orders, accounts, saving progress, leaderboards, multiplayer and real market data. Refreshing the page starts a new round.
+
+
+===== FILE: tsconfig.json =====
+
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src", "tests", "vite.config.ts"]
+}
+
+
+===== FILE: vite.config.ts =====
+
+/// <reference types="vitest/config" />
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    include: ['tests/**/*.test.ts'],
+    environment: 'node',
+  },
+});
+
