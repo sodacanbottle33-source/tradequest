@@ -11,6 +11,8 @@
     "dev": "vite",
     "server": "tsx server/main.ts",
     "owner": "tsx tools/set-owner.ts",
+    "reset-password": "tsx tools/reset-password.ts",
+    "cloud": "tsx tools/cloud.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",

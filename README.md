@@ -45,6 +45,8 @@ Other commands:
 | `npm run preview` | Serves the built `dist/` folder |
 | `npm run server` | Starts the shared-market server |
 | `npm run owner -- <username>` | Chooses who the owner (admin) is; `npm run owner` shows it, `-- --clear` removes it |
+| `npm run reset-password -- <username>` | Sets a new password for a forgotten one (stop the server first; see *Forgot a password?*) |
+| `npm run cloud -- check` / `list` / `push` / `pull` | Works with the online copies of the data (see *Keeping the data on a free host*) |
 | `npm run bench:world` | Measures how fast the server's world is on your computer |
 
 ## How to play
@@ -173,6 +175,41 @@ The owner is exactly one username, chosen by whoever runs the server. Nobody can
 2. Stop the server with Ctrl+C and start it again with `npm run server`.
 3. Log in (or create the account) with that username. The profile menu now has an **Admin panel** item and an Owner badge. Other players never see it, and the server answers every admin address with 403 for them.
 
+### Forgot a password?
+
+There is no "forgot password" button on the website (it has no e-mail to send a link to). The person who runs the server can set a new password for any account, the owner's included:
+
+1. Stop the server (Ctrl+C in its window). The command refuses to work while the server is running.
+2. `npm run reset-password -- <username>`. It asks for the new password (8–72 characters) twice and does not show what you type.
+3. Start the server again and sign in with the new password.
+
+The role (owner or player), the cash, the positions and everything else of the account stay as they are. Only the password changes, and the account is signed out everywhere. It works on the database file in `data/`, so there is no address on the website that can do it. On a host where you cannot open a terminal (for example Render's free plan) set the password with the other account's tools on your own computer, then send the world online with `npm run cloud -- push` (see *Keeping the data on a free host*).
+
+### Keeping the data on a free host
+
+Render's free plan erases the server's disk every time the server sleeps (after 15 minutes without a visitor), restarts or is redeployed, and without help every one of those starts a brand new world. TradeQuest can keep its data in a **private GitHub repository** instead. While it runs, the server saves a checked, compressed copy of its database there every 10 minutes and once more when the host tells it to stop. When it starts with no database, it loads the newest good copy and the market catches up to the present. On your own computer none of this runs unless you set the two settings below.
+
+**One-time setup**
+
+1. On GitHub make a **private** repository (for example `tradequest-data`) and tick *Add a README* (a repository needs one commit before it can hold copies).
+2. Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → generate a token for **only that repository** with *Repository permissions → Contents: Read and write*. Copy it; it starts with `github_pat_`. Keep it secret: anybody with it can read the saved accounts.
+3. On your computer (PowerShell, in the TradeQuest folder), stop the server, then set the two settings **for this window only** and look at the store:
+   ```
+   $env:TQ_BACKUP_REPO = "your-github-name/tradequest-data"
+   $env:TQ_BACKUP_TOKEN = "github_pat_..."
+   npm run cloud -- check
+   ```
+4. To bring the game from your computer online, send a copy of it: `npm run cloud -- push`. It only reads your game (`data/tradequest.sqlite`), shows which accounts are in it, and refuses to upload to a public repository.
+5. On Render open the service → Environment and add the same two settings (`TQ_BACKUP_REPO`, and `TQ_BACKUP_TOKEN` as a secret). Render restarts the server, which loads the copy you pushed. Do step 4 **before** step 5: once the online server runs with the settings it saves its own copies, and those are newer than the one you push.
+
+The commands: `npm run cloud -- check` (is the store reachable and private, which copies it holds), `list` (the copies, newest first), `push` (send this computer's game as the newest copy; it asks first when copies already exist, or use `--yes`), `pull` (download the newest good copy to `data/online-copy.sqlite`, never over your own game).
+
+**What to expect.** A copy is about 15 MB packed. The server checks every `TQ_BACKUP_MINUTES` (default 10; 0.1 to 1440) and saves only if somebody did something that can change saved data since the last copy (a sign-in, a trade, a launch, an admin action; plain page views do not count), plus one safety-net copy an hour while it runs. The market itself needs no copy of its own progress: it is deterministic, so a copy plus the catch-up at the next start gives the same prices. The newest 6 copies are kept. If the host kills the server without warning, the changes since the last save are lost (up to 10 minutes of activity). A save that fails (GitHub down, token expired) is a message in the log and the server keeps running; the change stays due and is tried again, and after three failures in a row it is logged as an error. If the store cannot be reached when the server starts with an empty disk, or every copy is damaged, the server **refuses to start** and says why, rather than starting a new world that would later be saved over the good copies. The first wake-up after a long sleep takes longer: the copy is downloaded and the market catches up (roughly 5,000 seconds of market time per second on Render's free processor, so a day of sleep is about 20 seconds).
+
+**On Render, set the Start Command to `node --import tsx server/main.ts`** (Settings → Build & Deploy → Start Command) instead of `npm run server`. When Render stops a service it sends the stop signal to the one program it started; `npm` does not pass it on, so with `npm run server` the server never hears it and the last save (the one that catches the final minutes of play) does not happen. Started directly, the log shows `SIGTERM received: stopping` and a `Saved ...` line on every redeploy and every sleep.
+
+Settings: `TQ_BACKUP_REPO` (`owner/name`), `TQ_BACKUP_TOKEN`, `TQ_BACKUP_MINUTES`. Both of the first two or neither.
+
 The panel has four tabs:
 
 - **Market**: pick a company and move its price. **Rug pull** (−90 %), **Crash** (−30 %), **Pump** (+100 %) or **Custom**, any percent from −99 to +900, instant, fast (5 min) or slow (1 h). You review first and confirm second. The move is sent as an ordinary breaking news story labelled as a special event, so every player sees it and the chart shows it. The percent is a target, and the real result is close but not exact ("about": a −90 % request gave about −78 % to −75 % in the browser test, because the price keeps its normal random movement while the move plays out). The price never goes below $1.00. **Stop trading** halts a company for everyone in Career and 1v1 (the price keeps moving, orders are refused with your reason) until you resume it.
@@ -217,12 +254,12 @@ src/engine/      the trading engine — pure TypeScript, no React, fully tested
   liveSession.ts a live session: advance ticks, skip, buy/sell at the current price, timed sessions
   liveView.ts    the safe view React receives: prices and candles up to the current tick only
 src/world/       the persistent world (engine v4): companies, price model, liquidity, news generator, 1v1 rules — pure TypeScript
-server/          the TradeQuest server (Node + SQLite): world runtime, news scheduler, accounts, trading, lobby (with the 1v1 bots in lobby/bots.ts), bots that trade in the main market (marketBots.ts), live stream, owner tools (admin.ts, halts.ts, customStock.ts), player launches and rug pulls (launch.ts, customCoin.ts), the money pool behind a launched coin (pools.ts), automatic trading pauses (breaker.ts), player price impact (flow.ts), leverage and shorts (leverage.ts rules, liquidation.ts automatic closing, stop-loss and take-profit)
+server/          the TradeQuest server (Node + SQLite): world runtime, news scheduler, accounts, trading, lobby (with the 1v1 bots in lobby/bots.ts), bots that trade in the main market (marketBots.ts), live stream, owner tools (admin.ts, halts.ts, customStock.ts), copies of the data in a private GitHub repository (cloudBackup.ts), player launches and rug pulls (launch.ts, customCoin.ts), the money pool behind a launched coin (pools.ts), automatic trading pauses (breaker.ts), player price impact (flow.ts), leverage and shorts (leverage.ts rules, liquidation.ts automatic closing, stop-loss and take-profit)
 src/shared/      the game's screens (Career, 1v1, News), the profile menu and the owner's admin panel, and their link to the server (api.ts, store.ts, components)
 src/app/         React glue for the older offline modes (no longer in the menu): useMarket / useLiveMarket hooks, playback timer, LiveController, seed picking (crypto)
 src/ui/          React components (stock chips, animated live chart, chart pens (chartPens.ts, usePens.ts, PenLayer.tsx), controls, trade panel, account, holdings, history, results)
 tests/           Vitest tests, helpers and the golden fixtures
-tools/           bench-world.ts (speed check), set-owner.ts (npm run owner), reference_engine.py, reference_market.py, reference_live.py — independent Python engines for golden values
+tools/           bench-world.ts (speed check), set-owner.ts (npm run owner), reset-password.ts (npm run reset-password), cloud.ts (npm run cloud), reference_engine.py, reference_market.py, reference_live.py — independent Python engines for golden values
 ```
 
 The engine never imports React, and React never sees the full candle lists — only `getMarketView(state)`, which contains candles 1..k of each stock.

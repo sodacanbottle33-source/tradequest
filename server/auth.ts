@@ -255,3 +255,26 @@ export class Auth {
     return this.db.run('DELETE FROM sessions WHERE expires_ms <= ?', this.now()).changes;
   }
 }
+
+/**
+ * Sets a new password for one account and signs that account out everywhere (every old session ends). This is for the person who
+ * runs the server (`npm run reset-password`, with the server stopped); there is no way to call it through the web. The role, the
+ * money and everything else of the account stay as they are. Returns the account's exact username, or null if there is none.
+ */
+export async function resetPassword(db: Db, username: string, password: string): Promise<{ username: string; sessionsEnded: number } | null> {
+  if (typeof password !== 'string' || password.length < 8 || password.length > 72) {
+    throw new AuthError('bad_password', 'The password must be 8–72 characters long.', 400);
+  }
+  const hash = await hashPassword(password);
+  return db.tx(() => {
+    let row = db.get<{ id: number; username: string }>('SELECT id, username FROM users WHERE username = ?', username);
+    if (!row) {
+      const similar = db.all<{ id: number; username: string }>('SELECT id, username FROM users WHERE username = ? COLLATE NOCASE', username);
+      if (similar.length === 1) row = similar[0];
+    }
+    if (!row) return null;
+    db.run('UPDATE users SET pw_hash = ? WHERE id = ?', hash, row.id);
+    const ended = db.run('DELETE FROM sessions WHERE user_id = ?', row.id).changes;
+    return { username: row.username, sessionsEnded: ended };
+  });
+}
