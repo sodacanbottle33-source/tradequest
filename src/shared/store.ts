@@ -5,7 +5,7 @@ import { useSyncExternalStore } from 'react';
 import { ApiError, api, isOffline } from './api';
 import { describeLimitEvent } from './limitText';
 import { describeNotice, type ToastText } from './positionNotice';
-import type { Account, Announcement, BanNotice, Health, LimitNotice, LimitOrder, Match, NewsItem, OverviewRow, PositionNotice, TradingPause, User } from './types';
+import type { Account, Announcement, BanNotice, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, OverviewRow, PositionNotice, TradingPause, User } from './types';
 
 /** A pop-up about a position the market closed by itself. */
 export interface Toast extends ToastText {
@@ -35,6 +35,8 @@ export interface SharedState {
   /** The newest breaking story, until the player closes it. */
   readonly breaking: NewsItem | null;
   readonly career: Account | null;
+  /** The player's friends, the requests waiting for his answer and the ones he sent (null until loaded, and when signed out). */
+  readonly friends: FriendsState | null;
   /** The player's open limit orders (Career), newest first. */
   readonly limits: readonly LimitOrder[];
   readonly match: Match | null;
@@ -61,6 +63,7 @@ const INITIAL: SharedState = {
   news: [],
   breaking: null,
   career: null,
+  friends: null,
   limits: [],
   match: null,
   searching: 0,
@@ -128,12 +131,14 @@ export class SharedStore {
       if (this.started) this.retry = setTimeout(() => void this.connect(), 3000);
       return;
     }
-    await Promise.all([this.refreshCompanies(), this.refreshNews(), this.refreshPrivate()]);
+    await Promise.all([this.refreshCompanies(), this.refreshNews(), this.refreshPrivate(), this.refreshFriends()]);
     this.openStream();
     for (const t of this.timers) clearInterval(t);
     this.timers = [
       setInterval(() => void this.refreshCompanies(), 20_000),
       setInterval(() => void this.refreshPrivate(false), 6_000),
+      // New requests also arrive over the live stream at once; this is the safety net.
+      setInterval(() => void this.refreshFriends(), 30_000),
       // While in a lobby the server must keep hearing from us (it removes players who have gone away). During a live match this
       // also makes sure the final result reaches the page even if the live push was missed.
       setInterval(() => {
@@ -154,6 +159,7 @@ export class SharedStore {
       this.onTick(JSON.parse((e as MessageEvent<string>).data) as TickPayload);
       void this.refreshCompanies();
       void this.refreshPrivate(false);
+      void this.refreshFriends();
     });
     es.addEventListener('tick', (e) => this.onTick(JSON.parse((e as MessageEvent<string>).data) as TickPayload));
     es.addEventListener('news', (e) => this.onNews(JSON.parse((e as MessageEvent<string>).data) as NewsItem));
@@ -164,6 +170,8 @@ export class SharedStore {
     });
     es.addEventListener('position', (e) => this.onPosition(JSON.parse((e as MessageEvent<string>).data) as PositionNotice));
     es.addEventListener('limit', (e) => this.noteLimit(JSON.parse((e as MessageEvent<string>).data) as LimitNotice));
+    // A friend request arrived, was accepted, or a friend left: bring the lists up to date.
+    es.addEventListener('friends', () => void this.refreshFriends());
     es.onerror = () => {
       if (es.readyState === EventSource.CLOSED && this.started) {
         this.set({ conn: 'offline', problem: 'The connection to the server was lost.' });
@@ -267,6 +275,23 @@ export class SharedStore {
     if (includeLobby) await this.refreshLobby();
   }
 
+  async refreshFriends(): Promise<void> {
+    if (!this.state.user) {
+      if (this.state.friends) this.set({ friends: null });
+      return;
+    }
+    try {
+      this.set({ friends: await api.friends() });
+    } catch (error) {
+      this.noteFailure(error);
+    }
+  }
+
+  /** The lists a friend action answered with (so the screen is up to date without another request). */
+  setFriends(friends: FriendsState): void {
+    if (this.state.user) this.set({ friends });
+  }
+
   async refreshAccount(): Promise<void> {
     await this.refreshPrivate(false);
   }
@@ -293,7 +318,7 @@ export class SharedStore {
     if (isOffline(error)) this.set({ conn: 'offline', problem: (error as ApiError).message });
     else if (error instanceof ApiError && error.status === 401 && this.state.user) {
       // The session ended. If the owner banned this account, say so instead of just showing a login form.
-      this.set({ user: null, career: null, limits: [], match: null });
+      this.set({ user: null, career: null, friends: null, limits: [], match: null });
       void this.recheckMe();
     }
   }
@@ -316,13 +341,14 @@ export class SharedStore {
     // never get this player's match updates, so open a new one now.
     if (this.started) this.openStream();
     await this.refreshPrivate();
+    void this.refreshFriends();
   }
 
   async signOut(): Promise<void> {
     try {
       await api.logout();
     } finally {
-      this.set({ user: null, banned: null, career: null, limits: [], match: null, walletCents: 0, toasts: [] });
+      this.set({ user: null, banned: null, career: null, friends: null, limits: [], match: null, walletCents: 0, toasts: [] });
       for (const t of this.toastTimers.values()) clearTimeout(t);
       this.toastTimers.clear();
       if (this.started) this.openStream();

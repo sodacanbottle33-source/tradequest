@@ -15,6 +15,7 @@ import type { Logger } from './log';
 import type { NewsScheduler } from './news/scheduler';
 import type { NewsService } from './news/service';
 import type { SseHub } from './sse';
+import type { Social } from './social';
 import type { Db } from './sqlite';
 import type { AccountRow, Trading } from './trading';
 import type { MarketViews } from './world/views';
@@ -43,6 +44,8 @@ export interface Services {
   /** Stocks and memecoins any player can launch, and the rug pull (server/launch.ts). */
   readonly launches: Launches;
   readonly matches: MatchService;
+  /** Friends, the player list and the richest-players leaderboard (server/social.ts). */
+  readonly social: Social;
   /** Null only when the app was created with news switched off (some tests). */
   readonly news: NewsService | null;
   readonly scheduler: NewsScheduler | null;

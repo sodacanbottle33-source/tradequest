@@ -658,6 +658,28 @@ CREATE TABLE coin_pools (
 );
 `,
   },
+  {
+    version: 19,
+    name: 'friends',
+    sql: `
+-- Friends (server/social.ts, docs/world.md §13). One row per pair of players, stored with the smaller user id first so a pair can never be stored
+-- twice. A friend request is a 'pending' row that remembers who sent it (requester_id); accepting it makes it 'accepted'. Declining, cancelling and
+-- removing a friend delete the row. Friends share nothing but their names and net worths: no money, no shares, no holdings.
+CREATE TABLE friendships (
+  user_a       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_b       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  requester_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status       TEXT NOT NULL CHECK (status IN ('pending', 'accepted')),
+  created_ms   INTEGER NOT NULL,
+  accepted_ms  INTEGER,
+  PRIMARY KEY (user_a, user_b),
+  CHECK (user_a < user_b),
+  CHECK (requester_id = user_a OR requester_id = user_b),
+  CHECK ((status = 'accepted') = (accepted_ms IS NOT NULL))
+);
+CREATE INDEX friendships_by_b ON friendships(user_b);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

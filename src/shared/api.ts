@@ -14,11 +14,14 @@ import type {
   CompanyEarnings,
   EarningsCalendar,
   Estimate,
+  FriendAction,
+  FriendsState,
   Health,
   GoodFor,
   HistoryEntry,
   LaunchResult,
   LaunchState,
+  Leaderboard,
   LimitEstimate,
   LimitOrder,
   LimitResult,
@@ -27,9 +30,12 @@ import type {
   NewsPage,
   OrderResult,
   Overview,
+  PlayerPage,
+  Relation,
   Resolution,
   DrainResult,
   RugResult,
+  BoardScope,
   ServerCandle,
   StockLaunchPreview,
   Trade,
@@ -148,6 +154,13 @@ export const api = {
   dismiss: () => request<{ ok: boolean }>('POST', '/api/lobby/dismiss', {}),
   matches: () => request<{ matches: HistoryEntry[] }>('GET', '/api/matches?limit=20'),
   wallet: () => request<{ balanceCents: number }>('GET', '/api/wallet'),
+
+  // Players, friends and the leaderboard (any signed-in player). The server decides who is ranked where and what is visible.
+  players: (q = '', offset = 0, limit = 50) => request<PlayerPage>('GET', `/api/players?limit=${limit}&offset=${offset}${q.trim() === '' ? '' : `&q=${enc(q.trim())}`}`),
+  leaderboard: (scope: BoardScope) => request<Leaderboard>('GET', `/api/leaderboard?scope=${scope}`),
+  friends: () => request<FriendsState>('GET', '/api/friends'),
+  /** Asks, accepts, declines, cancels a request, or removes a friend. The answer is your friend lists as they are afterwards. */
+  friendAction: (what: FriendAction, username: string) => request<FriendsState & { relation: Relation }>('POST', `/api/friends/${what}`, { username }),
 
   // Owner only: the server answers 403 to anybody else.
   adminState: (q = '') => request<AdminState>('GET', `/api/admin/state${q.trim() === '' ? '' : `?q=${enc(q.trim())}`}`),

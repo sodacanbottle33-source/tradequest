@@ -2380,3 +2380,46 @@ code {
     transition: none;
   }
 }
+
+/* ---------- Players: leaderboard, friends, find players ---------- */
+.players-layout {
+  display: grid;
+  gap: 14px;
+}
+.board-me {
+  font-weight: 600;
+  margin: 4px 0 10px;
+}
+.board .rank {
+  color: var(--muted);
+  width: 3em;
+}
+.board .rank.top {
+  color: var(--accent);
+  font-weight: 700;
+}
+.rel-friend {
+  color: var(--up);
+  font-weight: 600;
+}
+.people-actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.tab-count {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--down);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  vertical-align: middle;
+}

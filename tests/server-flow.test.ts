@@ -393,7 +393,7 @@ describe('restarts', () => {
       db.run("INSERT INTO admin_log(request_id, created_ms, admin_user_id, action, target, detail_json) VALUES ('old-request-01', 5, 1, 'halt', 'QLRX', '{}')");
       // Version 6 adds the price-push tables; version 7 (owner tools) rebuilds admin_log, so the old row must come through both.
       // Versions 8 to 12 (companies made by the owner, automatic trading pauses, leverage, memecoins with short selling and stops) only add tables and columns and follow at once.
-      expect(migrate(db)).toEqual([6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+      expect(migrate(db).filter((v) => v <= 18)).toEqual([6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]); // (later versions follow in the same go)
       expect(db.all('SELECT request_id, action FROM admin_log')).toEqual([{ request_id: 'old-request-01', action: 'halt' }]);
       db.run("INSERT INTO admin_log(request_id, created_ms, admin_user_id, action, target, detail_json) VALUES ('new-request-01', 6, 1, 'flow', 'price impact', '{}')");
       expect(db.all('SELECT count(*) AS n FROM admin_log')).toEqual([{ n: 2 }]);

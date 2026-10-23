@@ -770,3 +770,65 @@ export interface EarningsCalendar {
   readonly upcoming: UpcomingReport[];
   readonly recent: (EarningsReport & { ticker: string; name: string })[];
 }
+
+// ---- players, friends and the leaderboard (server/social.ts, docs/world.md §13) -------------------------------------------------
+
+/** How another player stands to you. */
+export type Relation = 'you' | 'friend' | 'outgoing' | 'incoming' | 'none';
+
+/** One line of the player list. `netWorthCents` and `rank` are null for the owner (he is not ranked). */
+export interface PlayerEntry {
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: 'player' | 'owner';
+  readonly netWorthCents: number | null;
+  readonly rank: number | null;
+  readonly relation: Relation;
+}
+
+export interface PlayerPage {
+  readonly players: PlayerEntry[];
+  readonly total: number;
+  readonly offset: number;
+  readonly updatedMs: number;
+}
+
+export interface BoardEntry {
+  readonly rank: number;
+  readonly username: string;
+  readonly displayName: string;
+  readonly netWorthCents: number;
+  readonly relation: Relation;
+}
+
+export type BoardScope = 'all' | 'friends';
+
+export interface Leaderboard {
+  readonly scope: BoardScope;
+  readonly rows: BoardEntry[];
+  readonly total: number;
+  readonly size: number;
+  /** Where the player stands in this view, also outside the top; null when he is not ranked (the owner). */
+  readonly me: { readonly rank: number; readonly netWorthCents: number; readonly inTop: boolean } | null;
+  readonly updatedMs: number;
+}
+
+export interface FriendEntry {
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: 'player' | 'owner';
+  readonly netWorthCents: number | null;
+  readonly rank: number | null;
+  readonly sinceMs: number;
+}
+
+export interface FriendsState {
+  readonly friends: FriendEntry[];
+  /** Requests other players sent to you. */
+  readonly incoming: FriendEntry[];
+  /** Requests you sent that nobody has answered yet. */
+  readonly outgoing: FriendEntry[];
+  readonly limits: { readonly maxFriends: number; readonly maxOutgoing: number };
+}
+
+export type FriendAction = 'request' | 'accept' | 'decline' | 'cancel' | 'remove';

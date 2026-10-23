@@ -11,18 +11,20 @@ import { LobbyScreen } from './LobbyScreen';
 import { MarketScreen } from './MarketScreen';
 import { NewsList } from './NewsList';
 import { NewsScreen } from './NewsScreen';
+import { PlayersScreen } from './PlayersScreen';
 import { Notices } from './Notices';
 import { EarningsScreen } from './EarningsScreen';
 import { Toasts } from './Toasts';
 import { ProfileMenu } from './ProfileMenu';
 import { sharedStore, useShared } from './store';
 
-type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'account';
+type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'players' | 'account';
 const CAREER_TABS: [CareerTab, string][] = [
   ['market', 'Market'],
   ['coins', 'Memecoins'],
   ['earnings', 'Earnings'],
   ['launch', 'Launch'],
+  ['players', 'Players'],
   ['account', 'My account'],
 ];
 
@@ -60,6 +62,8 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
   const launchLocked = Boolean(inBattle) && !s.match?.players.find((p) => p.you)?.forfeited;
   const careerTab: CareerTab = chosenTab === 'launch' && launchLocked ? 'market' : chosenTab;
   const careerTabs = CAREER_TABS.filter(([id]) => id !== 'launch' || !launchLocked);
+  // Friend requests waiting for an answer: shown as a number on the Players tab.
+  const requests = s.friends?.incoming.length ?? 0;
   const listed = s.companies.filter((c) => c.trading).length;
   const stockCount = s.companies.filter((c) => c.sector !== 'meme').length;
   const coinCount = s.companies.length - stockCount;
@@ -153,6 +157,11 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
               data-testid={`tab-${id}`}
             >
               {label}
+              {id === 'players' && requests > 0 && (
+                <span className="tab-count" data-testid="players-badge" aria-label={`${requests} friend request${requests === 1 ? '' : 's'}`}>
+                  {requests}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -162,6 +171,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
         {mode === 'career' && (careerTab === 'market' || careerTab === 'coins') && (ticker ? <CompanyView ticker={ticker} onBack={() => setTicker(null)} onTicker={openCompany} /> : <MarketScreen key={careerTab} kind={careerTab === 'coins' ? 'coins' : 'stocks'} onOpen={openCompany} selected={ticker} />)}
         {mode === 'career' && careerTab === 'earnings' && <EarningsScreen onOpen={openCompany} />}
         {mode === 'career' && careerTab === 'launch' && <LaunchScreen onOpen={openCompany} />}
+        {mode === 'career' && careerTab === 'players' && <PlayersScreen />}
         {mode === 'career' && careerTab === 'account' && <AccountScreen onOpen={openCompany} />}
         {mode === 'battle' && <LobbyScreen onGoSignIn={goSignIn} />}
         {mode === 'news' && <NewsScreen onTicker={openCompany} />}

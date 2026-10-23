@@ -33,6 +33,8 @@ import { registerLobbyRoutes } from './routes/lobby';
 import { registerEarningsRoutes } from './routes/earnings';
 import { registerLimitRoutes } from './routes/limits';
 import { registerNewsRoutes } from './routes/news';
+import { registerSocialRoutes } from './routes/social';
+import { Social } from './social';
 import { migrate } from './schema';
 import type { Services } from './services';
 import { Db } from './sqlite';
@@ -250,6 +252,8 @@ export function createApp(options: AppOptions): App {
     bots: options.bots === true,
     botWaitMs: options.botWaitMs,
   });
+  // Friends and the leaderboard. A player is told over his live stream when a request arrives, is accepted or a friend leaves.
+  const social = new Social({ db, trading, now, notify: (userId) => hub.publishTo(userId, 'friends', {}) });
   const botTrader = options.bots === true ? new BotTrader({ db, world, trading, log }) : null;
   const earnings = new Earnings(db, earningsWorldOf(world));
   const signals = new MarketSignals({ db, earnings, companies: () => world.companies, tilt: (c, tick) => (flow ? flow.bookTilt(c, tick) : 0) });
@@ -282,6 +286,7 @@ export function createApp(options: AppOptions): App {
     admin,
     launches,
     matches,
+    social,
     news: newsService,
     scheduler,
     resolveAccount(user, which) {
@@ -302,6 +307,7 @@ export function createApp(options: AppOptions): App {
   registerEarningsRoutes(router, services, earnings);
   registerLimitRoutes(router, services);
   registerLobbyRoutes(router, services);
+  registerSocialRoutes(router, services);
   options.extend?.(services, router);
 
   world.onSaved((tick) => matches.settleDue(tick));

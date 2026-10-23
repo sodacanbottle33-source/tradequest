@@ -167,6 +167,16 @@ Any signed-in player can open the **Launch** tab in Career and launch a **memeco
 - Players see the developer name you choose (or "AnonDev"); your username is shown to the owner only.
 - **Not in 1v1.** A company a player launched can be traded in **Career only**. A 1v1 match refuses orders for it (with the reason), leaves it out of the 1v1 company list, and bots never pick it, so nobody can win a match by pushing up their own coin with Career money. You also cannot launch while your own match is in its countdown or running (the Launch tab is hidden then; waiting in the lobby is fine, and so is launching after you forfeit). Companies the owner makes on the Admin *Create stock* tab are not launches and can be traded in a match.
 
+## Friends and the leaderboard
+
+The **Players** tab in Career has three parts: the **Leaderboard**, your **Friends**, and **Find players**.
+
+- **Leaderboard.** The 100 richest players by **Career net worth** (cash plus what your shares are worth right now, the same number *My account* shows), richest first. Below the list it tells you where **you** stand, also when you are not in the top 100 ("You are #137 of 412 players"). A **Friends** view ranks only you and your friends. **The owner, the computer players (the bots) and banned players are never ranked.** The server works the ranking out for everybody once and keeps it for 30 seconds; a new player or a ban shows up at once.
+- **Friends need a yes from both sides.** Press **Add friend** on the leaderboard or in Find players; the other player sees the request (a red number on the Players tab, at once) and **Accepts** or **Declines**. If he has already asked you, asking him back is the same as saying yes. You can cancel a request you sent and remove a friend (for both of you). Limits: 100 friends, 30 requests waiting for an answer, 100 waiting for one player, and a request is refused when it is sent too quickly.
+- **Find players.** Everybody who can be seen, richest first (the owner at the end, without a net worth), with a search box and "Show more".
+- **What other players see of you:** your name and your net worth, and nothing else. Never your cash, holdings, trades or orders. **Nothing is ever sent between players** (no cash, no shares): everybody trades in the same shared market, which your trades already move for everyone.
+- You must be signed in to see any of it. The data is saved with the rest of the game (schema 19, a `friendships` table); a program older than schema 19 refuses to open a database that was saved with it.
+
 ## Owner admin panel (only for you)
 
 The owner is exactly one username, chosen by whoever runs the server. Nobody can become the owner from the website.
@@ -254,8 +264,8 @@ src/engine/      the trading engine — pure TypeScript, no React, fully tested
   liveSession.ts a live session: advance ticks, skip, buy/sell at the current price, timed sessions
   liveView.ts    the safe view React receives: prices and candles up to the current tick only
 src/world/       the persistent world (engine v4): companies, price model, liquidity, news generator, 1v1 rules — pure TypeScript
-server/          the TradeQuest server (Node + SQLite): world runtime, news scheduler, accounts, trading, lobby (with the 1v1 bots in lobby/bots.ts), bots that trade in the main market (marketBots.ts), live stream, owner tools (admin.ts, halts.ts, customStock.ts), copies of the data in a private GitHub repository (cloudBackup.ts), player launches and rug pulls (launch.ts, customCoin.ts), the money pool behind a launched coin (pools.ts), automatic trading pauses (breaker.ts), player price impact (flow.ts), leverage and shorts (leverage.ts rules, liquidation.ts automatic closing, stop-loss and take-profit)
-src/shared/      the game's screens (Career, 1v1, News), the profile menu and the owner's admin panel, and their link to the server (api.ts, store.ts, components)
+server/          the TradeQuest server (Node + SQLite): world runtime, news scheduler, accounts, trading, lobby (with the 1v1 bots in lobby/bots.ts), bots that trade in the main market (marketBots.ts), live stream, owner tools (admin.ts, halts.ts, customStock.ts), friends and the leaderboard (social.ts), copies of the data in a private GitHub repository (cloudBackup.ts), player launches and rug pulls (launch.ts, customCoin.ts), the money pool behind a launched coin (pools.ts), automatic trading pauses (breaker.ts), player price impact (flow.ts), leverage and shorts (leverage.ts rules, liquidation.ts automatic closing, stop-loss and take-profit)
+src/shared/      the game's screens (Career, with Players: leaderboard and friends; 1v1; News), the profile menu and the owner's admin panel, and their link to the server (api.ts, store.ts, components)
 src/app/         React glue for the older offline modes (no longer in the menu): useMarket / useLiveMarket hooks, playback timer, LiveController, seed picking (crypto)
 src/ui/          React components (stock chips, animated live chart, chart pens (chartPens.ts, usePens.ts, PenLayer.tsx), controls, trade panel, account, holdings, history, results)
 tests/           Vitest tests, helpers and the golden fixtures
@@ -275,4 +285,4 @@ The engine never imports React, and React never sees the full candle lists — o
 
 ## Not built yet
 
-Career recovery mechanic, match history on profiles, stats and leaderboards, achievements and titles, and the Saturday giveaway. Not planned: a fee on stocks, real market data, and buying virtual currency with real money. See `docs/world.md` §11 for the known limits of what exists (for example: news text is template-based, the server must stay running for "24/7", the persistent world has no independent Python reference).
+Career recovery mechanic, match history on profiles, player stats beyond the net-worth leaderboard, achievements and titles, and the Saturday giveaway. Not planned: a fee on stocks, real market data, and buying virtual currency with real money. See `docs/world.md` §11 for the known limits of what exists (for example: news text is template-based, the server must stay running for "24/7", the persistent world has no independent Python reference).
