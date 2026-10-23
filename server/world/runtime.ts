@@ -471,18 +471,20 @@ export class WorldRuntime {
     }
   }
 
-  /** Refills the 24-hour statistics from the stored 10-tick candles. */
+  /**
+   * Refills the 24-hour statistics from the stored 10-tick candles. One company at a time: a day of candles for every company
+   * together is about 830,000 rows, and building them all as JavaScript objects in one go ran a small host (Render's free
+   * plan, a heap of about 250 MB) out of memory on every start. The result is the same: each candle goes to its own slot.
+   */
   private reloadStats(): void {
     this.stats.reset();
     const lastNo = Math.floor(this.savedTick / TICKS_PER_CANDLE);
     if (lastNo < 1) return;
     const from = Math.max(1, lastNo - CANDLES_PER_DAY + 1);
-    const rows = this.db.all<{ company_id: number; idx: number; high: number; low: number; close: number; volume: number }>(
-      'SELECT company_id, idx, high, low, close, volume FROM candles_c10 WHERE idx >= ? AND idx <= ? ORDER BY idx',
-      from,
-      lastNo,
-    );
-    for (const r of rows) this.stats.set(r.company_id, r.idx, r);
+    const sql = 'SELECT idx, high, low, close, volume FROM candles_c10 WHERE company_id = ? AND idx >= ? AND idx <= ? ORDER BY idx';
+    for (let id = 0; id < this.companies.length; id += 1) {
+      for (const r of this.db.all<{ idx: number; high: number; low: number; close: number; volume: number }>(sql, id, from, lastNo)) this.stats.set(id, r.idx, r);
+    }
   }
 
   // ---- events (news) -------------------------------------------------------------------------------------------------

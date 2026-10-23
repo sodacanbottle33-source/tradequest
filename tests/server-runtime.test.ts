@@ -2,6 +2,7 @@
 // a crash or days of downtime. (docs/world.md §3, requirements 1 and 10.)
 import { afterEach, describe, expect, it } from 'vitest';
 import { CANDLES_PER_DAY, CANDLES_PER_HOUR, TICKS_PER_CANDLE, TICKS_PER_DAY, TICKS_PER_HOUR, buildCatalog, fold, type Candle } from '../src/world';
+import { Db } from '../server/sqlite';
 import { Clock, fixedNews, makeRig, priceVector, type Rig } from './helpers/server';
 import { makeEvent } from './helpers/world';
 
@@ -105,6 +106,38 @@ describe('stop and restart', () => {
     expect(wb.health().lagTicks).toBe(0);
     expect(tableRows(b, 'candles_c10')).toBe(tableRows(a, 'candles_c10'));
     expect(tableRows(b, 'candles_h1')).toBe(tableRows(a, 'candles_h1'));
+  }, LONG);
+
+  it('starting from a saved world never loads a whole day of candles for every company at once (a small host would run out of memory)', () => {
+    const r = rig();
+    const first = r.open({ companyCount: 12 });
+    r.clock.advanceSeconds(600);
+    first.world.pump();
+    const before = priceVector(first.world);
+    first.db.close();
+    r.clock.advanceSeconds(900);
+
+    // Watch the biggest answer any query gives while the world loads and catches up.
+    const original = Db.prototype.all;
+    let most = 0;
+    Db.prototype.all = function (this: Db, sql: string, ...params: Parameters<Db['all']> extends [string, ...infer P] ? P : never) {
+      const rows = original.call(this, sql, ...params);
+      if (rows.length > most) most = rows.length;
+      return rows;
+    } as typeof original;
+    let reopened;
+    try {
+      reopened = r.open({ companyCount: 12 });
+    } finally {
+      Db.prototype.all = original;
+    }
+    expect(most).toBeLessThanOrEqual(CANDLES_PER_DAY); // one company's day, not twelve
+    // And the statistics are exactly what they were (the 24-hour range of company 0 is whole).
+    expect(reopened.world.sim.tick).toBeGreaterThan(first.world.sim.tick);
+    expect(priceVector(reopened.world)).not.toEqual(before); // time passed: the market moved on
+    const range = reopened.world.stats.window;
+    expect(range).toBe(CANDLES_PER_DAY);
+    expect(reopened.world.stats.newest).toBeGreaterThan(0);
   }, LONG);
 
   it('a crash between saves (state in memory lost) replays to identical prices', () => {
