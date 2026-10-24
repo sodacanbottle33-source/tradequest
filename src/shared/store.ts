@@ -3,9 +3,11 @@
 // anything the server decides.
 import { useSyncExternalStore } from 'react';
 import { ApiError, api, isOffline } from './api';
+import { CallController, type ControllerDeps } from './callController';
 import { describeLimitEvent } from './limitText';
 import { describeNotice, type ToastText } from './positionNotice';
-import type { Account, Announcement, BanNotice, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
+import { browserVoiceDeps, VoiceSession } from './voice';
+import type { Account, Announcement, BanNotice, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
 
 /** A pop-up about a position the market closed by itself. */
 export interface Toast extends ToastText {
@@ -78,6 +80,12 @@ export interface SharedState {
   readonly pmThread: PmThread | null;
   /** A player another screen asked the Messages screen to write to ("Message" next to a name). */
   readonly pmCompose: string | null;
+  /** The voice call this page shows, if there is one (null when there is none, and when signed out). */
+  readonly call: CallState | null;
+  /** A short line about a call that just ended or could not start ("Bob did not answer."), until it is closed. */
+  readonly callNote: string | null;
+  /** The other player's voice, to play, while the connection is up (a MediaStream; null otherwise). */
+  readonly callStream: unknown | null;
   /** The player's open limit orders (Career), newest first. */
   readonly limits: readonly LimitOrder[];
   readonly match: Match | null;
@@ -113,6 +121,9 @@ const INITIAL: SharedState = {
   pmOpen: null,
   pmThread: null,
   pmCompose: null,
+  call: null,
+  callNote: null,
+  callStream: null,
   limits: [],
   match: null,
   searching: 0,
@@ -144,6 +155,29 @@ export class SharedStore {
   private chatViewing = false;
   /** Set while a refresh of the private chats is waiting, so a burst of nudges asks the server once. */
   private pmTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** The voice call this page makes and takes (src/shared/callController.ts). */
+  private readonly calls: CallController;
+
+  constructor(options: { makeSession?: ControllerDeps['makeSession'] } = {}) {
+    this.calls = new CallController({
+      api: {
+        view: () => api.callsView(),
+        invite: (username) => api.callsInvite(username),
+        accept: (callId) => api.callsAccept(callId),
+        hangup: (callId, failed) => api.callsHangup(callId, failed),
+        signal: (callId, signal) => api.callsSignal(callId, signal),
+      },
+      state: () => this.state.call,
+      setCall: (call) => this.set({ call }),
+      setNote: (callNote) => this.set({ callNote }),
+      setStream: (callStream) => this.set({ callStream }),
+      makeSession: options.makeSession ?? ((role, hooks) => new VoiceSession(role, browserVoiceDeps(hooks))),
+      now: () => Date.now(),
+      later: (fn, ms) => setTimeout(fn, ms),
+      cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    });
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -221,6 +255,7 @@ export class SharedStore {
       void this.refreshChallenges();
       void this.refreshChat();
       void this.refreshMessages();
+      if (this.state.user) void this.calls.reconcile();
     });
     es.addEventListener('tick', (e) => this.onTick(JSON.parse((e as MessageEvent<string>).data) as TickPayload));
     es.addEventListener('news', (e) => this.onNews(JSON.parse((e as MessageEvent<string>).data) as NewsItem));
@@ -245,6 +280,9 @@ export class SharedStore {
       this.addPrivateMessage(d.conversationId, d.message);
     });
     es.addEventListener('pm_changed', () => this.onPmChanged());
+    // Voice calls: a ring, an answer, the end of a call, and the small connection messages between the two browsers.
+    es.addEventListener('call', (e) => this.calls.onCall(JSON.parse((e as MessageEvent<string>).data) as { call: CallView | null; ended?: CallEnded }));
+    es.addEventListener('call_signal', (e) => this.calls.onSignal(JSON.parse((e as MessageEvent<string>).data) as { callId: string; signal: CallSignal }));
     es.onerror = () => {
       if (es.readyState === EventSource.CLOSED && this.started) {
         this.set({ conn: 'offline', problem: 'The connection to the server was lost.' });
@@ -629,6 +667,7 @@ export class SharedStore {
     else if (error instanceof ApiError && error.status === 401 && this.state.user) {
       // The session ended. If the owner banned this account, say so instead of just showing a login form.
       this.set({ user: null, career: null, friends: null, challenges: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, limits: [], match: null });
+      this.calls.reset();
       void this.recheckMe();
     }
   }
@@ -661,11 +700,36 @@ export class SharedStore {
     try {
       await api.logout();
     } finally {
+      this.calls.reset();
       this.set({ user: null, banned: null, career: null, friends: null, challenges: null, challengeNote: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, limits: [], match: null, walletCents: 0, toasts: [] });
       for (const t of this.toastTimers.values()) clearTimeout(t);
       this.toastTimers.clear();
       if (this.started) this.openStream();
     }
+  }
+
+  // ---- voice calls ----------------------------------------------------------------------------------------------------
+
+  /** "Call" next to a friend. */
+  callStart(username: string): Promise<void> {
+    return this.calls.start(username);
+  }
+
+  callAnswer(): Promise<void> {
+    return this.calls.answer();
+  }
+
+  /** Cancel, Decline or Hang up. */
+  callHangup(): Promise<void> {
+    return this.calls.hangup();
+  }
+
+  callMute(): void {
+    this.calls.toggleMute();
+  }
+
+  callDismissNote(): void {
+    this.calls.dismissNote();
   }
 
   setMatch(match: Match | null): void {

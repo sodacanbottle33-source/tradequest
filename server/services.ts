@@ -2,6 +2,7 @@
 
 import type { Admin } from './admin';
 import type { Auth, User } from './auth';
+import type { Calls } from './calls';
 import type { Challenges } from './challenges';
 import type { Chat } from './chat';
 import type { Config } from './config';
@@ -55,6 +56,8 @@ export interface Services {
   readonly chat: Chat;
   /** Private chats: 1-to-1 and small groups, requests, blocking and reports (server/messages.ts). */
   readonly messages: Messages;
+  /** Voice calls between two friends: ringing and passing the connection messages, nothing saved (server/calls.ts). */
+  readonly calls: Calls;
   /** Null only when the app was created with news switched off (some tests). */
   readonly news: NewsService | null;
   readonly scheduler: NewsScheduler | null;

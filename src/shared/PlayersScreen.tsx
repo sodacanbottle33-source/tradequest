@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
+import { CallButton } from './CallBar';
 import { ChallengeButton, useChallengeActions } from './Challenges';
 import { clockTime, formatCents } from './format';
 import { problemText, relationLabel, shownText, standingText } from './playersUtil';
@@ -329,6 +330,7 @@ function FriendsPanel({ onFind }: { onFind: () => void }) {
               ) : (
                 <span className="people-actions">
                   <ChallengeButton username={e.username} actions={challengeActions} />
+                  <CallButton username={e.username} />
                   <MessageButton username={e.username} />
                   <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => setConfirming(e.username)} data-testid={`remove-${e.username}`}>
                     Remove

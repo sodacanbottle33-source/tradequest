@@ -1007,3 +1007,64 @@ export interface PrivateReport {
 export interface AdminPrivateView {
   readonly reports: readonly PrivateReport[];
 }
+
+// ---- voice calls (server/calls.ts) ----------------------------------------------------------------------------------------------------------
+
+/** A server a browser uses to find a way to the other browser (free public STUN, or a relay the owner set up). */
+export interface IceServer {
+  readonly urls: readonly string[];
+  readonly username?: string;
+  readonly credential?: string;
+}
+
+/** The call as the server describes it to one of its two players. */
+export interface CallView {
+  readonly id: string;
+  readonly state: 'ringing' | 'active';
+  readonly direction: 'outgoing' | 'incoming';
+  readonly other: PmPerson;
+  /** While ringing: how long it can still be answered. Null once answered. */
+  readonly msLeft: number | null;
+}
+
+export interface CallsReply {
+  readonly call: CallView | null;
+  readonly ice: readonly IceServer[];
+  readonly limits: { readonly ringMs: number };
+}
+
+export type CallEndReason = 'declined' | 'cancelled' | 'missed' | 'ended' | 'failed' | 'disconnected' | 'unavailable';
+
+/** What a player is told when his call is over. */
+export interface CallEnded {
+  readonly callId: string;
+  readonly reason: CallEndReason;
+  readonly other: PmPerson;
+  readonly role: 'caller' | 'callee';
+  /** Whether this player's own action ended it. */
+  readonly byYou: boolean;
+}
+
+/** A small connection message that goes from one browser to the other through the server. */
+export type CallSignal =
+  | { readonly kind: 'offer'; readonly sdp: string }
+  | { readonly kind: 'answer'; readonly sdp: string }
+  | { readonly kind: 'candidate'; readonly candidate: string; readonly sdpMid: string | null; readonly sdpMLineIndex: number | null };
+
+/** The call as this page shows it. */
+export interface CallState {
+  /** The server's number for the call; empty while this page is still getting the microphone for a call it is about to start. */
+  readonly id: string;
+  readonly state: 'ringing' | 'active';
+  readonly direction: 'outgoing' | 'incoming';
+  readonly other: PmPerson;
+  /** The time on this page's clock when a ring runs out (null once answered). */
+  readonly ringEndsAt: number | null;
+  /** Whether THIS page holds the microphone and the connection. False when the call is open on another page of the same player. */
+  readonly mine: boolean;
+  /** What this page is doing: asking for the microphone, waiting for the other player, connecting the sound, talking. */
+  readonly phase: 'mic' | 'ringing' | 'connecting' | 'connected';
+  readonly muted: boolean;
+  /** The time on this page's clock when the sound started to flow. */
+  readonly connectedAt: number | null;
+}

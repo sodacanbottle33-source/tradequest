@@ -16,6 +16,8 @@ import type {
   AdminState,
   AdminStyle,
   Book,
+  CallSignal,
+  CallsReply,
   CoinPreview,
   CompanyDetail,
   CompanyEarnings,
@@ -197,6 +199,12 @@ export const api = {
   groupRemove: (conversationId: number, username: string) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/remove', { conversationId, username }),
   groupRename: (conversationId: number, title: string) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/rename', { conversationId, title }),
   groupLeave: (conversationId: number) => request<MessagesView>('POST', '/api/messages/group/leave', { conversationId }),
+
+  callsView: () => request<CallsReply>('GET', '/api/calls'),
+  callsInvite: (username: string) => request<CallsReply>('POST', '/api/calls/invite', { username }),
+  callsAccept: (callId: string) => request<CallsReply>('POST', '/api/calls/accept', { callId }),
+  callsHangup: (callId: string, failed = false) => request<CallsReply>('POST', '/api/calls/hangup', failed ? { callId, failed: true } : { callId }),
+  callsSignal: (callId: string, signal: CallSignal) => request<{ ok: boolean }>('POST', '/api/calls/signal', { callId, signal }),
 
   // Owner only: the server answers 403 to anybody else.
   adminChat: () => request<AdminChatView>('GET', '/api/admin/chat'),

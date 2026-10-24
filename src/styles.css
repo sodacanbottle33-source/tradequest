@@ -2366,7 +2366,8 @@ code {
   .burst-banner,
   .burst-icon,
   .burst-flash,
-  .fx-shake {
+  .fx-shake,
+  .call-bar.incoming {
     animation: none !important;
   }
   .burst-origin,
@@ -2727,4 +2728,64 @@ code {
 }
 .pm-report-line .chat-text {
   display: block;
+}
+
+/* ---------- Voice calls ---------- */
+.call-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 70;
+  width: min(560px, calc(100vw - 24px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--primary);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+.call-bar.incoming {
+  border-left-color: var(--accent);
+  animation: call-ring 1.4s ease-in-out infinite;
+}
+.call-bar.live {
+  border-left-color: var(--up);
+}
+.call-bar.note {
+  border-left-color: var(--muted);
+}
+.call-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+.call-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.call-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+.call-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+@keyframes call-ring {
+  0%,
+  100% {
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45), 0 0 0 0 rgba(245, 184, 61, 0.55);
+  }
+  50% {
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45), 0 0 0 8px rgba(245, 184, 61, 0);
+  }
 }

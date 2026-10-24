@@ -7,6 +7,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import type { Company } from '../src/world';
 import { Admin } from './admin';
 import { Auth, AuthError, SESSION_COOKIE } from './auth';
+import { Calls } from './calls';
 import { Challenges } from './challenges';
 import { Chat } from './chat';
 import type { Config } from './config';
@@ -37,6 +38,7 @@ import { registerEarningsRoutes } from './routes/earnings';
 import { registerLimitRoutes } from './routes/limits';
 import { registerNewsRoutes } from './routes/news';
 import { registerChatRoutes } from './routes/chat';
+import { registerCallRoutes } from './routes/calls';
 import { registerMessageRoutes } from './routes/messages';
 import { registerSocialRoutes } from './routes/social';
 import { Social } from './social';
@@ -258,7 +260,25 @@ export function createApp(options: AppOptions): App {
     botWaitMs: options.botWaitMs,
   });
   // Friends and the leaderboard. A player is told over his live stream when a request arrives, is accepted or a friend leaves.
-  const social = new Social({ db, trading, now, notify: (userId) => hub.publishTo(userId, 'friends', {}) });
+  // Voice calls between two friends. Nothing is saved; the sound goes from browser to browser. A call ends the moment its two players stop being friends.
+  const calls = new Calls({
+    db,
+    log,
+    now,
+    ice: config.iceServers,
+    isOnline: (userId) => hub.has(userId),
+    isBanned: (userId) => auth.banOf(userId) !== null,
+    publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
+  });
+  const social = new Social({
+    db,
+    trading,
+    now,
+    notify: (userId) => {
+      hub.publishTo(userId, 'friends', {});
+      calls.recheck(userId);
+    },
+  });
   // Friend 1v1 challenges: a challenge goes to a friend who has a page open, and his answer opens a lobby for the two of them.
   const challenges = new Challenges({
     db,
@@ -295,7 +315,10 @@ export function createApp(options: AppOptions): App {
     now,
     publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
     isBanned: (userId) => auth.banOf(userId) !== null,
-    notifyFriends: (userId) => hub.publishTo(userId, 'friends', {}),
+    notifyFriends: (userId) => {
+      hub.publishTo(userId, 'friends', {});
+      calls.recheck(userId);
+    },
     notifyChallenges: (userId) => hub.publishTo(userId, 'challenges', {}),
     audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
   });
@@ -325,6 +348,7 @@ export function createApp(options: AppOptions): App {
     challenges,
     chat,
     messages,
+    calls,
     news: newsService,
     scheduler,
     resolveAccount(user, which) {
@@ -348,6 +372,7 @@ export function createApp(options: AppOptions): App {
   registerSocialRoutes(router, services);
   registerChatRoutes(router, services);
   registerMessageRoutes(router, services);
+  registerCallRoutes(router, services);
   options.extend?.(services, router);
 
   world.onSaved((tick) => matches.settleDue(tick));
@@ -366,6 +391,11 @@ export function createApp(options: AppOptions): App {
       marketBots?.step();
     } catch (error) {
       log.error('bots', `Market bot update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
+      calls.sweep();
+    } catch (error) {
+      log.error('calls', `Call update failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (hub.size > 0) hub.publish('tick', { t: m.tick, ms: m.ms, p: m.prices, h: m.halves });
     if (newsService) {

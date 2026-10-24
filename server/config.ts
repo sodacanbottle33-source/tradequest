@@ -7,6 +7,16 @@ import { join } from 'node:path';
 export const OWNER_FILE = 'owner.txt';
 const OWNER_NAME = /^[A-Za-z0-9_]{3,20}$/;
 
+/** One server a browser may use to find a way to connect two players directly (WebRTC): a free STUN server, or a TURN relay. */
+export interface IceServer {
+  readonly urls: readonly string[];
+  readonly username?: string;
+  readonly credential?: string;
+}
+
+/** Free public STUN servers: they only tell a browser its own public address. Most home networks connect directly with just these. */
+export const DEFAULT_ICE_SERVERS: readonly IceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
+
 export interface Config {
   readonly port: number;
   readonly host: string;
@@ -24,6 +34,8 @@ export interface Config {
   readonly marketBots: boolean;
   /** The one username that is the owner (admin): TQ_OWNER, or else the first line of data/owner.txt. Empty = nobody. */
   readonly ownerUsername: string;
+  /** The servers voice calls use to connect two players (TQ_ICE_SERVERS: a JSON list; the default is free public STUN). */
+  readonly iceServers: readonly IceServer[];
   readonly logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
 
@@ -33,6 +45,33 @@ function int(env: NodeJS.ProcessEnv, name: string, fallback: number, min: number
   const n = Number(raw);
   if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be a whole number from ${min} to ${max}, got "${raw}"`);
   return n;
+}
+
+/** TQ_ICE_SERVERS: a JSON list like [{"urls":["stun:example.org:3478"]},{"urls":"turn:example.org:3478","username":"u","credential":"p"}]. */
+export function iceServersOf(raw: string | undefined): readonly IceServer[] {
+  if (raw === undefined || raw.trim() === '') return DEFAULT_ICE_SERVERS;
+  const bad = (why: string): never => {
+    throw new Error(`TQ_ICE_SERVERS ${why}`);
+  };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return bad('must be a JSON list, for example [{"urls":["stun:stun.example.org:3478"]}].');
+  }
+  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 8) return bad('must be a list of 1 to 8 servers.');
+  return parsed.map((item: unknown): IceServer => {
+    const o = (typeof item === 'object' && item !== null ? item : {}) as Record<string, unknown>;
+    const urls = typeof o.urls === 'string' ? [o.urls] : o.urls;
+    if (!Array.isArray(urls) || urls.length < 1 || urls.length > 4 || urls.some((u) => typeof u !== 'string' || !/^(stun|turn|turns):[^\s]{1,200}$/.test(u))) {
+      return bad('needs "urls" for every server: one or more addresses that start with stun:, turn: or turns:.');
+    }
+    for (const key of ['username', 'credential'] as const) {
+      const v = o[key];
+      if (v !== undefined && (typeof v !== 'string' || v.length > 512)) return bad(`has a "${key}" that is not text of at most 512 characters.`);
+    }
+    return { urls: urls as string[], ...(typeof o.username === 'string' ? { username: o.username } : {}), ...(typeof o.credential === 'string' ? { credential: o.credential } : {}) };
+  });
 }
 
 /** The owner's username from TQ_OWNER or from data/owner.txt. A file that cannot be read is an error, not "no owner". */
@@ -62,6 +101,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     bots: (env.TQ_BOTS ?? '1') !== '0',
     marketBots: (env.TQ_BOTS ?? '1') !== '0' && (env.TQ_MARKET_BOTS ?? '1') !== '0',
     ownerUsername: ownerOf(env, dataDir),
+    iceServers: iceServersOf(env.TQ_ICE_SERVERS),
     logLevel: level as Config['logLevel'],
   };
 }

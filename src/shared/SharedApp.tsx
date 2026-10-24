@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Header, type Mode } from '../ui/Header';
 import { AccountScreen } from './AccountScreen';
 import { AdminScreen } from './AdminScreen';
+import { CallBar } from './CallBar';
 import { ChallengeBanner } from './Challenges';
 import { ChatScreen } from './ChatScreen';
 import { CompanyView } from './CompanyView';
@@ -142,6 +143,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
       <Notices />
       <ChallengeBanner />
       <Toasts />
+      <CallBar />
 
       {s.health && s.health.stalled && (
         <p className="notice error" role="alert">

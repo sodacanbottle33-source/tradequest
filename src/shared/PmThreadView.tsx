@@ -3,6 +3,7 @@
 // Every message is shown as plain text, never as markup.
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api } from './api';
+import { CallButton } from './CallBar';
 import { lengthOf, timeLabel, waitWords } from './chatUtil';
 import { friendsToInvite, membersLine } from './messagesUtil';
 import { problemText } from './playersUtil';
@@ -253,6 +254,7 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
         </button>
         <div className="pm-head-main">{header}</div>
         <span className="people-actions">
+          {conv.kind === 'direct' && conv.other && conv.friends && <CallButton username={conv.other.username} />}
           {conv.kind === 'direct' && conv.other && (
             <SureButton label="Block" question={`Block ${conv.other.displayName}?`} busy={busy} onYes={() => void block((conv.other as { username: string }).username)} testId="pm-block" />
           )}
