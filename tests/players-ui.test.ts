@@ -74,7 +74,7 @@ describe('Players screen', () => {
     const store = code(src('shared', 'store.ts'));
     expect(store).toMatch(/addEventListener\('friends'/);
     expect(store).toMatch(/friends: null/);
-    expect(store).toMatch(/setInterval\(\(\) => void this\.refreshFriends\(\), 30_000\)/);
+    expect(store).toMatch(/setInterval\(\(\) => \{\s*void this\.refreshFriends\(\);[\s\S]*?\}, 30_000\)/);
     const api = code(src('shared', 'api.ts'));
     for (const path of ['/api/players', '/api/leaderboard', '/api/friends', '/api/friends/${what}']) expect(api).toContain(path);
   });

@@ -39,6 +39,16 @@ function describe(e: Entry): string {
       return `made the stock ${e.target} (${String(d.name)}, ${String(d.tier)} ${String(d.sector)}, ${String(d.personality)}) starting at ${formatCents(num('priceCents'))}`;
     case 'coin':
       return `made the memecoin ${e.target} (${String(d.name)}, ${String(d.size)} size) starting at ${formatCents(num('priceCents'))}, putting in ${formatCents(num('spentCents'))} for ${num('stakeShares').toLocaleString('en-US')} coins`;
+    case 'chat_delete':
+      return `removed a chat message by ${String(d.author)}`;
+    case 'chat_mute':
+      return `muted ${e.target} in the chat for ${num('minutes')} minute${num('minutes') === 1 ? '' : 's'}${d.reason ? ` (${String(d.reason)})` : ''}`;
+    case 'chat_ban':
+      return `banned ${e.target} from the chat until lifted${d.reason ? ` (${String(d.reason)})` : ''}`;
+    case 'chat_lift':
+      return `let ${e.target} write in the chat again`;
+    case 'chat_dismiss':
+      return `closed the reports about a chat message (${e.target})`;
     case 'sens': // older entries: the per-stock setting no longer exists
       return `changed how strongly trades move ${e.target}: ${String(d.from)} → ${String(d.to)}`;
     default:

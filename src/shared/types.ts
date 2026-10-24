@@ -389,6 +389,8 @@ export interface Match {
   readonly winnerUserId: number | null;
   readonly cancelReason: string | null;
   readonly canTrade: boolean;
+  /** True for a match between two friends who agreed to play (a challenge). */
+  readonly friendMatch: boolean;
 }
 
 export interface HistoryEntry {
@@ -832,3 +834,73 @@ export interface FriendsState {
 }
 
 export type FriendAction = 'request' | 'accept' | 'decline' | 'cancel' | 'remove';
+
+// ---- friend challenges and the chat ---------------------------------------------------------------------------------------------
+
+/** One open challenge: who the other player is and how long it still can be accepted (as the server said when it answered). */
+export interface ChallengeEntry {
+  readonly username: string;
+  readonly displayName: string;
+  readonly sinceMs: number;
+  readonly msLeft: number;
+}
+
+export interface ChallengesState {
+  /** Challenges other players sent to you, newest first. */
+  readonly incoming: readonly ChallengeEntry[];
+  /** The challenge you sent that nobody has answered yet (at most one). */
+  readonly outgoing: readonly ChallengeEntry[];
+  readonly limits: { readonly validMs: number };
+}
+
+export type ChallengeAction = 'send' | 'accept' | 'decline' | 'cancel';
+
+export interface ChatMessage {
+  readonly id: number;
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: 'player' | 'owner';
+  readonly text: string;
+  readonly createdMs: number;
+}
+
+/** Whether the player can write now, and if not, why and until when (the server's own words are in `message`). */
+export interface ChatYou {
+  readonly canWrite: boolean;
+  readonly reason: 'new_account' | 'muted' | 'banned' | null;
+  readonly untilMs: number | null;
+  readonly message: string | null;
+}
+
+export interface ChatView {
+  readonly messages: readonly ChatMessage[];
+  readonly more: boolean;
+  readonly you: ChatYou;
+  readonly limits: { readonly maxLength: number; readonly minGapMs: number };
+}
+
+export interface AdminChatReport {
+  readonly messageId: number;
+  readonly text: string;
+  readonly username: string;
+  readonly displayName: string;
+  readonly createdMs: number;
+  readonly reporters: number;
+  readonly firstReportedMs: number;
+  readonly restriction: 'mute' | 'ban' | null;
+}
+
+export interface AdminChatRestriction {
+  readonly username: string;
+  readonly displayName: string;
+  readonly kind: 'mute' | 'ban';
+  readonly untilMs: number | null;
+  readonly reason: string;
+  readonly sinceMs: number;
+  readonly by: string;
+}
+
+export interface AdminChatView {
+  readonly reports: readonly AdminChatReport[];
+  readonly restricted: readonly AdminChatRestriction[];
+}

@@ -5,7 +5,7 @@ import { useSyncExternalStore } from 'react';
 import { ApiError, api, isOffline } from './api';
 import { describeLimitEvent } from './limitText';
 import { describeNotice, type ToastText } from './positionNotice';
-import type { Account, Announcement, BanNotice, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, OverviewRow, PositionNotice, TradingPause, User } from './types';
+import type { Account, Announcement, BanNotice, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, OverviewRow, PositionNotice, TradingPause, User } from './types';
 
 /** A pop-up about a position the market closed by itself. */
 export interface Toast extends ToastText {
@@ -16,6 +16,19 @@ export interface Toast extends ToastText {
 /** How long a pop-up stays, in milliseconds; the player can close it earlier. */
 export const TOAST_MS = 12_000;
 const MAX_TOASTS = 5;
+
+/** The chat room as the page holds it: the newest messages (oldest first), whether older ones exist, and whether the player can write. */
+export interface ChatState {
+  readonly messages: readonly ChatMessage[];
+  readonly more: boolean;
+  readonly you: ChatYou;
+  readonly limits: ChatView['limits'];
+  /** Messages from other players that arrived while the chat was not on screen. */
+  readonly unread: number;
+}
+
+/** The most messages the page keeps in memory; older ones are dropped (and can be asked for again). */
+export const MAX_CHAT_MESSAGES = 150;
 
 export interface SharedState {
   readonly conn: 'connecting' | 'online' | 'offline';
@@ -37,6 +50,14 @@ export interface SharedState {
   readonly career: Account | null;
   /** The player's friends, the requests waiting for his answer and the ones he sent (null until loaded, and when signed out). */
   readonly friends: FriendsState | null;
+  /** Friend 1v1 challenges: the ones waiting for your answer and the one you sent (null until loaded, and when signed out). */
+  readonly challenges: ChallengesState | null;
+  /** The market tick at which `challenges` was received. The time left on a challenge counts down from the tick stream. */
+  readonly challengesTick: number;
+  /** A short line about a challenge that ended without a match ("Bob did not accept..."), until it is closed. */
+  readonly challengeNote: string | null;
+  /** The chat room (null until loaded, and when signed out). */
+  readonly chat: ChatState | null;
   /** The player's open limit orders (Career), newest first. */
   readonly limits: readonly LimitOrder[];
   readonly match: Match | null;
@@ -64,6 +85,10 @@ const INITIAL: SharedState = {
   breaking: null,
   career: null,
   friends: null,
+  challenges: null,
+  challengesTick: 0,
+  challengeNote: null,
+  chat: null,
   limits: [],
   match: null,
   searching: 0,
@@ -90,6 +115,9 @@ export class SharedStore {
   private started = false;
   private nextToast = 1;
   private toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  private noteTimer: ReturnType<typeof setTimeout> | null = null;
+  /** True while the Chat tab is on screen: new messages are then read at once. */
+  private chatViewing = false;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -131,14 +159,17 @@ export class SharedStore {
       if (this.started) this.retry = setTimeout(() => void this.connect(), 3000);
       return;
     }
-    await Promise.all([this.refreshCompanies(), this.refreshNews(), this.refreshPrivate(), this.refreshFriends()]);
+    await Promise.all([this.refreshCompanies(), this.refreshNews(), this.refreshPrivate(), this.refreshFriends(), this.refreshChallenges(), this.refreshChat()]);
     this.openStream();
     for (const t of this.timers) clearInterval(t);
     this.timers = [
       setInterval(() => void this.refreshCompanies(), 20_000),
       setInterval(() => void this.refreshPrivate(false), 6_000),
       // New requests also arrive over the live stream at once; this is the safety net.
-      setInterval(() => void this.refreshFriends(), 30_000),
+      setInterval(() => {
+        void this.refreshFriends();
+        void this.refreshChallenges();
+      }, 30_000),
       // While in a lobby the server must keep hearing from us (it removes players who have gone away). During a live match this
       // also makes sure the final result reaches the page even if the live push was missed.
       setInterval(() => {
@@ -160,6 +191,8 @@ export class SharedStore {
       void this.refreshCompanies();
       void this.refreshPrivate(false);
       void this.refreshFriends();
+      void this.refreshChallenges();
+      void this.refreshChat();
     });
     es.addEventListener('tick', (e) => this.onTick(JSON.parse((e as MessageEvent<string>).data) as TickPayload));
     es.addEventListener('news', (e) => this.onNews(JSON.parse((e as MessageEvent<string>).data) as NewsItem));
@@ -172,6 +205,12 @@ export class SharedStore {
     es.addEventListener('limit', (e) => this.noteLimit(JSON.parse((e as MessageEvent<string>).data) as LimitNotice));
     // A friend request arrived, was accepted, or a friend left: bring the lists up to date.
     es.addEventListener('friends', () => void this.refreshFriends());
+    // A friend challenged you, took the challenge back, or answered yours.
+    es.addEventListener('challenges', () => void this.refreshChallenges(true));
+    // The chat room: a new message, a message the owner removed, or a change in whether you may write (muted, banned, lifted).
+    es.addEventListener('chat', (e) => this.addChatMessage((JSON.parse((e as MessageEvent<string>).data) as { message: ChatMessage }).message));
+    es.addEventListener('chat_removed', (e) => this.removeChatMessage((JSON.parse((e as MessageEvent<string>).data) as { id: number }).id));
+    es.addEventListener('chat_status', () => void this.refreshChat());
     es.onerror = () => {
       if (es.readyState === EventSource.CLOSED && this.started) {
         this.set({ conn: 'offline', problem: 'The connection to the server was lost.' });
@@ -231,6 +270,7 @@ export class SharedStore {
   }
 
   private onMatch(match: Match | null): void {
+    if (match?.friendMatch === true) this.closeChallengeNote();
     this.set({ match });
     const phase = match?.phase;
     // When a match is over the Career account has not changed, but the wallet has; show it.
@@ -292,6 +332,124 @@ export class SharedStore {
     if (this.state.user) this.set({ friends });
   }
 
+  // ---- friend challenges -------------------------------------------------------------------------------------------
+
+  /**
+   * Asks the server for the challenges. When `explain` is set (the server told us something changed) and the challenge we sent has
+   * vanished without a match starting, a short line says so.
+   */
+  async refreshChallenges(explain = false): Promise<void> {
+    if (!this.state.user) {
+      if (this.state.challenges) this.set({ challenges: null });
+      return;
+    }
+    try {
+      const answer = await api.challenges();
+      const before = this.state.challenges?.outgoing ?? [];
+      this.applyChallenges(answer);
+      if (explain) {
+        const now = new Set(answer.outgoing.map((e) => e.username));
+        const m = this.state.match;
+        for (const gone of before.filter((e) => !now.has(e.username))) {
+          // If the friend said yes, the match is already here (its push arrives before this one).
+          const started = m?.friendMatch === true && m.players.some((p) => !p.you && p.name === gone.displayName);
+          if (!started) this.noteChallenge(`${gone.displayName} did not accept your challenge.`);
+        }
+      }
+    } catch (error) {
+      this.noteFailure(error);
+    }
+  }
+
+  private applyChallenges(c: ChallengesState): void {
+    // A note about an earlier challenge that was not accepted must not stay on screen next to a new one.
+    const known = new Set((this.state.challenges?.outgoing ?? []).map((e) => e.username));
+    if (c.outgoing.some((e) => !known.has(e.username))) this.closeChallengeNote();
+    this.set({ challenges: { incoming: c.incoming, outgoing: c.outgoing, limits: c.limits }, challengesTick: this.state.tick });
+  }
+
+  /** What a challenge action answered with: your challenges as they are now, and the lobby when a yes opened one. */
+  setChallenges(c: ChallengesState, match: Match | null): void {
+    if (!this.state.user) return;
+    this.applyChallenges(c);
+    if (match) {
+      this.closeChallengeNote();
+      this.set({ match });
+    }
+  }
+
+  private noteChallenge(text: string): void {
+    if (this.noteTimer) clearTimeout(this.noteTimer);
+    this.set({ challengeNote: text });
+    this.noteTimer = setTimeout(() => this.closeChallengeNote(), 10_000);
+  }
+
+  closeChallengeNote(): void {
+    if (this.noteTimer) clearTimeout(this.noteTimer);
+    this.noteTimer = null;
+    if (this.state.challengeNote !== null) this.set({ challengeNote: null });
+  }
+
+  // ---- the chat room -----------------------------------------------------------------------------------------------
+
+  async refreshChat(): Promise<void> {
+    if (!this.state.user) {
+      if (this.state.chat) this.set({ chat: null });
+      return;
+    }
+    try {
+      const view = await api.chat();
+      // Keep messages that arrived over the stream while we were loading.
+      const have = new Set(view.messages.map((m) => m.id));
+      const newest = view.messages.at(-1)?.id ?? 0;
+      const extra = (this.state.chat?.messages ?? []).filter((m) => !have.has(m.id) && m.id > newest);
+      this.set({ chat: { messages: [...view.messages, ...extra].slice(-MAX_CHAT_MESSAGES), more: view.more, you: view.you, limits: view.limits, unread: this.chatViewing ? 0 : (this.state.chat?.unread ?? 0) } });
+    } catch (error) {
+      this.noteFailure(error);
+    }
+  }
+
+  /** A message arrived (over the stream, or as the answer to our own send). */
+  addChatMessage(message: ChatMessage): void {
+    const chat = this.state.chat;
+    if (!chat || chat.messages.some((m) => m.id === message.id)) return;
+    const mine = message.username === this.state.user?.username;
+    const all = [...chat.messages, message].sort((a, b) => a.id - b.id);
+    this.set({ chat: { ...chat, messages: all.slice(-MAX_CHAT_MESSAGES), more: chat.more || all.length > MAX_CHAT_MESSAGES, unread: this.chatViewing || mine ? chat.unread : chat.unread + 1 } });
+  }
+
+  /** The owner removed a message: it disappears from every page. */
+  removeChatMessage(id: number): void {
+    const chat = this.state.chat;
+    if (chat && chat.messages.some((m) => m.id === id)) this.set({ chat: { ...chat, messages: chat.messages.filter((m) => m.id !== id) } });
+  }
+
+  /** Our own send was accepted: show it at once and take the new "may I write" answer. */
+  noteSent(message: ChatMessage, you: ChatYou): void {
+    this.addChatMessage(message);
+    const chat = this.state.chat;
+    if (chat) this.set({ chat: { ...chat, you } });
+  }
+
+  /** Older messages, asked for with "Show earlier messages". */
+  async loadEarlierChat(): Promise<void> {
+    const chat = this.state.chat;
+    const first = chat?.messages[0];
+    if (!chat || !first) return;
+    const view = await api.chat(first.id, 50);
+    const latest = this.state.chat;
+    if (!latest) return;
+    const have = new Set(latest.messages.map((m) => m.id));
+    this.set({ chat: { ...latest, messages: [...view.messages.filter((m) => !have.has(m.id)), ...latest.messages], more: view.more } });
+  }
+
+  /** Called by the Chat tab: true while it is on screen (messages are then read at once), false when it goes away. */
+  setChatViewing(viewing: boolean): void {
+    this.chatViewing = viewing;
+    const chat = this.state.chat;
+    if (viewing && chat && chat.unread > 0) this.set({ chat: { ...chat, unread: 0 } });
+  }
+
   async refreshAccount(): Promise<void> {
     await this.refreshPrivate(false);
   }
@@ -318,7 +476,7 @@ export class SharedStore {
     if (isOffline(error)) this.set({ conn: 'offline', problem: (error as ApiError).message });
     else if (error instanceof ApiError && error.status === 401 && this.state.user) {
       // The session ended. If the owner banned this account, say so instead of just showing a login form.
-      this.set({ user: null, career: null, friends: null, limits: [], match: null });
+      this.set({ user: null, career: null, friends: null, challenges: null, chat: null, limits: [], match: null });
       void this.recheckMe();
     }
   }
@@ -342,13 +500,15 @@ export class SharedStore {
     if (this.started) this.openStream();
     await this.refreshPrivate();
     void this.refreshFriends();
+    void this.refreshChallenges();
+    void this.refreshChat();
   }
 
   async signOut(): Promise<void> {
     try {
       await api.logout();
     } finally {
-      this.set({ user: null, banned: null, career: null, friends: null, limits: [], match: null, walletCents: 0, toasts: [] });
+      this.set({ user: null, banned: null, career: null, friends: null, challenges: null, challengeNote: null, chat: null, limits: [], match: null, walletCents: 0, toasts: [] });
       for (const t of this.toastTimers.values()) clearTimeout(t);
       this.toastTimers.clear();
       if (this.started) this.openStream();

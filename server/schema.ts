@@ -680,6 +680,62 @@ CREATE TABLE friendships (
 CREATE INDEX friendships_by_b ON friendships(user_b);
 `,
   },
+  {
+    version: 20,
+    name: 'friend challenges and the chat',
+    sql: `
+-- A friend 1v1 (server/challenges.ts, docs/world.md §14). A challenge is one row from the player who asks to the friend who is asked; it
+-- disappears when it is accepted, declined, taken back, or runs out (expires_ms). A match made from one has friends = 1: it is a lobby of
+-- exactly those two players, nobody else can join it, and if one of them leaves before it starts it is cancelled for both.
+ALTER TABLE matches ADD COLUMN friends INTEGER NOT NULL DEFAULT 0 CHECK (friends IN (0, 1));
+
+CREATE TABLE challenges (
+  from_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  to_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_ms INTEGER NOT NULL,
+  expires_ms INTEGER NOT NULL,
+  PRIMARY KEY (from_id, to_id),
+  CHECK (from_id <> to_id),
+  CHECK (expires_ms > created_ms)
+);
+CREATE INDEX challenges_by_to ON challenges(to_id);
+
+-- The public chat room (server/chat.ts, docs/world.md §15). Only the newest messages are kept. A removed message stays in the table (who removed
+-- it and when) but is never shown again.
+CREATE TABLE chat_messages (
+  id         INTEGER PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body       TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 1200),
+  created_ms INTEGER NOT NULL,
+  deleted_ms INTEGER,
+  deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX chat_messages_by_user ON chat_messages(user_id, id DESC);
+
+-- A player the owner stopped from writing: 'mute' until until_ms, or 'ban' until the owner lifts it (until_ms is NULL). One row per player; the
+-- latest decision stands. Reading the chat and playing are not affected.
+CREATE TABLE chat_restrictions (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL CHECK (kind IN ('mute', 'ban')),
+  until_ms   INTEGER,
+  reason     TEXT NOT NULL,
+  created_ms INTEGER NOT NULL,
+  by_user_id INTEGER NOT NULL REFERENCES users(id),
+  CHECK ((kind = 'mute') = (until_ms IS NOT NULL))
+);
+
+-- Players report messages; the owner sees the open reports in the admin panel. One report per player and message.
+CREATE TABLE chat_reports (
+  id          INTEGER PRIMARY KEY,
+  message_id  INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+  reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_ms  INTEGER NOT NULL,
+  resolved_ms INTEGER,
+  UNIQUE (message_id, reporter_id)
+);
+CREATE INDEX chat_reports_open ON chat_reports(resolved_ms, message_id);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

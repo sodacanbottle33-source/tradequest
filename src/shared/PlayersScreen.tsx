@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
+import { ChallengeButton, useChallengeActions } from './Challenges';
 import { clockTime, formatCents } from './format';
 import { problemText, relationLabel, shownText, standingText } from './playersUtil';
 import { sharedStore, useShared } from './store';
@@ -229,6 +230,7 @@ function FriendTable({ label, rows, render }: { label: string; rows: FriendEntry
 function FriendsPanel({ onFind }: { onFind: () => void }) {
   const { friends } = useShared();
   const actions = useFriendActions();
+  const challengeActions = useChallengeActions();
   const [confirming, setConfirming] = useState<string | null>(null);
   if (!friends) return (
       <section className="card">
@@ -245,6 +247,11 @@ function FriendsPanel({ onFind }: { onFind: () => void }) {
       {actions.error && (
         <p className="notice error" role="alert">
           {actions.error}
+        </p>
+      )}
+      {challengeActions.error && (
+        <p className="notice error" role="alert">
+          {challengeActions.error}
         </p>
       )}
       {friends.incoming.length > 0 && (
@@ -301,14 +308,19 @@ function FriendsPanel({ onFind }: { onFind: () => void }) {
                   </button>
                 </span>
               ) : (
-                <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => setConfirming(e.username)} data-testid={`remove-${e.username}`}>
-                  Remove
-                </button>
+                <span className="people-actions">
+                  <ChallengeButton username={e.username} actions={challengeActions} />
+                  <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => setConfirming(e.username)} data-testid={`remove-${e.username}`}>
+                    Remove
+                  </button>
+                </span>
               )
             }
           />
         )}
-        <p className="hint">Friends can see only your name and your net worth. Nothing — no cash, no shares — is ever sent between players.</p>
+        <p className="hint">
+          Friends can see only your name and your net worth. Nothing — no cash, no shares — is ever sent between players. Press Challenge to ask a friend who has TradeQuest open to a 1v1.
+        </p>
       </section>
 
       {friends.outgoing.length > 0 && (

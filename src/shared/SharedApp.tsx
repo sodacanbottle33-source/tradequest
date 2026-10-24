@@ -1,9 +1,11 @@
 // The whole game: Career (the market and your account), 1v1 battles, and News. All three use the one permanent market that the
 // server runs, with the same companies. If the server cannot be reached, nothing is invented; the screen says so.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Header, type Mode } from '../ui/Header';
 import { AccountScreen } from './AccountScreen';
 import { AdminScreen } from './AdminScreen';
+import { ChallengeBanner } from './Challenges';
+import { ChatScreen } from './ChatScreen';
 import { CompanyView } from './CompanyView';
 import { clockTime } from './format';
 import { LaunchScreen } from './LaunchScreen';
@@ -18,13 +20,14 @@ import { Toasts } from './Toasts';
 import { ProfileMenu } from './ProfileMenu';
 import { sharedStore, useShared } from './store';
 
-type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'players' | 'account';
+type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'players' | 'chat' | 'account';
 const CAREER_TABS: [CareerTab, string][] = [
   ['market', 'Market'],
   ['coins', 'Memecoins'],
   ['earnings', 'Earnings'],
   ['launch', 'Launch'],
   ['players', 'Players'],
+  ['chat', 'Chat'],
   ['account', 'My account'],
 ];
 
@@ -57,6 +60,17 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
     if (mode === 'admin' && s.authChecked && !isOwner) onMode('career');
   }, [mode, s.authChecked, isOwner, onMode]);
 
+  // A friend said yes (or you did): the lobby of the two of you opens on the 1v1 screen once, wherever you were.
+  const friendLobbyId = s.match?.friendMatch && s.match.phase === 'ready_check' ? s.match.id : 0;
+  const openedLobby = useRef(0);
+  useEffect(() => {
+    if (friendLobbyId !== 0 && openedLobby.current !== friendLobbyId) {
+      openedLobby.current = friendLobbyId;
+      onMode('battle');
+      window.scrollTo?.(0, 0);
+    }
+  }, [friendLobbyId, onMode]);
+
   const inBattle = s.match && (s.match.phase === 'countdown' || s.match.phase === 'live');
   // While a match is starting or running (and you have not forfeited it) there is no Launch tab: nothing can be launched then.
   const launchLocked = Boolean(inBattle) && !s.match?.players.find((p) => p.you)?.forfeited;
@@ -64,6 +78,8 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
   const careerTabs = CAREER_TABS.filter(([id]) => id !== 'launch' || !launchLocked);
   // Friend requests waiting for an answer: shown as a number on the Players tab.
   const requests = s.friends?.incoming.length ?? 0;
+  // Chat messages from other players that arrived while the Chat tab was not open.
+  const unread = s.chat?.unread ?? 0;
   const listed = s.companies.filter((c) => c.trading).length;
   const stockCount = s.companies.filter((c) => c.sector !== 'meme').length;
   const coinCount = s.companies.length - stockCount;
@@ -110,6 +126,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
       )}
 
       <Notices />
+      <ChallengeBanner />
       <Toasts />
 
       {s.health && s.health.stalled && (
@@ -130,6 +147,15 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
             Dismiss
           </button>
         </aside>
+      )}
+
+      {friendLobbyId !== 0 && mode !== 'battle' && (
+        <p className="notice info battle-notice" role="status" data-testid="friend-lobby-notice">
+          Your friend match is waiting for you to press Ready.{' '}
+          <button type="button" className="link-btn" onClick={() => onMode('battle')}>
+            Go to the match
+          </button>
+        </p>
       )}
 
       {inBattle && mode !== 'battle' && (
@@ -157,6 +183,11 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
               data-testid={`tab-${id}`}
             >
               {label}
+              {id === 'chat' && unread > 0 && (
+                <span className="tab-count" data-testid="chat-badge" aria-label={`${unread} new chat message${unread === 1 ? '' : 's'}`}>
+                  {unread > 99 ? '99+' : unread}
+                </span>
+              )}
               {id === 'players' && requests > 0 && (
                 <span className="tab-count" data-testid="players-badge" aria-label={`${requests} friend request${requests === 1 ? '' : 's'}`}>
                   {requests}
@@ -172,6 +203,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
         {mode === 'career' && careerTab === 'earnings' && <EarningsScreen onOpen={openCompany} />}
         {mode === 'career' && careerTab === 'launch' && <LaunchScreen onOpen={openCompany} />}
         {mode === 'career' && careerTab === 'players' && <PlayersScreen />}
+        {mode === 'career' && careerTab === 'chat' && <ChatScreen />}
         {mode === 'career' && careerTab === 'account' && <AccountScreen onOpen={openCompany} />}
         {mode === 'battle' && <LobbyScreen onGoSignIn={goSignIn} />}
         {mode === 'news' && <NewsScreen onTicker={openCompany} />}

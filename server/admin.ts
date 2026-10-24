@@ -53,7 +53,7 @@ export const ANNOUNCEMENT_MAX = 200;
 const ANNOUNCEMENT_KEY = 'announcement';
 
 /** Every kind of entry in the admin log. */
-export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin';
+export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin' | 'chat_delete' | 'chat_mute' | 'chat_ban' | 'chat_lift' | 'chat_dismiss';
 
 export interface Announcement {
   readonly text: string;
@@ -393,6 +393,17 @@ export class Admin {
     const row = this.d.db.get<{ action: string; target: string }>('SELECT action, target FROM admin_log WHERE request_id = ?', requestId);
     if (!row) return false;
     if (row.action !== action || row.target !== target) throw new HttpError(409, 'request_id_reused', 'That requestId was already used for a different action.');
+    return true;
+  }
+
+  /**
+   * Writes one action of another module (the chat's moderation) to the log, once per requestId. Returns false when that requestId was
+   * already used for the same action and target: the caller must not do the action again.
+   */
+  logOnce(admin: User, requestId: unknown, action: AdminAction, target: string, detail: Record<string, unknown>): boolean {
+    const id = this.requestId(requestId);
+    if (this.seen(id, action, target)) return false;
+    this.record(id, admin, action, target, detail);
     return true;
   }
 

@@ -2,6 +2,7 @@
 // whatever this page does.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, api } from './api';
+import { AdminChat } from './AdminChat';
 import { AdminLog } from './AdminLog';
 import { AdminMarket } from './AdminMarket';
 import { AdminPlayers } from './AdminPlayers';
@@ -9,12 +10,13 @@ import { AdminLaunches } from './AdminLaunches';
 import { AdminStocks } from './AdminStocks';
 import type { AdminState } from './types';
 
-type Tab = 'market' | 'players' | 'stocks' | 'launches' | 'log';
+type Tab = 'market' | 'players' | 'stocks' | 'launches' | 'chat' | 'log';
 const TABS: [Tab, string][] = [
   ['market', 'Market'],
   ['players', 'Players'],
   ['stocks', 'Create stock'],
   ['launches', 'Launches'],
+  ['chat', 'Chat'],
   ['log', 'Log'],
 ];
 
@@ -71,6 +73,7 @@ export function AdminScreen() {
       {tab === 'players' && <AdminPlayers state={state} query={query} onQuery={setQuery} reload={reload} />}
       {tab === 'stocks' && <AdminStocks state={state} reload={reload} />}
       {tab === 'launches' && <AdminLaunches state={state} />}
+      {tab === 'chat' && <AdminChat />}
       {tab === 'log' && <AdminLog state={state} />}
     </div>
   );

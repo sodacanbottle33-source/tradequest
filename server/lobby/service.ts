@@ -57,6 +57,8 @@ interface MatchRow {
   outcome: MatchOutcome | null;
   winner_user_id: number | null;
   cancel_reason: string | null;
+  /** 1 for a match two friends agreed on (a challenge): a lobby of exactly those two, closed to everybody else. */
+  friends: number;
 }
 
 interface PlayerRow {
@@ -113,6 +115,8 @@ export interface MatchView {
   readonly winnerUserId: number | null;
   readonly cancelReason: string | null;
   readonly canTrade: boolean;
+  /** True for a match between two friends who agreed to play (a challenge, server/challenges.ts). */
+  readonly friendMatch: boolean;
 }
 
 export interface HistoryEntry {
@@ -149,6 +153,7 @@ const CANCEL_TEXT: Record<string, string> = {
   everyone_left: 'Everybody left this lobby.',
   server_restart: 'The server restarted during this match, so it was cancelled. Nobody won or lost.',
   start_missed: 'The match could not start on time and was cancelled. Nobody won or lost.',
+  friend_left: 'Your friend left before the match started, so it was cancelled. Nobody won or lost.',
 };
 
 export class MatchService {
@@ -195,7 +200,7 @@ export class MatchService {
   // ---- reading -----------------------------------------------------------------------------------------------------
 
   private match(id: number): MatchRow {
-    const m = this.db.get<MatchRow>('SELECT id, state, created_ms, start_tick, end_tick, duration_ticks, start_cash_cents, settled_ms, outcome, winner_user_id, cancel_reason FROM matches WHERE id = ?', id);
+    const m = this.db.get<MatchRow>('SELECT id, state, created_ms, start_tick, end_tick, duration_ticks, start_cash_cents, settled_ms, outcome, winner_user_id, cancel_reason, friends FROM matches WHERE id = ?', id);
     if (!m) throw new LobbyError(404, 'no_such_match', 'No such match.');
     return m;
   }
@@ -238,6 +243,7 @@ export class MatchService {
           : 'Looking for an opponent… You are in the lobby alone (1/2). The match cannot start until a real player joins. You can leave at any time.';
       case 'ready_check':
         if (other?.is_bot === 1) return me?.ready ? `You are ready. ${other.display_name} is ready too.` : `${other.display_name} will play you (2/2). Press Ready when you are ready.`;
+        if (m.friends === 1) return me?.ready ? `You are ready. Waiting for your friend ${other?.display_name ?? ''} to be ready.` : `Friend match against ${other?.display_name ?? 'your friend'}. Press Ready when you are ready.`;
         if (me?.ready) return `You are ready. Waiting for ${other?.display_name ?? 'your opponent'} to be ready.`;
         return `${other?.display_name ?? 'An opponent'} has joined (2/2). Press Ready when you are ready.`;
       case 'countdown':
@@ -299,6 +305,7 @@ export class MatchService {
       winnerUserId: m.winner_user_id,
       cancelReason: m.cancel_reason,
       canTrade: phase === 'live' && ps.find((p) => p.user_id === userId)?.forfeited === 0,
+      friendMatch: m.friends === 1,
     };
   }
 
@@ -312,6 +319,49 @@ export class MatchService {
     }
     const last = this.db.get<{ match_id: number }>("SELECT match_id FROM match_players WHERE user_id = ? AND active = 0 AND dismissed = 0 AND (result IS NOT NULL OR match_id IN (SELECT id FROM matches WHERE state = 'cancelled')) ORDER BY match_id DESC LIMIT 1", userId);
     return last ? this.viewOf(this.match(last.match_id), userId) : null;
+  }
+
+  /**
+   * Whether the player can start a friend match right now: he is in no match, or only waits alone in a lobby (which a friend match
+   * replaces; leaving a lobby costs nothing). Not free: a lobby with another real player, a countdown, a live match.
+   */
+  isFree(userId: number): boolean {
+    this.advance();
+    return this.free(userId);
+  }
+
+  private free(userId: number): boolean {
+    const mem = this.membership(userId);
+    if (!mem) return true;
+    const m = this.match(mem.match_id);
+    if (m.state !== 'lobby' || m.friends === 1) return false;
+    return this.players(m.id).filter((p) => p.active === 1 && p.is_bot === 0).length === 1;
+  }
+
+  /**
+   * Opens the match of two friends who agreed to play (server/challenges.ts): a lobby with exactly the two of them, nobody ready yet.
+   * They press Ready like in any lobby and the usual countdown follows. A player who was waiting alone for an opponent is taken out of that
+   * lobby first. Throws LobbyError 'player_busy' when either is in a match that cannot be left like that.
+   */
+  openFriendMatch(aId: number, bId: number): number {
+    this.advance();
+    const matchId = this.db.tx(() => {
+      for (const u of [aId, bId]) {
+        if (!this.free(u)) throw new LobbyError(409, 'player_busy', 'A player is in another match right now.');
+      }
+      for (const u of [aId, bId]) {
+        const mem = this.membership(u);
+        if (mem) this.removeFromLobby(this.match(mem.match_id), u);
+        this.db.run('UPDATE match_players SET dismissed = 1 WHERE user_id = ? AND active = 0', u);
+      }
+      const nowMs = this.now();
+      const id = this.db.run("INSERT INTO matches(state, created_ms, duration_ticks, start_cash_cents, friends) VALUES ('lobby', ?, ?, ?, 1)", nowMs, MATCH_TICKS, MATCH_CASH_CENTS).lastInsertRowid;
+      for (const u of [aId, bId]) this.db.run('INSERT INTO match_players(match_id, user_id, joined_ms, last_seen_ms) VALUES (?, ?, ?, ?)', id, u, nowMs, nowMs);
+      return id;
+    });
+    this.log.info('lobby', `Friend match ${matchId} opened for players ${aId} and ${bId}.`);
+    this.notify(matchId);
+    return matchId;
   }
 
   /** How many players are searching for an opponent right now. */
@@ -333,7 +383,7 @@ export class MatchService {
       // A lobby with one real player is open, also when a bot is sitting in it: a real player always takes the bot's place.
       const open = this.db.get<{ id: number }>(
         `SELECT m.id FROM matches m
-          WHERE m.state = 'lobby'
+          WHERE m.state = 'lobby' AND m.friends = 0
             AND (SELECT COUNT(*) FROM match_players p WHERE p.match_id = m.id AND p.active = 1 AND p.user_id NOT IN (SELECT user_id FROM bots)) = 1
             AND NOT EXISTS (SELECT 1 FROM match_players p WHERE p.match_id = m.id AND p.user_id = ?)
           ORDER BY m.id LIMIT 1`,
@@ -426,6 +476,12 @@ export class MatchService {
 
   private removeFromLobby(m: MatchRow, userId: number): void {
     this.db.run('DELETE FROM match_players WHERE match_id = ? AND user_id = ? AND active = 1', m.id, userId);
+    if (m.friends === 1) {
+      // A friend match is only for the two friends. When one goes, the other does not wait for a stranger: the match is cancelled for him.
+      this.db.run("UPDATE matches SET state = 'cancelled', cancel_reason = 'friend_left', start_tick = NULL, end_tick = NULL WHERE id = ?", m.id);
+      this.db.run('UPDATE match_players SET active = 0, ready = 0 WHERE match_id = ?', m.id);
+      return;
+    }
     // A bot does not wait for anybody: when the last real player has gone, the bot goes too.
     if (this.players(m.id).filter((p) => p.active === 1 && p.is_bot === 0).length === 0) this.db.run('DELETE FROM match_players WHERE match_id = ? AND active = 1', m.id);
     const left = this.players(m.id).filter((p) => p.active === 1);
@@ -635,7 +691,7 @@ export class MatchService {
   /** The rule for orders: a match account may trade only while its own match is live, and never after it. */
   gate = (account: AccountRow, tick: number): string | null => {
     if (account.kind !== 'match') return null;
-    const m = this.db.get<MatchRow>('SELECT id, state, created_ms, start_tick, end_tick, duration_ticks, start_cash_cents, settled_ms, outcome, winner_user_id, cancel_reason FROM matches WHERE id = ?', account.match_id as number);
+    const m = this.db.get<MatchRow>('SELECT id, state, created_ms, start_tick, end_tick, duration_ticks, start_cash_cents, settled_ms, outcome, winner_user_id, cancel_reason, friends FROM matches WHERE id = ?', account.match_id as number);
     if (!m || m.state !== 'live') return 'This match is over, so you can no longer trade in it.';
     const start = m.start_tick as number;
     const end = m.end_tick as number;

@@ -58,6 +58,18 @@ export class SseHub {
     for (const c of this.clients.values()) if (c.userId === userId) this.write(c, text);
   }
 
+  /** To every signed-in browser (a signed-out visitor gets nothing): the chat room. */
+  publishSignedIn(event: string, data: unknown): void {
+    const text = frame(event, data);
+    for (const c of this.clients.values()) if (c.userId !== null) this.write(c, text);
+  }
+
+  /** Whether the player has a page open right now (at least one live stream). */
+  has(userId: number): boolean {
+    for (const c of this.clients.values()) if (c.userId === userId) return true;
+    return false;
+  }
+
   /** Closes every open stream of one user (a banned player). The browser reconnects at once and is then treated as signed out. */
   dropUser(userId: number): number {
     let n = 0;

@@ -1,6 +1,7 @@
-// 1v1 routes: join the lobby, get ready, leave; match history and the virtual-currency wallet.
+// 1v1 routes: join the lobby, get ready, leave; challenge a friend; match history and the virtual-currency wallet.
 // The client only ever asks. What the lobby looks like, whether the match has started and who won are answered by the server.
 
+import { ChallengeError } from '../challenges';
 import { HttpError, intParam } from '../http';
 import { LobbyError } from '../lobby/service';
 import type { Router } from '../router';
@@ -22,7 +23,7 @@ export function registerLobbyRoutes(router: Router, s: Services): void {
     try {
       return fn();
     } catch (error) {
-      if (error instanceof LobbyError) throw new HttpError(error.status, error.code, error.message);
+      if (error instanceof LobbyError || error instanceof ChallengeError) throw new HttpError(error.status, error.code, error.message);
       throw error;
     }
   }
@@ -65,6 +66,37 @@ export function registerLobbyRoutes(router: Router, s: Services): void {
     matches.dismiss(user.id);
     return { ok: true };
   });
+
+  // ---- challenges: ask a friend to a 1v1 --------------------------------------------------------------------------------------
+  // The client only asks. Who may challenge whom, whether the friend is online, whether the challenge ran out and whether the
+  // two players are free to play are all answered by the server (server/challenges.ts).
+  const { challenges } = s;
+  const sent = new Map<number, number[]>();
+  function limitedChallenge(userId: number): void {
+    const now = s.now();
+    const list = (sent.get(userId) ?? []).filter((t) => t > now - 10_000);
+    if (list.length >= 20) throw new HttpError(429, 'rate_limited', 'Too many challenge requests. Wait a moment.');
+    list.push(now);
+    sent.set(userId, list);
+  }
+
+  router.get('/api/challenges', (ctx) => ({ ...challenges.state(ctx.requireUser()), match: null }));
+
+  const challenge = (path: string, run: (user: Parameters<typeof challenges.state>[0], name: string) => { state: ReturnType<typeof challenges.state>; match: ReturnType<typeof matches.current> } | ReturnType<typeof challenges.state>): void => {
+    router.post(path, async (ctx) => {
+      const user = ctx.requireUser();
+      limitedChallenge(user.id);
+      const b = await ctx.body();
+      if (typeof b.username !== 'string') throw new HttpError(400, 'bad_request', 'username must be the name of a friend.');
+      const name = b.username;
+      const out = guard(() => run(user, name));
+      return 'state' in out ? { ...out.state, match: out.match } : { ...out, match: null };
+    });
+  };
+  challenge('/api/challenges/send', (u, n) => challenges.send(u, n));
+  challenge('/api/challenges/accept', (u, n) => challenges.accept(u, n));
+  challenge('/api/challenges/decline', (u, n) => challenges.decline(u, n));
+  challenge('/api/challenges/cancel', (u, n) => challenges.cancel(u, n));
 
   router.get('/api/matches', (ctx) => {
     const user = ctx.requireUser();

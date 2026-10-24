@@ -2423,3 +2423,114 @@ code {
   text-align: center;
   vertical-align: middle;
 }
+
+/* ---------- Friend challenges ---------- */
+.challenge-banner {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.challenge-banner .challenge-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 0;
+}
+.friend-challenge-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.friend-challenge-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+/* ---------- Chat ---------- */
+.chat-log {
+  list-style: none;
+  margin: 10px 0;
+  padding: 8px;
+  height: min(60vh, 520px);
+  min-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.chat-msg {
+  padding: 6px 10px;
+  border-radius: 8px;
+  max-width: 100%;
+}
+.chat-msg.mine {
+  background: rgba(59, 130, 246, 0.12);
+}
+.chat-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 13px;
+}
+.chat-tools {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+}
+.chat-text {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-mod {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.chat-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.chat-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+.chat-count {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.chat-count.over {
+  color: var(--down);
+  font-weight: 700;
+}
+@media (max-width: 560px) {
+  .chat-form {
+    flex-wrap: wrap;
+  }
+  .chat-input {
+    flex-basis: 100%;
+  }
+}

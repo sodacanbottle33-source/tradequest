@@ -3,8 +3,14 @@
 
 import type {
   Account,
+  AdminChatView,
   Announcement,
   BanNotice,
+  ChallengeAction,
+  ChallengesState,
+  ChatMessage,
+  ChatView,
+  ChatYou,
   AdminSpeed,
   AdminState,
   AdminStyle,
@@ -162,7 +168,22 @@ export const api = {
   /** Asks, accepts, declines, cancels a request, or removes a friend. The answer is your friend lists as they are afterwards. */
   friendAction: (what: FriendAction, username: string) => request<FriendsState & { relation: Relation }>('POST', `/api/friends/${what}`, { username }),
 
+  /** Friend 1v1 challenges. The answer is your challenges as they are afterwards, and `match` when a yes opened the lobby. */
+  challenges: () => request<ChallengesState & { match: Match | null }>('GET', '/api/challenges'),
+  challengeAction: (what: ChallengeAction, username: string) => request<ChallengesState & { match: Match | null }>('POST', `/api/challenges/${what}`, { username }),
+
+  // The public chat room (any signed-in player).
+  chat: (beforeId?: number, limit = 50) => request<ChatView>('GET', `/api/chat?limit=${limit}${beforeId === undefined ? '' : `&before=${beforeId}`}`),
+  chatSend: (text: string) => request<{ message: ChatMessage; you: ChatYou }>('POST', '/api/chat/send', { text }),
+  chatReport: (messageId: number) => request<{ ok: boolean }>('POST', '/api/chat/report', { messageId }),
+
   // Owner only: the server answers 403 to anybody else.
+  adminChat: () => request<AdminChatView>('GET', '/api/admin/chat'),
+  adminChatDelete: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/chat/delete', body),
+  adminChatDismiss: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/chat/dismiss', body),
+  adminChatMute: (body: { requestId: string; username: string; minutes: number; reason?: string }) => request<{ ok: boolean; duplicate: boolean; username: string; untilMs: number }>('POST', '/api/admin/chat/mute', body),
+  adminChatBan: (body: { requestId: string; username: string; reason?: string }) => request<{ ok: boolean; duplicate: boolean; username: string }>('POST', '/api/admin/chat/ban', body),
+  adminChatLift: (body: { requestId: string; username: string }) => request<{ ok: boolean; duplicate: boolean; username: string }>('POST', '/api/admin/chat/lift', body),
   adminState: (q = '') => request<AdminState>('GET', `/api/admin/state${q.trim() === '' ? '' : `?q=${enc(q.trim())}`}`),
   adminShock: (body: { requestId: string; ticker: string; percent: number; style: AdminStyle; speed: AdminSpeed; headline?: string; body?: string; breaking?: boolean }) =>
     request<{ ok: boolean; duplicate: boolean; ticker: string; startsAtTick: number; priceBeforeCents: number }>('POST', '/api/admin/shock', body),

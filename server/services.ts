@@ -2,6 +2,8 @@
 
 import type { Admin } from './admin';
 import type { Auth, User } from './auth';
+import type { Challenges } from './challenges';
+import type { Chat } from './chat';
 import type { Config } from './config';
 import type { Launches } from './launch';
 import type { FlowService } from './flow';
@@ -46,6 +48,10 @@ export interface Services {
   readonly matches: MatchService;
   /** Friends, the player list and the richest-players leaderboard (server/social.ts). */
   readonly social: Social;
+  /** Friend 1v1 challenges (server/challenges.ts). */
+  readonly challenges: Challenges;
+  /** The public chat room (server/chat.ts). */
+  readonly chat: Chat;
   /** Null only when the app was created with news switched off (some tests). */
   readonly news: NewsService | null;
   readonly scheduler: NewsScheduler | null;

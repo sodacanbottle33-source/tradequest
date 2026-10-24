@@ -2,6 +2,7 @@
 // lobby, when the match starts and ends, what every trade costs and who won. This screen shows what the server says.
 import { useEffect, useState } from 'react';
 import { ApiError, api } from './api';
+import { PlayFriendCard } from './Challenges';
 import { formatCents } from './format';
 import { MatchScreen } from './MatchScreen';
 import { sharedStore, useShared } from './store';
@@ -173,7 +174,7 @@ export function LobbyScreen({ onGoSignIn }: { onGoSignIn: () => void }) {
                     {me?.ready ? 'Not ready' : 'Ready'}
                   </button>
                   <button type="button" className="btn" disabled={busy} onClick={() => void act(() => api.leave())} data-testid="leave-lobby">
-                    Leave
+                    {match.friendMatch ? 'Leave (cancels it for both)' : 'Leave'}
                   </button>
                 </div>
               );
@@ -195,6 +196,8 @@ export function LobbyScreen({ onGoSignIn }: { onGoSignIn: () => void }) {
           </>
         )}
       </section>
+
+      {!match && <PlayFriendCard />}
 
       <section className="card" aria-label="Virtual currency and history">
         <h2>

@@ -7,6 +7,8 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import type { Company } from '../src/world';
 import { Admin } from './admin';
 import { Auth, AuthError, SESSION_COOKIE } from './auth';
+import { Challenges } from './challenges';
+import { Chat } from './chat';
 import type { Config } from './config';
 import { CircuitBreaker } from './breaker';
 import { Liquidator, type PositionClosed } from './liquidation';
@@ -33,6 +35,7 @@ import { registerLobbyRoutes } from './routes/lobby';
 import { registerEarningsRoutes } from './routes/earnings';
 import { registerLimitRoutes } from './routes/limits';
 import { registerNewsRoutes } from './routes/news';
+import { registerChatRoutes } from './routes/chat';
 import { registerSocialRoutes } from './routes/social';
 import { Social } from './social';
 import { migrate } from './schema';
@@ -254,6 +257,16 @@ export function createApp(options: AppOptions): App {
   });
   // Friends and the leaderboard. A player is told over his live stream when a request arrives, is accepted or a friend leaves.
   const social = new Social({ db, trading, now, notify: (userId) => hub.publishTo(userId, 'friends', {}) });
+  // Friend 1v1 challenges: a challenge goes to a friend who has a page open, and his answer opens a lobby for the two of them.
+  const challenges = new Challenges({
+    db,
+    matches,
+    log,
+    now,
+    isOnline: (userId) => hub.has(userId),
+    isBanned: (userId) => auth.banOf(userId) !== null,
+    notify: (userId) => hub.publishTo(userId, 'challenges', {}),
+  });
   const botTrader = options.bots === true ? new BotTrader({ db, world, trading, log }) : null;
   const earnings = new Earnings(db, earningsWorldOf(world));
   const signals = new MarketSignals({ db, earnings, companies: () => world.companies, tilt: (c, tick) => (flow ? flow.bookTilt(c, tick) : 0) });
@@ -264,6 +277,15 @@ export function createApp(options: AppOptions): App {
   views.setPools(() => new Map(db.all<{ company_id: number; pool_cents: number; dead: number }>('SELECT company_id, pool_cents, drained_ms IS NOT NULL AS dead FROM coin_pools').map((r) => [r.company_id, { cents: r.pool_cents, dead: r.dead === 1 }])));
   matches.recover();
   const admin = new Admin({ db, auth, matches, hub, world, news: newsService, trading, halts, views, log, now });
+  // The public chat room. Its moderation (delete, mute, ban, lift) goes through the owner's routes and is written to the admin log.
+  const chat = new Chat({
+    db,
+    log,
+    now,
+    publish: (event, data) => hub.publishSignedIn(event, data),
+    publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
+    audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
+  });
   const launches = new Launches({ db, world, trading, halts, news: newsService, views, hub, log, now, notify: () => hub.publish('notice', admin.notice()), inMatch: (userId) => matches.inMatch(userId) });
   const breaker = options.autoPauses === false ? null : new CircuitBreaker({ world, halts, log, onChange: () => { views.invalidate(); hub.publish('notice', admin.notice()); } });
   breakerStep = breaker ? (tick) => breaker.step(tick) : null;
@@ -287,6 +309,8 @@ export function createApp(options: AppOptions): App {
     launches,
     matches,
     social,
+    challenges,
+    chat,
     news: newsService,
     scheduler,
     resolveAccount(user, which) {
@@ -308,6 +332,7 @@ export function createApp(options: AppOptions): App {
   registerLimitRoutes(router, services);
   registerLobbyRoutes(router, services);
   registerSocialRoutes(router, services);
+  registerChatRoutes(router, services);
   options.extend?.(services, router);
 
   world.onSaved((tick) => matches.settleDue(tick));
