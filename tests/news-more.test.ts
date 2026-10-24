@@ -20,7 +20,7 @@ import {
   type NewsDraft,
   type TemplateSet,
 } from '../src/world';
-import { MEME_COMPANY_TEMPLATES, MEME_LISTING_TEMPLATES, MEME_SECTOR_TEMPLATES, MEME_VIRAL_TEMPLATES } from '../src/world/memeNews';
+import { MEME_COMPANY_TEMPLATES, MEME_FADE_TEMPLATES, MEME_LISTING_TEMPLATES, MEME_SECTOR_TEMPLATES, MEME_VIRAL_TEMPLATES } from '../src/world/memeNews';
 import { plus, plusEach } from '../src/world/templateSets';
 
 const SEED = 20261015;
@@ -49,6 +49,7 @@ function lists(kind: 'stock' | 'meme'): Map<T[], string> {
     // A coin never draws a research story, so that alias is left out.
     for (const [k, v] of Object.entries(MEME_COMPANY_TEMPLATES)) if (k !== 'research') add(`company:${k}`, v);
     add('listing', MEME_LISTING_TEMPLATES);
+    add('fade', MEME_FADE_TEMPLATES);
     add('sector', MEME_SECTOR_TEMPLATES);
     for (const [k, v] of Object.entries(MEME_VIRAL_TEMPLATES)) add(`viral:${k}`, v);
   }
@@ -127,6 +128,51 @@ function slotsOf(c: Company, peer: Company, k: number): Record<string, string> {
     yoy: 'up 12%',
   };
 }
+
+describe('stocks and coins keep to their own wordings', () => {
+  // The economy stories (MACRO_TEMPLATES) are the one set both markets show: the economy moves everything. Every other kind of story has a stock set and a coin set.
+  const coinTalk = /\b(memes?|memecoins?|degens?|airdrops?|mascots?|whales?|rugs?|hodl|wallets?|emojis?|discord|tokens?|coins?)\b/i;
+  const companyTalk = /\b(dividends?|earnings|quarterly|quarter|shareholders?|patents?|factory|factories|revenue|antitrust|warehouse|unions?)\b|\{cfo\}|supply chain/i;
+
+  it('NM-8: no coin talk in a story about a stock, no company talk in a story about a coin, and no headline used by both', () => {
+    const problems: string[] = [];
+    for (const [list, name] of lists('stock')) for (const [h, b] of list) if (coinTalk.test(`${h} ${b}`)) problems.push(`coin talk in a stock story ${name}: ${h}`);
+    for (const [list, name] of lists('meme')) for (const [h, b] of list) if (companyTalk.test(`${h} ${b}`)) problems.push(`company talk in a coin story ${name}: ${h}`);
+    expect(problems).toEqual([]);
+    const stockHeads = new Set(all('stock').map(([h]) => h));
+    expect(all('meme').map(([h]) => h).filter((h) => stockHeads.has(h))).toEqual([]);
+  });
+
+  it('NM-9: a coin that fades after a viral story gets a coin wording, a stock gets a stock wording', () => {
+    // Every list of fade wordings is its own object; the coin ones are not the stock ones.
+    const stockFade = new Set<T[]>([VIRAL_FADE_TEMPLATES.positive as T[], VIRAL_FADE_TEMPLATES.negative as T[]]);
+    expect(stockFade.has(MEME_FADE_TEMPLATES.positive as T[])).toBe(false);
+    expect(stockFade.has(MEME_FADE_TEMPLATES.negative as T[])).toBe(false);
+    // Over a long run every fade that comes out for a coin is one of the coin ones, and every one for a stock is a stock one.
+    const mark = (set: TemplateSet, tag: string): [T[], T[]][] => {
+      const saved: [T[], T[]][] = [];
+      for (const d of ['positive', 'negative'] as const) {
+        const list = set[d] as T[];
+        saved.push([list, list.slice()]);
+        list.forEach((_t, i) => (list[i] = [`@@${tag}.${d}.${i}`, 'Body.']));
+      }
+      return saved;
+    };
+    const saved = [...mark(VIRAL_FADE_TEMPLATES, 'stock'), ...mark(MEME_FADE_TEMPLATES, 'coin')];
+    let stockFades = 0;
+    let coinFades = 0;
+    try {
+      for (let cycle = 0; cycle < 1500; cycle += 1) {
+        for (const d of marketCycleDrafts(SEED, stockWorld, cycle)) if (d.key.endsWith('f')) { stockFades += 1; expect(d.headline.startsWith('@@stock.')).toBe(true); }
+        for (const d of marketCycleDrafts(SEED, coins, cycle)) if (d.key.endsWith('f')) { coinFades += 1; expect(d.headline.startsWith('@@coin.')).toBe(true); }
+      }
+    } finally {
+      for (const [list, original] of saved) list.splice(0, list.length, ...original);
+    }
+    expect(stockFades).toBeGreaterThan(30);
+    expect(coinFades).toBeGreaterThan(30);
+  }, LONG);
+});
 
 describe('every story reads cleanly', () => {
   it('NM-4: filled in for real companies and coins, no story has a stray brace, double space, space before a mark, doubled word or a headline over 90 characters', () => {

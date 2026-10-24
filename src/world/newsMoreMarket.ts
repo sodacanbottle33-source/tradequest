@@ -279,7 +279,7 @@ export const MORE_VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = {
     ],
     uncertain: [
       [`Viral clip of {co} sparks guessing game`, `A short, unclear video involving {co} drew millions of views. Viewers cannot agree on what it shows, and the company has not commented.`],
-      [`Meme about {co} spreads across social media`, `A joke image about {co} and {prod} is everywhere. Analysts said it is unclear whether it helps or hurts the brand.`],
+      [`Joke picture of {co} spreads across social media`, `A funny image of {co} and {prod} is everywhere. Analysts said it is unclear whether it helps or hurts the brand.`],
     ],
   },
   rumor: {

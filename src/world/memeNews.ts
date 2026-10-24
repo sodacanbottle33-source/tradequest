@@ -121,7 +121,7 @@ const analyst: TemplateSet = {
     ['Influencer thread says {co} holders are "cooked"', 'A thread listing ten reasons to sell {tk} was shared widely. Several of them were fair.'],
   ],
   uncertain: [
-    ['Analysts split on {co}', 'Some call {tk} a bargain and others call it a trap. {firm} said it is "watching closely", which means nothing.'],
+    ['Chart gurus split on {co}', 'Some call {tk} a bargain and others call it a trap. {firm} said it is "watching closely", which means nothing.'],
     ['{firm} puts {tk} under review', 'The firm said it would revisit its view on {co} soon. No date was given.'],
   ],
 };
@@ -227,7 +227,7 @@ const BASE_MEME_VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = {
   rumor: {
     positive: [['Rumor: big exchange to list {tk}', 'Unconfirmed posts say a major trading site will add {co} soon. Neither the site nor {ceo} would comment.']],
     negative: [['Rumor: {co} developers are leaving', 'Unverified posts claim {ceo} is about to walk away from {tk}. The team called it "fake news, ha ha".']],
-    uncertain: [['Rumors swirl around {co}', 'Unconfirmed chatter about {co} grew all day. {ceo} replied with a single emoji.']],
+    uncertain: [['Whispers grow around {co}', 'Unconfirmed chatter about {co} grew all day. {ceo} replied with a single emoji.']],
   },
   investor: {
     positive: [['Famous trader {person} reveals {co} bag', '{person}, known for early bets on small coins, said a large share of their portfolio is {tk}.']],
@@ -249,6 +249,33 @@ const BASE_MEME_VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = {
     negative: [['Minister {person} threatens crackdown on {sector} coins', '{person} said coins like these may face tougher rules soon, in remarks that spread fast online.']],
     uncertain: [['Minister {person} comments on {sector} coins', 'A short remark by {person} about the {sector} area sent traders rushing to read between the lines.']],
   },
+};
+
+/**
+ * Follow-ups when a low-credibility viral story about a COIN fades (stocks have their own, VIRAL_FADE_TEMPLATES in newsText.ts). The direction is the way the price
+ * goes back: "negative" after a hype story (the excitement cools), "positive" after a scary one (the claim is cleared up).
+ */
+export const MEME_FADE_TEMPLATES: TemplateSet = {
+  negative: [
+    ['{co} hype cools off', 'The chat around {tk} is quieter than yesterday. Traders who rushed in are taking their coins and leaving.'],
+    ['Buyers fade from {co} after the viral spike', 'The rush of attention around {tk} was not followed by anything new. {ceo} went back to posting memes.'],
+    ['{ceo} says there is "no news" on {co}', 'The developer said nothing new is behind the viral posts about {tk}, and the price gave back part of the jump.'],
+    ['{co} spike fizzles', 'The rush into {tk} faded within hours. Latecomers are looking at red candles.'],
+    ['Viral post about {co} turns out to be old news', 'Users pointed out that the post about {tk} was recycled from months ago, and the buying slowed.'],
+    ['Traders take profit on {co}', 'Early buyers of {tk} sold into the viral jump. The chart is giving some of it back.'],
+    ['Story behind the {co} jump cannot be confirmed', 'Nobody could back up the story that pushed {tk} higher. The crowd drifted off.'],
+    ['Bots drove the {co} spike, say trackers', 'On-chain trackers say much of the buying in {tk} came from a few bot wallets. Real buyers stayed away.'],
+  ],
+  positive: [
+    ['{ceo} shows proof against claims about {co}', 'The developer posted wallet records that answer the claims about {tk}. The mood in the chat lifted.'],
+    ['Rumor about {co} turns out to be fake', 'The screenshot behind the claim about {tk} was shown to be edited. Holders breathed out and buyers returned.'],
+    ['Community checks the {co} claims and finds them wrong', 'Volunteers went through the posts about {tk} and found nothing to support them. The price recovered some.'],
+    ['Dev wallet claim about {co} debunked', 'Trackers showed that the wallet in the viral post does not belong to the {co} team. Dip buyers stepped in.'],
+    ['{co} holders shrug off the scary posts', 'After a day of alarming posts, nothing changed for {tk}. Holders called it "free shopping" and bought more.'],
+    ['Original poster deletes the claim about {co}', 'The account that started the story about {tk} removed it and apologised. The price began to climb back.'],
+    ['Exchange says {co} is not being delisted', 'A trading site denied the posts about {tk}, and the rush of selling stopped.'],
+    ['Fake {co} news traced to a prank account', 'The viral story about {tk} began as a joke. Holders were relieved, and some are laughing about it.'],
+  ],
 };
 
 // The first batch above plus the extra wordings (memeNewsMore.ts), joined by templateSets.ts (the extra ones sit at the end of every list).

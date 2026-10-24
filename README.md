@@ -6,7 +6,7 @@ A trading-education simulator with fictional companies and virtual money. The ga
 - **1v1**: two players trade the same market and the same companies as Career for exactly 3 minutes, with $1,000 of match cash each. If nobody else is waiting, a **bot** plays you (see below).
 - **Leverage, shorts, stops and pens**: a buy or a short can use leverage from 1× to 50× (Career and 1v1), you can **short** a company to win when it falls, every position can carry a **stop-loss** and a **take-profit**, and every price chart has pens to draw on (see below).
 - **Memecoins**: its own tab in Career with 30 invented coins that move far more than stocks, each with its own market cap, liquidity and news. Same Career cash, same rules, so money made on a coin lands in your Career account (see below).
-- **News**: its own place next to 1v1. Every story, newest first; stories really move prices. The stories are written from about **800 hand-written templates** (about 560 for stocks, 250 for memecoins), filled with each company's own names, products and numbers; there is no AI writing them, so after a long time a wording comes round again.
+- **News**: its own place next to 1v1. Every story, newest first; stories really move prices. The stories are written from about **830 hand-written templates** (about 560 for stocks and about 260 for memecoins, each market with its own set; only the economy stories are shared), filled with each company's own names, products and numbers; there is no AI writing them, so after a long time a wording comes round again.
 
 There are 66 fictional companies by default (more with `TQ_COMPANIES`), plus the 30 memecoins. The earlier offline Practice and Classic-round modes are no longer in the menu; their code is still in the project, unused.
 

@@ -352,8 +352,8 @@ creates:
 * for the market: **sector stories** (about 0.7 per sector per day), **economy stories** (about 0.65 per day) and rare
   **viral stories** (§7.4).
 
-Headlines come from about **800 hand-written templates**: about 560 for stocks (11 company categories: product, partnership, management, legal,
-operations, financial, analyst, contract, research, incident, demand, plus sector, economy, earnings, viral and "the claim fades" stories) and about 250
+Headlines come from about **830 hand-written templates**: about 560 for stocks (11 company categories: product, partnership, management, legal,
+operations, financial, analyst, contract, research, incident, demand, plus sector, economy, earnings, viral and "the claim fades" stories) and about 260
 for memecoins (§12), filled with the company's own name, products, CEO/CFO, headquarters and a partner company. The text is template-based:
 **there is no AI text generation**. See §7.7 for how the wordings are joined, what the number really means and what the tests check.
 
@@ -459,12 +459,16 @@ A story's wording is a template `[headline, body]` with `{slots}`. The first bat
 | economy stories | 33 | (shared with stocks) |
 | quarterly reports (16 good or bad ones and the 3 fixed "neither good nor bad" ones) | 19 | none |
 | viral stories (7 kinds) | 63 | 63 |
-| "the claim fades" follow-ups | 10 | (shared with stocks) |
+| "the claim fades" follow-ups | 10 | 16 |
 | listing announcements | 2 | 6 |
-| **all** | **566** | **247** |
+| **all** | **566** | **263** |
 
 (`news-more` NM-1 fixes the totals: at least 550 for stocks, 240 for coins, 800 together. No two stories of one kind share a headline, and no two stories anywhere share their text: NM-2.)
 
+* **Stocks and coins keep to their own wordings.** A stock never gets a coin story and a coin never gets a stock story: company, sector, viral, "the claim fades" and listing
+  stories each have a stock set and a coin set (`MEME_COMPANY_TEMPLATES`, `MEME_SECTOR_TEMPLATES`, `MEME_VIRAL_TEMPLATES`, `MEME_FADE_TEMPLATES`, `MEME_LISTING_TEMPLATES`), and quarterly reports exist for stocks only.
+  The one set both show is the **economy stories** (`MACRO_TEMPLATES`): the economy moves every market, so a coin's page shows them too. NM-8 fails if a stock story uses coin slang (meme, degen, airdrop, mascot, whale, rug, wallet, token, coin ...),
+  if a coin story uses company talk (dividend, earnings, quarter, shareholder, patent, factory, revenue ...) or the `{cfo}` slot, or if one headline is used by both sets; NM-9 checks that a coin whose viral story fades gets a coin wording and a stock gets a stock one.
 * **Text only.** The draws that decide a story's direction, strength, timing, size and which company it is about are made *before* the wording is picked
   and use `d.int(list.length)`, which takes exactly one draw however long the list is. So more wordings change which words a story gets and nothing else:
   not a price, not a timing, not a number in a report. NM-6 proves it by putting extra wordings into every list (also in front) and comparing every field except
@@ -477,7 +481,7 @@ A story's wording is a template `[headline, body]` with `{slots}`. The first bat
 * **Clean reading.** NM-4 fills every wording with real companies and coins and fails on a stray brace, a double space, a space before a mark, a doubled word,
   a headline that ends with a mark or is longer than 90 characters, or a body that does not end with a mark. NM-5 checks the slots (sector and economy stories none, partnership stories name the partner,
   a viral story from an official names no company).
-* **What the number means.** About 800 wordings is not 800 different *events*: the same wording is filled with different companies, products, people, regions and numbers, so a player sees
+* **What the number means.** About 830 wordings is not 830 different *events*: the same wording is filled with different companies, products, people, regions and numbers, so a player sees
   far more distinct headlines than that, but after a long time a wording does come round again. Real variety beyond this would need a language model (money and a key) or many more hand-written wordings.
 
 ## 8. The server
@@ -889,7 +893,7 @@ No schema change (still 21). Two parts.
 ## 10. Tests
 
 All tests are in `tests/`. The world and server tests are: `world-catalog`, `world-effects`, `world-sim`,
-`world-liquidity`, `world-news` (generator), `news-more` (NM-1…7: the number of wordings, no repeated headline, clean reading, only words change, all of them reachable), `server-runtime`, `server-trading`, `server-api`, `server-news` (service,
+`world-liquidity`, `world-news` (generator), `news-more` (NM-1…9: the number of wordings, no repeated headline, clean reading, only words change, all of them reachable, stocks and coins keeping to their own wordings), `server-runtime`, `server-trading`, `server-api`, `server-news` (service,
 scheduler, restart, downtime, replay, failure injection), `server-news-api` (HTTP, push, owner view, locks),
 `match-rules` (who wins, rewards, ties, forfeits, start tick), `server-lobby` (join/ready/countdown/live/settle, fairness,
 exactly-once rewards, simultaneous matches, disconnects, restart, API), `server-admin` (ADM-1…14: owner-only, rug/crash/pump
@@ -908,7 +912,7 @@ that script is not part of the project.
 
 ## 11. Known limits
 
-* News text is built from about 800 templates (§7.7); it is varied but not written by a person or a language model, and a wording does come round again after a long time.
+* News text is built from about 830 templates (§7.7); it is varied but not written by a person or a language model, and a wording does come round again after a long time.
 * The server must keep running to be "24/7": a home computer that sleeps pauses the live ticks (the market then catches
   up on the next start, exactly as if it had run). Always-on hosting is a deployment decision, not code.
 * `node:sqlite` is still marked experimental by Node; the code uses only basic statements.
@@ -958,7 +962,7 @@ stop-loss, take-profit, the live book and the pop-ups work on them without speci
   If an existing company already uses a coin's name or ticker the start is refused with a sentence naming it (MEME-13). `TQ_MEMECOINS=0` keeps them out of a world that does not have them yet.
 * **Why they move more.** The price model (§5) is the same; the coin's own `vol3m`, `dailyVol`, `newsImpact` and `driftDay` replace the size-class
   numbers, and thin coins also take more from players' orders (§8.6), so a position can win or lose a lot in seconds. The $1.00 floor still holds: a coin that "rugs" sits at it.
-* **News.** Own templates (about 250: `memeNews.ts` and `memeNewsMore.ts`: company, sector, viral and listing stories: rug rumours, whale buys and dumps, influencer threads, exchange listings,
+* **News.** Own templates (about 260: `memeNews.ts` and `memeNewsMore.ts`: company, sector, viral, fade and listing stories: rug rumours, whale buys and dumps, influencer threads, exchange listings,
   dev-wallet moves). Every coin gets at least three stories a day, never earnings; sector stories reach the coin sector; a coin's story moves it more than a
   stock's story moves a stock (MEME-8). A world without coins gets exactly the sector and economy news it always had.
 * **No automatic pauses.** The circuit breaker (§8.5) skips the coin sector: coins can move any distance, so a stop on a coin is never locked out.

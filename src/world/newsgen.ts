@@ -30,7 +30,7 @@ import {
   type Template,
   type TemplateSet,
 } from './newsText';
-import { MEME_COMPANY_TEMPLATES, MEME_LISTING_TEMPLATES, MEME_VIRAL_TEMPLATES } from './memeNews';
+import { MEME_COMPANY_TEMPLATES, MEME_FADE_TEMPLATES, MEME_LISTING_TEMPLATES, MEME_VIRAL_TEMPLATES } from './memeNews';
 import { bpText, centsText, epsText, figuresFor, quarterWord, reportsInCycle, revenueText, yoyText, type Figures, type ReportOutcome } from './fundamentals';
 import type { Company, Direction, EventKind, EventScope, Immediacy, Shape, Strength, WorldEvent } from './types';
 
@@ -619,7 +619,7 @@ function viralDrafts(d: Draws, all: readonly Company[], cycle: number, j: number
   // A low-credibility story often fades: a follow-up item pulls the price back.
   if (credibility < 0.5 && direction !== 'uncertain' && strength !== 'minor' && !official) {
     const fadeDirection: Direction = direction === 'positive' ? 'negative' : 'positive';
-    const fadeList = templatesFor(VIRAL_FADE_TEMPLATES, fadeDirection);
+    const fadeList = templatesFor(c.sector === 'meme' ? MEME_FADE_TEMPLATES : VIRAL_FADE_TEMPLATES, fadeDirection);
     const fadeTemplate = fadeList[d.int(fadeList.length)] as Template;
     const fadePublish = Math.min(cycleStart + NEWS_CYCLE_TICKS - 1, publishTick + d.range(1200, 3600));
     const fadeRealized = clamp(-realized * (0.5 + 0.4 * d.u()), -MAX_REALIZED, MAX_REALIZED);
