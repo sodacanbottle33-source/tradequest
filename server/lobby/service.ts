@@ -30,6 +30,8 @@ import type { WorldRuntime } from '../world/runtime';
 
 /** Why a match account cannot trade a company a player launched (shown to the player as it is). */
 export const LAUNCHED_IN_MATCH = 'Companies that players launched cannot be traded in a 1v1 match, so nobody can win by pumping their own coin or stock. Pick any other company.';
+/** Why a player cannot place Career orders while his match is about to start or running: with Career money (which moves prices) he could push the price his match is scored on. */
+export const CAREER_CLOSED_IN_MATCH = 'Career trading is closed while your 1v1 match is starting or running. Trade inside the match, or come back to Career when it is over.';
 /** Why a player cannot launch a company while his match is about to start or running. */
 export const NO_LAUNCH_IN_MATCH = 'You cannot launch a coin or a stock while your 1v1 match is starting or running. Launch it after the match.';
 

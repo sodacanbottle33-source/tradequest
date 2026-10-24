@@ -2,7 +2,9 @@
 // them from the coin (name, ticker, products, the developer's handle as {ceo}, the other coin as {peer}, numbers). Every coin,
 // handle and project named here is invented. The tests fill every template for every coin and fail if a {slot} is left over.
 
+import { MORE_MEME_COMPANY_TEMPLATES, MORE_MEME_LISTING_TEMPLATES, MORE_MEME_SECTOR_TEMPLATES, MORE_MEME_VIRAL_TEMPLATES } from './memeNewsMore';
 import type { CompanyCategory, TemplateSet, ViralKind } from './newsText';
+import { plus, plusEach } from './templateSets';
 
 const product: TemplateSet = {
   positive: [
@@ -171,7 +173,7 @@ const demand: TemplateSet = {
 };
 
 /** Company items for a memecoin, by category (the same categories stocks use; `research` is never drawn for a coin). */
-export const MEME_COMPANY_TEMPLATES: Readonly<Record<CompanyCategory, TemplateSet>> = {
+const BASE_MEME_COMPANY_TEMPLATES: Readonly<Record<CompanyCategory, TemplateSet>> = {
   product,
   partnership,
   management,
@@ -185,7 +187,7 @@ export const MEME_COMPANY_TEMPLATES: Readonly<Record<CompanyCategory, TemplateSe
   demand,
 };
 
-export const MEME_LISTING_TEMPLATES: TemplateSet = {
+const BASE_MEME_LISTING_TEMPLATES: TemplateSet = {
   uncertain: [
     ['{co} ({tk}) starts trading', '{co}, the {prod} coin, was added to the market today. {ceo}, its anonymous developer, promised "no plan, only vibes" and a lot of memes.'],
     ['New coin: {co} debuts as {tk}', 'The coin behind {prod} and {prod2} began trading. Early traders are watching how the first hours go, and the price is already jumping.'],
@@ -193,7 +195,7 @@ export const MEME_LISTING_TEMPLATES: TemplateSet = {
 };
 
 /** The news about the whole memecoin sector (all coins feel it). */
-export const MEME_SECTOR_TEMPLATES: TemplateSet = {
+const BASE_MEME_SECTOR_TEMPLATES: TemplateSet = {
   positive: [
     ['Memecoin mania returns', 'Trading in meme coins surged as new buyers piled in. Social feeds are full of rocket emojis and the smaller coins are moving the most.'],
     ['Big exchange adds several meme coins', 'A large trading site listed a handful of meme coins this week, and the whole sector caught a bid.'],
@@ -211,7 +213,7 @@ export const MEME_SECTOR_TEMPLATES: TemplateSet = {
 };
 
 /** Viral and important-person events for a memecoin ({person} is a fictional influencer; {ceo} is the developer's handle). */
-export const MEME_VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = {
+const BASE_MEME_VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = {
   influencer: {
     positive: [['Streamer {person} goes all in on {co}', '{person}, who has {n} million followers, told viewers {tk} is "the one" during a live stream. The clip is everywhere.']],
     negative: [['Streamer {person} mocks {co}', '{person} called {tk} "a joke that stopped being funny" in a video seen by millions. Holders are furious and some are selling.']],
@@ -249,3 +251,8 @@ export const MEME_VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = {
   },
 };
 
+// The first batch above plus the extra wordings (memeNewsMore.ts), joined by templateSets.ts (the extra ones sit at the end of every list).
+export const MEME_COMPANY_TEMPLATES: Readonly<Record<CompanyCategory, TemplateSet>> = plusEach(BASE_MEME_COMPANY_TEMPLATES, MORE_MEME_COMPANY_TEMPLATES);
+export const MEME_LISTING_TEMPLATES: TemplateSet = plus(BASE_MEME_LISTING_TEMPLATES, MORE_MEME_LISTING_TEMPLATES);
+export const MEME_SECTOR_TEMPLATES: TemplateSet = plus(BASE_MEME_SECTOR_TEMPLATES, MORE_MEME_SECTOR_TEMPLATES);
+export const MEME_VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = plusEach(BASE_MEME_VIRAL_TEMPLATES, MORE_MEME_VIRAL_TEMPLATES);

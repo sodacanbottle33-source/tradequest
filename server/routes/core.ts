@@ -4,6 +4,7 @@ import { OrderError } from '../trading';
 import { EVENT_LOOKAHEAD_TICKS } from '../world/runtime';
 import { SESSION_COOKIE, SESSION_DAYS, type User } from '../auth';
 import { HttpError, intParam, sessionCookie } from '../http';
+import { CAREER_CLOSED_IN_MATCH } from '../lobby/service';
 import { HANDLED, type Router } from '../router';
 import type { Services } from '../services';
 import type { Resolution } from '../world/runtime';
@@ -167,6 +168,8 @@ export function registerCoreRoutes(router: Router, s: Services): void {
       return v;
     };
     const acc = s.resolveAccount(user, typeof b.account === 'string' ? b.account : 'career');
+    // Career money moves prices, and a match is scored on them: no Career orders while this player's own match is starting or running (docs/world.md §9.12).
+    if (acc.kind === 'career' && s.matches.inMatch(user.id)) throw new HttpError(409, 'in_match', CAREER_CLOSED_IN_MATCH);
     try {
       const out = trading.placeOrder({
         accountId: acc.id,
@@ -200,6 +203,7 @@ export function registerCoreRoutes(router: Router, s: Services): void {
       return v;
     };
     const acc = s.resolveAccount(user, typeof b.account === 'string' ? b.account : 'career');
+    if (acc.kind === 'career' && s.matches.inMatch(user.id)) throw new HttpError(409, 'in_match', CAREER_CLOSED_IN_MATCH);
     try {
       return { account: trading.setExits(acc.id, company.id, { stopPrice: price('stopPrice'), takePrice: price('takePrice') }) };
     } catch (error) {

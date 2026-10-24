@@ -37,8 +37,9 @@ describe('Menu', () => {
 
   it('MENU-4: News is its own place, and a 1v1 match shows every company through the same list and company page as Career', () => {
     const shell = code(src('shared', 'SharedApp.tsx'));
-    expect(shell).toMatch(/mode === 'news' && <NewsScreen/);
-    expect(shell).toMatch(/mode === 'battle' && <LobbyScreen/);
+    // `shown` is the mode on screen: the mode asked for, except that Career shows the 1v1 screen while Career is closed (docs/world.md §9.12).
+    expect(shell).toMatch(/shown === 'news' && <NewsScreen/);
+    expect(shell).toMatch(/shown === 'battle' && <LobbyScreen/);
     const match = code(src('shared', 'MatchScreen.tsx'));
     expect(match).toMatch(/<MarketScreen/);
     expect(match).toMatch(/<CompanyView/);

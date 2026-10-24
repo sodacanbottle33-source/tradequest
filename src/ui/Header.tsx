@@ -19,9 +19,11 @@ interface Props {
   children?: ReactNode;
   /** The line next to the brand. */
   subtitle?: ReactNode;
+  /** Places that have no button right now (Career, while the player's own 1v1 match is starting or running). */
+  hidden?: readonly Mode[];
 }
 
-export function Header({ mode, onMode, children, subtitle }: Props) {
+export function Header({ mode, onMode, children, subtitle, hidden = [] }: Props) {
   return (
     <header className="header">
       <div className="brand">
@@ -32,7 +34,7 @@ export function Header({ mode, onMode, children, subtitle }: Props) {
         </span>
       </div>
       <div className="segmented mode-switch" role="group" aria-label="Game mode">
-        {MODES.map((m) => (
+        {MODES.filter((m) => !hidden.includes(m.id)).map((m) => (
           <button key={m.id} type="button" className={mode === m.id ? 'seg active' : 'seg'} aria-pressed={mode === m.id} onClick={() => onMode(m.id)} data-testid={`mode-${m.id}`}>
             {m.label}
           </button>

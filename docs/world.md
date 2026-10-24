@@ -352,9 +352,10 @@ creates:
 * for the market: **sector stories** (about 0.7 per sector per day), **economy stories** (about 0.65 per day) and rare
   **viral stories** (§7.4).
 
-Headlines come from ~280 hand-written templates in 11 company categories (product, partnership, management, legal,
-operations, financial, analyst, contract, research, incident, demand) filled with the company's own name, products,
-CEO/CFO, headquarters and a partner company. The text is template-based: **there is no AI text generation**.
+Headlines come from about **800 hand-written templates**: about 560 for stocks (11 company categories: product, partnership, management, legal,
+operations, financial, analyst, contract, research, incident, demand, plus sector, economy, earnings, viral and "the claim fades" stories) and about 250
+for memecoins (§12), filled with the company's own name, products, CEO/CFO, headquarters and a partner company. The text is template-based:
+**there is no AI text generation**. See §7.7 for how the wordings are joined, what the number really means and what the tests check.
 
 Every story has a **public** side — headline, body, category, direction (positive / negative / uncertain), strength
 (minor / moderate / major / extreme), a *breaking* label — and a **hidden** side: the *realised* move (what the market
@@ -445,6 +446,39 @@ reports often; four quarters make a "year" of 12 days).
 `category`, `breaking=1`, `limit` (≤ 100), `before=<cursor>` for paging. Unpublished stories are never returned. The
 hidden realised move, permanent share and source credibility **never leave the server** (a test fails if any such field
 name appears in a response). Live: the server pushes a `news` event on the stream at publication time.
+
+### 7.7 The wordings (`newsText.ts`, `newsMoreCompany.ts`, `newsMoreMarket.ts`, `memeNews.ts`, `memeNewsMore.ts`, `templateSets.ts`, test `news-more`)
+A story's wording is a template `[headline, body]` with `{slots}`. The first batch (`newsText.ts`, `memeNews.ts`) was extended by a second batch
+(`newsMore*.ts`, `memeNewsMore.ts`), and `templateSets.ts` joins the two: `COMPANY_TEMPLATES`, `SECTOR_TEMPLATES`, `MACRO_TEMPLATES`, `EARNINGS_TEMPLATES`,
+`VIRAL_TEMPLATES`, `VIRAL_FADE_TEMPLATES` and the coin sets are the first batch **followed by** the new wordings, so nothing was removed or reordered.
+
+| | stocks | memecoins |
+|---|---|---|
+| company stories (11 categories × good / bad / unclear) | 296 | 156 |
+| sector stories (13 sectors for stocks / the coin sector) | 143 | 22 |
+| economy stories | 33 | (shared with stocks) |
+| quarterly reports (16 good or bad ones and the 3 fixed "neither good nor bad" ones) | 19 | none |
+| viral stories (7 kinds) | 63 | 63 |
+| "the claim fades" follow-ups | 10 | (shared with stocks) |
+| listing announcements | 2 | 6 |
+| **all** | **566** | **247** |
+
+(`news-more` NM-1 fixes the totals: at least 550 for stocks, 240 for coins, 800 together. No two stories of one kind share a headline, and no two stories anywhere share their text: NM-2.)
+
+* **Text only.** The draws that decide a story's direction, strength, timing, size and which company it is about are made *before* the wording is picked
+  and use `d.int(list.length)`, which takes exactly one draw however long the list is. So more wordings change which words a story gets and nothing else:
+  not a price, not a timing, not a number in a report. NM-6 proves it by putting extra wordings into every list (also in front) and comparing every field except
+  the words over thousands of stories. The engine version stays 4 and the database schema stays 21.
+* **Stories already saved keep their words.** News is saved once per day (`server/news/service.ts`), so every story that exists keeps its headline forever.
+  Only days that are written after the update use the longer lists. A restart replays the saved stories, not the lists.
+* **The numbers of a report never depend on the wording.** Only the good and the bad report stories got extra wordings; the three "neither good nor bad" ones are picked by the figures
+  (in line / EPS beat, revenue short / revenue beat, EPS short), so more of them could never be reached and none was added.
+* **Reachable.** NM-7 puts a number in every wording and runs hundreds of days: at least 95 % of the wordings of stocks and of coins appear. (Listing announcements are told only on the day a company lists, so they are not part of that count.)
+* **Clean reading.** NM-4 fills every wording with real companies and coins and fails on a stray brace, a double space, a space before a mark, a doubled word,
+  a headline that ends with a mark or is longer than 90 characters, or a body that does not end with a mark. NM-5 checks the slots (sector and economy stories none, partnership stories name the partner,
+  a viral story from an official names no company).
+* **What the number means.** About 800 wordings is not 800 different *events*: the same wording is filled with different companies, products, people, regions and numbers, so a player sees
+  far more distinct headlines than that, but after a long time a wording does come round again. Real variety beyond this would need a language model (money and a key) or many more hand-written wordings.
 
 ## 8. The server
 
@@ -774,9 +808,9 @@ shared price, so he could win with it. Three rules close that:
   countdown or live (`MatchService.inMatch`); nothing is made or paid. In the lobby (waiting, or a bot waiting for his Ready) launching is allowed, and
   it works again after the match, or after leaving the countdown. A repeated request id is answered before this check, as for any launch.
   A player who **forfeited** a live match against a person is no longer in it (`p.forfeited = 1`) and may launch while the match runs on.
-* **The Launch tab is hidden.** While `match.phase` is countdown or live and the player has not forfeited, `SharedApp` leaves the Launch tab out of
-  Career (and shows the market if Launch was the open tab), so there is nothing to click; it comes back by itself when the match ends or after a forfeit.
-Not covered: a player can still move the price of an ordinary thin company with Career orders while his match holds it (Career orders always move prices).
+* **The Launch tab is hidden.** While `match.phase` is countdown or live and the player has not forfeited, Career is closed altogether (§9.12), so its Launch tab
+  is not there to click; everything comes back by itself when the match ends or after a forfeit.
+Closed by §9.12: a player can no longer move the price of an ordinary thin company with Career orders while his own match runs.
 
 ### 9.11 Bots in the main market (`server/marketBots.ts`, tests `server-marketbots`)
 The eight 1v1 bots also trade in Career, all day, so the market is not empty when nobody is online. There is no schema change: a bot already has a row in
@@ -825,10 +859,37 @@ The eight 1v1 bots also trade in Career, all day, so the market is not empty whe
 * **1v1.** A bot can be in a match (match account, §9.9) and trade in the market (Career account) at the same time; they are different accounts (MKB-9). Like any Career order, a market bot's
   order moves the shared price during a match; both players see the same price, and no player can predict a bot (the choices are seeded, the decisions use finished candles only).
 
+### 9.12 The 1v1 screen has the same lists as Career, and Career is closed during your match (`CAREER_CLOSED_IN_MATCH`, `src/shared/careerLock.ts`, tests `server-career-lock`, `career-lock-ui`)
+No schema change (still 21). Two parts.
+* **More to look at in a match.** The match screen has four sections under the holdings, the same lists Career has: **Market** (stocks), **Memecoins** (the built-in
+  coins), **Earnings** (the calendar) and **News** (the feed with its filters). Launch has no section (nothing can be launched in a match). A company opened from
+  any of them is the same company page, trading with the **match account** (`kind: 'match'`); a coin opened from Market or a stock from Memecoins moves to the right
+  section, and one opened from Earnings or News keeps that section behind it, so *All companies* returns where the player came from. Companies players launched are
+  left out of both lists and shown with the reason if reached from a story (§9.10). A company asked for from outside (a ticker clicked in the header's News screen or in the
+  breaking banner) opens **inside the match** once (`matchJump`, `jump` / `onJumpDone`), and is forgotten when the match is over. The match orders, estimates and bots are
+  not changed at all: memecoins already traded in a match account (bots like Dee and Luna trade them).
+* **Career is closed while your own match is starting or running.** Career money moves prices (§8.6), and a match is scored on them, so with it a player could push the price
+  his match is scored on (a rule change, §9.10 closed the same hole for launched companies only). `MatchService.inMatch(userId)` is the moment (countdown or live, not
+  forfeited). While it is true the server refuses, with `409 in_match` and the sentence `CAREER_CLOSED_IN_MATCH`: **`POST /api/orders` for the Career account** (buy, sell,
+  short, cover, with or without a limit price, and a request with no `account` goes to Career), **`POST /api/limit-orders`** (it is always a Career order) and
+  **`POST /api/positions/exits`** for the Career account (a new stop-loss or take-profit). The check comes after the account is resolved and before any money is looked at; a match account is
+  never asked, so orders and stops in the match work as always. Allowed all the same: reading anything (account, order estimates, the open-orders list), **cancelling** a waiting limit
+  order (it only gives set-aside cash back), the owner's admin panel (gifts of cash, shocks...), launching is refused by its own rule (§9.10), and a rug pull is not blocked (a launched
+  company cannot be in a match account, so it cannot touch a match score). Waiting in the lobby (alone, or with a bot that has not been accepted) does **not** close Career; the
+  countdown does. It opens again when the match ends, is cancelled (leaving the countdown), or the player **forfeits** a match against a person (the match runs on for the other
+  player, who stays closed until it ends). Nobody is exempt, the owner included; other players are never affected by somebody else's match.
+* **The page agrees.** `careerLocked(match)` (the same moment as the server: phase countdown or live and the player not forfeited) makes `SharedApp` leave the **Career button** out of the
+  header (`Header hidden`) and draw nothing of Career; a request for Career (a reload on the Career tab, a story, a "Message" button) shows the 1v1 screen instead (`modeShown`). 1v1 and News stay.
+  The note "Career is closed until the match is over…" is on the countdown and in the match head. The server is the rule, the page only follows it (CLUI-9).
+* **Tests.** `server-career-lock` (CL-1…6: every Career write refused in the countdown and live with the same answer and nothing moved, the match account trading a stock and a memecoin, reading and cancelling allowed, the lobby not closing Career, opening again after the match / after leaving the countdown / after a forfeit while the opponent stays closed, nobody exempt, the default account being Career) and `career-lock-ui` (CLUI-1…9: when the page treats Career as closed, which mode is shown, the four sections, which section a company page sits under, and source checks that the page only follows the server's match).
+* **Honest limits.** Orders that were already working before the match still work: a **limit order** waiting in Career can fill during the match, and a **stop-loss or take-profit** set before
+  it can fire (they were placed before; only new ones are refused). Chat, Messages, Players and My account are Career tabs, so they are out of reach during a match too (a friend's call can still
+  be answered from the call bar). A match against a person who forfeits early keeps the other player closed until 0:00.
+
 ## 10. Tests
 
 All tests are in `tests/`. The world and server tests are: `world-catalog`, `world-effects`, `world-sim`,
-`world-liquidity`, `world-news` (generator), `server-runtime`, `server-trading`, `server-api`, `server-news` (service,
+`world-liquidity`, `world-news` (generator), `news-more` (NM-1…7: the number of wordings, no repeated headline, clean reading, only words change, all of them reachable), `server-runtime`, `server-trading`, `server-api`, `server-news` (service,
 scheduler, restart, downtime, replay, failure injection), `server-news-api` (HTTP, push, owner view, locks),
 `match-rules` (who wins, rewards, ties, forfeits, start tick), `server-lobby` (join/ready/countdown/live/settle, fairness,
 exactly-once rewards, simultaneous matches, disconnects, restart, API), `server-admin` (ADM-1…14: owner-only, rug/crash/pump
@@ -847,7 +908,7 @@ that script is not part of the project.
 
 ## 11. Known limits
 
-* News text is built from templates; it is varied but not written by a person or a language model.
+* News text is built from about 800 templates (§7.7); it is varied but not written by a person or a language model, and a wording does come round again after a long time.
 * The server must keep running to be "24/7": a home computer that sleeps pauses the live ticks (the market then catches
   up on the next start, exactly as if it had run). Always-on hosting is a deployment decision, not code.
 * `node:sqlite` is still marked experimental by Node; the code uses only basic statements.
@@ -897,7 +958,7 @@ stop-loss, take-profit, the live book and the pop-ups work on them without speci
   If an existing company already uses a coin's name or ticker the start is refused with a sentence naming it (MEME-13). `TQ_MEMECOINS=0` keeps them out of a world that does not have them yet.
 * **Why they move more.** The price model (§5) is the same; the coin's own `vol3m`, `dailyVol`, `newsImpact` and `driftDay` replace the size-class
   numbers, and thin coins also take more from players' orders (§8.6), so a position can win or lose a lot in seconds. The $1.00 floor still holds: a coin that "rugs" sits at it.
-* **News.** Own templates (`memeNews.ts`: company, sector, viral and listing stories: rug rumours, whale buys and dumps, influencer threads, exchange listings,
+* **News.** Own templates (about 250: `memeNews.ts` and `memeNewsMore.ts`: company, sector, viral and listing stories: rug rumours, whale buys and dumps, influencer threads, exchange listings,
   dev-wallet moves). Every coin gets at least three stories a day, never earnings; sector stories reach the coin sector; a coin's story moves it more than a
   stock's story moves a stock (MEME-8). A world without coins gets exactly the sector and economy news it always had.
 * **No automatic pauses.** The circuit breaker (§8.5) skips the coin sector: coins can move any distance, so a stop on a coin is never locked out.

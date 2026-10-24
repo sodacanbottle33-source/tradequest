@@ -2,9 +2,12 @@
 // match account is the server's, and the result and rewards appear only when the server has settled the match.
 import { useEffect, useState } from 'react';
 import { api } from './api';
+import { CAREER_CLOSED_NOTE, MATCH_TABS, tabAfterOpen, type MatchTab } from './careerLock';
 import { CompanyView } from './CompanyView';
+import { EarningsScreen } from './EarningsScreen';
 import { formatCents, formatClock } from './format';
 import { MarketScreen } from './MarketScreen';
+import { NewsScreen } from './NewsScreen';
 import { sharedStore, useShared } from './store';
 import type { Account, Match } from './types';
 
@@ -14,6 +17,9 @@ interface Props {
   onForfeit: () => void;
   busy: boolean;
   error: string | null;
+  /** A company asked for from outside the match (a news story): opened once, then `onJumpDone` is called. */
+  jump?: { ticker: string } | null;
+  onJumpDone?: () => void;
 }
 
 function Results({ match, onDismiss, busy }: { match: Match; onDismiss: () => void; busy: boolean }) {
@@ -80,16 +86,32 @@ function Results({ match, onDismiss, busy }: { match: Match; onDismiss: () => vo
   );
 }
 
-export function MatchScreen({ match, onDismiss, onForfeit, busy, error }: Props) {
-  const { tick, user } = useShared();
+export function MatchScreen({ match, onDismiss, onForfeit, busy, error, jump = null, onJumpDone }: Props) {
+  const { tick, user, companies } = useShared();
   const [account, setAccount] = useState<Account | null>(null);
   const [ticker, setTicker] = useState<string | null>(null);
+  // The same lists as Career, apart from Launch: stocks, memecoins, the earnings calendar and the news.
+  const [tab, setTab] = useState<MatchTab>('market');
   const [accError, setAccError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   // Forfeiting asks "are you sure?" inside the page: a browser pop-up can be blocked or dismissed without the player seeing it.
   const [confirming, setConfirming] = useState(false);
 
   const live = match.phase === 'live';
+
+  /** Opens a company page; a coin sits under Memecoins and a stock under Market, and one opened from Earnings or News keeps that section behind it. */
+  const open = (t: string) => {
+    setTicker(t);
+    setTab((current) => tabAfterOpen(current, companies.find((c) => c.ticker === t)?.sector === 'meme'));
+    window.scrollTo?.(0, 0);
+  };
+  // A company asked for from outside (a news story clicked while the match runs) opens here, once.
+  useEffect(() => {
+    if (jump === null) return;
+    open(jump.ticker);
+    onJumpDone?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jump]);
 
   useEffect(() => {
     if (!live) return undefined;
@@ -138,6 +160,11 @@ export function MatchScreen({ match, onDismiss, onForfeit, busy, error }: Props)
             {formatClock(left)}
           </p>
           <p className="muted">of 3:00 · same market, same prices for both players</p>
+          {!me?.forfeited && (
+            <p className="muted" data-testid="career-closed-note">
+              {CAREER_CLOSED_NOTE}
+            </p>
+          )}
         </div>
         <dl className="stats">
           <div className="stat">
@@ -195,7 +222,7 @@ export function MatchScreen({ match, onDismiss, onForfeit, busy, error }: Props)
                 {account.positions.map((p) => (
                   <tr key={p.ticker}>
                     <td>
-                      <button type="button" className="link-btn" onClick={() => setTicker(p.ticker)}>
+                      <button type="button" className="link-btn" onClick={() => open(p.ticker)}>
                         <strong>{p.ticker}</strong>
                       </button>{' '}
                       {p.short && <span className="tag neg">short</span>}
@@ -232,12 +259,30 @@ export function MatchScreen({ match, onDismiss, onForfeit, busy, error }: Props)
         </p>
       </section>
 
-      {/* Every company, exactly like Career: the full list with search, sector and sort, then the company page with its chart, book, news and trade panel. */}
+      {/* The same lists as Career (stocks, memecoins, earnings, news), then the company page with its chart, book, news and trade panel. */}
+      <nav className="tabs" role="tablist" aria-label="Match sections">
+        {MATCH_TABS.map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            className={tab === id ? 'tab active' : 'tab'}
+            onClick={() => {
+              setTab(id);
+              setTicker(null);
+            }}
+            data-testid={`mtab-${id}`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
       {ticker ? (
         <CompanyView
           ticker={ticker}
           onBack={() => setTicker(null)}
-          onTicker={setTicker}
+          onTicker={open}
           trade={{
             kind: 'match',
             account,
@@ -249,8 +294,12 @@ export function MatchScreen({ match, onDismiss, onForfeit, busy, error }: Props)
             },
           }}
         />
+      ) : tab === 'earnings' ? (
+        <EarningsScreen onOpen={open} />
+      ) : tab === 'news' ? (
+        <NewsScreen onTicker={open} />
       ) : (
-        <MarketScreen onOpen={setTicker} selected={null} hideLaunched />
+        <MarketScreen key={tab} kind={tab === 'coins' ? 'coins' : 'stocks'} onOpen={open} selected={null} hideLaunched />
       )}
     </div>
   );

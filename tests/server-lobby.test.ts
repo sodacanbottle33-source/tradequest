@@ -106,8 +106,9 @@ const order = (r: Running, cookie: string, account: string, body: Record<string,
   call(r, '/api/orders', { method: 'POST', cookie, body: { account, ticker: 'QLRX', side: 'buy', qty: 2, clientOrderId: `order-${(orderNo += 1)}-abcdef`, ...body } });
 
 /** Two signed-in players in one lobby, both ready; the countdown is running. */
-async function readyPair(r: Running, names: [string, string] = ['alice', 'bob']) {
+async function readyPair(r: Running, names: [string, string] = ['alice', 'bob'], before?: (firstCookie: string) => Promise<void>) {
   const [ca, cb] = [await signUp(r, names[0]), await signUp(r, names[1])];
+  if (before) await before(ca);
   const a = await call(r, '/api/lobby/join', { method: 'POST', cookie: ca });
   const b = await call(r, '/api/lobby/join', { method: 'POST', cookie: cb });
   expect(b.json.match.id).toBe(a.json.match.id);
@@ -237,13 +238,16 @@ describe('ready and countdown', () => {
 describe('the three minutes', () => {
   it('starts with exactly $1,000 each whatever the Career account holds, and trading opens at the start tick and closes at the end tick', async () => {
     const r = await boot();
-    const { ca, cb, view } = await readyPair(r);
+    // Career money is spent before the match; the match balance is still exactly $1,000.
+    let careerBefore = 0;
+    const { ca, cb, view } = await readyPair(r, ['alice', 'bob'], async (cookie) => {
+      careerBefore = (await order(r, cookie, 'career', { qty: 3 })).json.account.cashCents;
+    });
+    expect(careerBefore).toBeLessThan(100_000);
     const start = view.startTick as number;
     const end = view.endTick as number;
-
-    // Career money is spent before the match; the match balance is still exactly $1,000.
-    const careerBefore = (await order(r, ca, 'career', { qty: 3 })).json.account.cashCents;
-    expect(careerBefore).toBeLessThan(100_000);
+    // Career is closed from the countdown (docs/world.md §9.12): the Career account cannot be changed while the match runs.
+    expect((await order(r, ca, 'career', { qty: 1 })).status).toBe(409);
 
     // Before the start tick: no match account exists and nothing can be bought.
     await gotoTick(r, start - 1);

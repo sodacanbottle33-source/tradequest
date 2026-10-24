@@ -715,7 +715,10 @@ h2 {
 }
 .mode-switch {
   min-width: 250px;
-  grid-template-columns: repeat(3, auto);
+  /* One column per button: Career, 1v1 and News, or just 1v1 and News while Career is closed during a match. */
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: auto;
 }
 .mode-switch .seg.active {
   background: var(--primary);

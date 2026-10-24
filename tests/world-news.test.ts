@@ -71,7 +71,7 @@ describe('templates', () => {
   it('there are enough different templates to keep the feed varied', () => {
     let n = 0;
     for (const { set } of allSets()) for (const dir of ['positive', 'negative', 'uncertain'] as const) n += (set[dir] ?? []).length;
-    expect(n).toBeGreaterThan(280);
+    expect(n).toBeGreaterThan(500);
   });
 });
 

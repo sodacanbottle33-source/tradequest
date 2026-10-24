@@ -5,6 +5,7 @@ import { Header, type Mode } from '../ui/Header';
 import { AccountScreen } from './AccountScreen';
 import { AdminScreen } from './AdminScreen';
 import { CallBar } from './CallBar';
+import { careerLocked, modeShown } from './careerLock';
 import { ChallengeBanner } from './Challenges';
 import { ChatScreen } from './ChatScreen';
 import { CompanyView } from './CompanyView';
@@ -39,13 +40,33 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
   const s = useShared();
   const [chosenTab, setCareerTab] = useState<CareerTab>('market');
   const [ticker, setTicker] = useState<string | null>(null);
+  // A company the player asked for (a news story, the breaking banner) while Career is closed: it opens inside his match instead, once.
+  const [matchJump, setMatchJump] = useState<{ ticker: string } | null>(null);
 
   useEffect(() => {
     sharedStore.start();
   }, []);
 
-  /** Opens a company in Career, from wherever the player is (a news story, a holding...). */
+  // While the player's own match is starting or running (and he has not forfeited it) Career is closed: the server refuses Career orders then
+  // (docs/world.md §9.12), and here its button and tabs are gone. Anything that would open Career shows the 1v1 screen.
+  const inBattle = s.match && (s.match.phase === 'countdown' || s.match.phase === 'live');
+  const locked = careerLocked(s.match);
+  const shown = modeShown(mode, locked);
+  useEffect(() => {
+    if (mode === 'career' && locked) onMode('battle');
+  }, [mode, locked, onMode]);
+  useEffect(() => {
+    if (!inBattle) setMatchJump(null);
+  }, [inBattle]);
+
+  /** Opens a company in Career, from wherever the player is (a news story, a holding...); inside his match while Career is closed. */
   const openCompany = (t: string) => {
+    if (locked) {
+      setMatchJump({ ticker: t });
+      onMode('battle');
+      window.scrollTo?.(0, 0);
+      return;
+    }
     setTicker(t);
     // A memecoin opens inside the Memecoins tab, a stock inside the Market tab.
     setCareerTab(s.companies.find((c) => c.ticker === t)?.sector === 'meme' ? 'coins' : 'market');
@@ -55,12 +76,12 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
 
   // "Message" next to a player's name (Players, Chat) opens the Messages tab with that player ready.
   useEffect(() => {
-    if (s.pmCompose !== null) {
+    if (s.pmCompose !== null && !locked) {
       setCareerTab('messages');
       onMode('career');
       window.scrollTo?.(0, 0);
     }
-  }, [s.pmCompose, onMode]);
+  }, [s.pmCompose, locked, onMode]);
 
   const goSignIn = () => {
     setCareerTab('account');
@@ -84,11 +105,9 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
     }
   }, [friendLobbyId, onMode]);
 
-  const inBattle = s.match && (s.match.phase === 'countdown' || s.match.phase === 'live');
-  // While a match is starting or running (and you have not forfeited it) there is no Launch tab: nothing can be launched then.
-  const launchLocked = Boolean(inBattle) && !s.match?.players.find((p) => p.you)?.forfeited;
-  const careerTab: CareerTab = chosenTab === 'launch' && launchLocked ? 'market' : chosenTab;
-  const careerTabs = CAREER_TABS.filter(([id]) => id !== 'launch' || !launchLocked);
+  // (While a match is starting or running Career is closed altogether, so there is no Launch tab to hide then either.)
+  const careerTab: CareerTab = chosenTab;
+  const careerTabs = CAREER_TABS;
   // Friend requests waiting for an answer: shown as a number on the Players tab.
   const requests = s.friends?.incoming.length ?? 0;
   // Chat messages from other players that arrived while the Chat tab was not open.
@@ -112,7 +131,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
 
   return (
     <div className="app shared-app">
-      <Header mode={mode} onMode={onMode} subtitle={subtitle}>
+      <Header mode={shown} onMode={onMode} subtitle={subtitle} hidden={locked ? ['career'] : []}>
         <ProfileMenu
           onAccount={goSignIn}
           onAdmin={() => {
@@ -165,7 +184,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
         </aside>
       )}
 
-      {friendLobbyId !== 0 && mode !== 'battle' && (
+      {friendLobbyId !== 0 && shown !== 'battle' && (
         <p className="notice info battle-notice" role="status" data-testid="friend-lobby-notice">
           Your friend match is waiting for you to press Ready.{' '}
           <button type="button" className="link-btn" onClick={() => onMode('battle')}>
@@ -174,7 +193,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
         </p>
       )}
 
-      {inBattle && mode !== 'battle' && (
+      {inBattle && shown !== 'battle' && (
         <p className="notice info battle-notice" role="status">
           Your 1v1 match is {s.match?.phase === 'live' ? 'live' : 'about to start'}.{' '}
           <button type="button" className="link-btn" onClick={() => onMode('battle')}>
@@ -183,7 +202,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
         </p>
       )}
 
-      {mode === 'career' && (
+      {shown === 'career' && (
         <nav className="tabs" role="tablist" aria-label="Career sections">
           {careerTabs.map(([id, label]) => (
             <button
@@ -220,15 +239,15 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
       )}
 
       <main className="shared-main">
-        {mode === 'career' && (careerTab === 'market' || careerTab === 'coins') && (ticker ? <CompanyView ticker={ticker} onBack={() => setTicker(null)} onTicker={openCompany} /> : <MarketScreen key={careerTab} kind={careerTab === 'coins' ? 'coins' : 'stocks'} onOpen={openCompany} selected={ticker} />)}
-        {mode === 'career' && careerTab === 'earnings' && <EarningsScreen onOpen={openCompany} />}
-        {mode === 'career' && careerTab === 'launch' && <LaunchScreen onOpen={openCompany} />}
-        {mode === 'career' && careerTab === 'players' && <PlayersScreen />}
-        {mode === 'career' && careerTab === 'chat' && <ChatScreen />}
-        {mode === 'career' && careerTab === 'messages' && <MessagesScreen />}
-        {mode === 'career' && careerTab === 'account' && <AccountScreen onOpen={openCompany} />}
-        {mode === 'battle' && <LobbyScreen onGoSignIn={goSignIn} />}
-        {mode === 'news' && <NewsScreen onTicker={openCompany} />}
+        {shown === 'career' && (careerTab === 'market' || careerTab === 'coins') && (ticker ? <CompanyView ticker={ticker} onBack={() => setTicker(null)} onTicker={openCompany} /> : <MarketScreen key={careerTab} kind={careerTab === 'coins' ? 'coins' : 'stocks'} onOpen={openCompany} selected={ticker} />)}
+        {shown === 'career' && careerTab === 'earnings' && <EarningsScreen onOpen={openCompany} />}
+        {shown === 'career' && careerTab === 'launch' && <LaunchScreen onOpen={openCompany} />}
+        {shown === 'career' && careerTab === 'players' && <PlayersScreen />}
+        {shown === 'career' && careerTab === 'chat' && <ChatScreen />}
+        {shown === 'career' && careerTab === 'messages' && <MessagesScreen />}
+        {shown === 'career' && careerTab === 'account' && <AccountScreen onOpen={openCompany} />}
+        {shown === 'battle' && <LobbyScreen onGoSignIn={goSignIn} jump={matchJump} onJumpDone={() => setMatchJump(null)} />}
+        {shown === 'news' && <NewsScreen onTicker={openCompany} />}
         {mode === 'admin' && isOwner && <AdminScreen />}
       </main>
 

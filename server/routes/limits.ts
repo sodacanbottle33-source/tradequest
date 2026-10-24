@@ -2,6 +2,7 @@
 
 import { GOOD_FOR_TICKS, type GoodFor } from '../limitOrders';
 import { HttpError, intParam } from '../http';
+import { CAREER_CLOSED_IN_MATCH } from '../lobby/service';
 import type { Router } from '../router';
 import type { Services } from '../services';
 import { OrderError } from '../trading';
@@ -58,6 +59,8 @@ export function registerLimitRoutes(router: Router, s: Services): void {
     if (recent.length >= 40) throw new HttpError(429, 'rate_limited', 'Too many orders too quickly. Wait a moment.');
     recent.push(s.now());
     limiter.set(user.id, recent);
+    // A limit order is a Career order too: none while this player's own match is starting or running (docs/world.md §9.12).
+    if (s.matches.inMatch(user.id)) throw new HttpError(409, 'in_match', CAREER_CLOSED_IN_MATCH);
 
     const b = await ctx.body();
     const company = typeof b.ticker === 'string' ? world.companyByTicker(b.ticker) : undefined;

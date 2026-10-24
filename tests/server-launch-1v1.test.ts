@@ -154,11 +154,13 @@ describe('a match cannot trade companies that players launched', () => {
     expect([200, 201]).toContain(ok.status);
     expect((await call(r, '/api/market/QLRX/estimate?side=buy&qty=2&account=match', { cookie: alice })).status).toBe(200);
 
-    // Career: the launched coin trades as always, for alice and for anybody else, and the estimate works.
+    // Career: the launched coin trades as always for anybody who is not in a match, and the estimate works. Alice's own Career is closed while her match runs (docs/world.md §9.12).
     const career = await order(r, bob, 'career', 'MPEP', { qty: 5 });
     expect([200, 201]).toContain(career.status);
     expect((await call(r, '/api/market/MPEP/estimate?side=buy&qty=5&account=career', { cookie: bob })).status).toBe(200);
-    expect((await order(r, alice, 'career', 'ACMR', { qty: 1 })).status).toBeLessThan(300);
+    const closed = await order(r, alice, 'career', 'ACMR', { qty: 1 });
+    expect(closed.status).toBe(409);
+    expect(closed.json.error.code).toBe('in_match');
   }, LONG);
 
   it('LM-2: the company list says which companies players launched, from the moment they are launched (also before they trade)', async () => {

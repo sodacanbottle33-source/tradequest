@@ -3,7 +3,10 @@
 // A template is [headline, body]. The tests fill every template for every company and fail if a {slot} is left over.
 
 import { MEME_SECTOR_TEMPLATES } from './memeNews';
+import { MORE_COMPANY_TEMPLATES } from './newsMoreCompany';
+import { MORE_EARNINGS_TEMPLATES, MORE_FADE_TEMPLATES, MORE_MACRO_TEMPLATES, MORE_SECTOR_TEMPLATES, MORE_VIRAL_TEMPLATES } from './newsMoreMarket';
 import type { SectorId } from './params';
+import { plus, plusEach } from './templateSets';
 import type { Direction } from './types';
 
 export type Template = readonly [headline: string, body: string];
@@ -46,7 +49,7 @@ export const CATEGORY_LABEL: Readonly<Record<Category, string>> = {
 
 export const COMPANY_CATEGORIES: readonly CompanyCategory[] = ['product', 'partnership', 'management', 'legal', 'operations', 'financial', 'analyst', 'contract', 'research', 'incident', 'demand'];
 
-export const COMPANY_TEMPLATES: Readonly<Record<CompanyCategory, TemplateSet>> = {
+const BASE_COMPANY_TEMPLATES: Readonly<Record<CompanyCategory, TemplateSet>> = {
   product: {
     positive: [
       ['{co} unveils {prod} to strong early demand', '{co} said pre-orders for {prod} passed internal targets within the first days, and {ceo} told staff the launch is running ahead of schedule.'],
@@ -304,7 +307,7 @@ export const COMPANY_TEMPLATES: Readonly<Record<CompanyCategory, TemplateSet>> =
  * The story of a quarterly report. Its numbers come from fundamentals.ts and always agree with the headline. The three "uncertain" stories are
  * picked by the numbers (in line / EPS beat but revenue short / revenue beat but EPS short), in that order.
  */
-export const EARNINGS_TEMPLATES: TemplateSet = {
+const BASE_EARNINGS_TEMPLATES: TemplateSet = {
   positive: [
     ['{co} beats expectations in {q} results', 'Earnings per share of {eps} topped the {epscons} analysts expected, a surprise of {surp}. Revenue was {rev} against {revcons} expected, and per-share profit is {yoy} from a year earlier. {ceo} credited strong demand for {prod}.'],
     ['{co} posts stronger-than-expected profit', '{co} earned {eps} a share in the {qn}, {surp} more than forecast. Revenue of {rev} was {revcmp} the {revcons} expected. {cfo} said margins improved and cash flow was solid.'],
@@ -331,7 +334,7 @@ export const LISTING_TEMPLATES: TemplateSet = {
   ],
 };
 
-export const MACRO_TEMPLATES: TemplateSet = {
+const BASE_MACRO_TEMPLATES: TemplateSet = {
   positive: [
     ['Central bank cuts interest rates', 'Borrowing costs fall as policymakers cite cooling inflation. Lower rates tend to support company profits and valuations.'],
     ['Inflation cools more than expected', 'Prices rose more slowly last month than economists forecast, raising hopes for easier monetary policy.'],
@@ -356,7 +359,7 @@ export const MACRO_TEMPLATES: TemplateSet = {
   ],
 };
 
-export const SECTOR_TEMPLATES: Readonly<Record<SectorId, TemplateSet>> = {
+const BASE_SECTOR_TEMPLATES: Readonly<Record<SectorId, TemplateSet>> = {
   tech: {
     positive: [['Chip demand strengthens across the technology industry', 'Orders for processors and cloud services are rising as businesses upgrade their systems.'], ['Software spending rises as companies modernize', 'Corporate budgets for technology are growing, according to a new industry survey.']],
     negative: [['Technology firms warn of weaker corporate spending', 'Several industry executives said customers are delaying purchases.'], ['New data-privacy rules worry technology companies', 'Lawmakers proposed stricter rules that could raise compliance costs.']],
@@ -429,7 +432,7 @@ export const SECTOR_TEMPLATES: Readonly<Record<SectorId, TemplateSet>> = {
 export type ViralKind = 'influencer' | 'clip' | 'rumor' | 'investor' | 'founder' | 'whistleblower' | 'official';
 export const VIRAL_KINDS: readonly ViralKind[] = ['influencer', 'clip', 'rumor', 'investor', 'founder', 'whistleblower', 'official'];
 
-export const VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = {
+const BASE_VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = {
   influencer: {
     positive: [['Social media star {person} backs {co}', '{person}, who has {n} million followers, called {co} a stock to watch in a video that spread rapidly. {co} had no comment.']],
     negative: [['Influencer {person} criticizes {co}', 'A video by {person}, seen by millions, claims {co} is overhyped. The clip is circulating widely and {co} said it stands by its products.']],
@@ -468,7 +471,7 @@ export const VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = {
 };
 
 /** Follow-ups when a low-credibility story fades. */
-export const VIRAL_FADE_TEMPLATES: TemplateSet = {
+const BASE_VIRAL_FADE_TEMPLATES: TemplateSet = {
   negative: [
     ['{co} denies reports; online hype fades', '{co} said there is no truth to recent reports, and the enthusiasm that followed them cooled.'],
     ['Excitement over {co} cools', 'Analysts said the earlier surge of interest was not backed by any new information about {co}.'],
@@ -478,6 +481,16 @@ export const VIRAL_FADE_TEMPLATES: TemplateSet = {
     ['{co} shrugs off online rumor', 'The company said nothing has changed in its business and the rumor appears to have been unfounded.'],
   ],
 };
+
+// The first batch above plus the extra wordings (newsMore*.ts), joined by templateSets.ts: the extra ones sit at the end of every list. Everything
+// else in the game imports these names, so the generator and the tests see all the wordings.
+export const COMPANY_TEMPLATES: Readonly<Record<CompanyCategory, TemplateSet>> = plusEach(BASE_COMPANY_TEMPLATES, MORE_COMPANY_TEMPLATES);
+/** Quarterly-report stories. Only the good and bad ones get extra wordings: the "uncertain" ones are picked by the numbers (see above). */
+export const EARNINGS_TEMPLATES: TemplateSet = plus(BASE_EARNINGS_TEMPLATES, MORE_EARNINGS_TEMPLATES);
+export const MACRO_TEMPLATES: TemplateSet = plus(BASE_MACRO_TEMPLATES, MORE_MACRO_TEMPLATES);
+export const SECTOR_TEMPLATES: Readonly<Record<SectorId, TemplateSet>> = plusEach(BASE_SECTOR_TEMPLATES, MORE_SECTOR_TEMPLATES);
+export const VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = plusEach(BASE_VIRAL_TEMPLATES, MORE_VIRAL_TEMPLATES);
+export const VIRAL_FADE_TEMPLATES: TemplateSet = plus(BASE_VIRAL_FADE_TEMPLATES, MORE_FADE_TEMPLATES);
 
 /** Special events created by the owner (labelled in the feed). */
 export const ADMIN_TEMPLATES: TemplateSet = {

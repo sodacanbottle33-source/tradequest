@@ -2,6 +2,7 @@
 // lobby, when the match starts and ends, what every trade costs and who won. This screen shows what the server says.
 import { useEffect, useState } from 'react';
 import { ApiError, api } from './api';
+import { CAREER_CLOSED_NOTE } from './careerLock';
 import { PlayFriendCard } from './Challenges';
 import { formatCents } from './format';
 import { MatchScreen } from './MatchScreen';
@@ -34,7 +35,8 @@ function Players({ match }: { match: Match }) {
   );
 }
 
-export function LobbyScreen({ onGoSignIn }: { onGoSignIn: () => void }) {
+/** `jump`: a company the player asked for from outside the match (a news story); the match screen opens it once and calls `onJumpDone`. */
+export function LobbyScreen({ onGoSignIn, jump = null, onJumpDone }: { onGoSignIn: () => void; jump?: { ticker: string } | null; onJumpDone?: () => void }) {
   const { user, match, searching, bots, walletCents, tick } = useShared();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +97,8 @@ export function LobbyScreen({ onGoSignIn }: { onGoSignIn: () => void }) {
         onForfeit={() => void act(() => api.leave())}
         busy={busy}
         error={error}
+        jump={jump}
+        onJumpDone={onJumpDone}
       />
     );
   }
@@ -190,6 +194,9 @@ export function LobbyScreen({ onGoSignIn }: { onGoSignIn: () => void }) {
             <p className="big-status">Match starts in {secondsToStart} s</p>
             <Players match={match} />
             <p className="hint">Prices are the same for both players. The 3 minutes start on the same market tick for both of you.</p>
+            <p className="hint" data-testid="career-closed-note">
+              {CAREER_CLOSED_NOTE}
+            </p>
             <button type="button" className="btn" disabled={busy} onClick={() => void act(() => api.leave())}>
               Leave (no penalty)
             </button>
