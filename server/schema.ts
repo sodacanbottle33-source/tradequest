@@ -736,6 +736,85 @@ CREATE TABLE chat_reports (
 CREATE INDEX chat_reports_open ON chat_reports(resolved_ms, message_id);
 `,
   },
+  {
+    version: 21,
+    name: 'private chats: conversations, messages, blocks, reports',
+    sql: `
+-- Private chats (server/messages.ts, docs/world.md §16). A conversation is 'direct' (two players, at most one per pair) or a small 'group'.
+CREATE TABLE conversations (
+  id           INTEGER PRIMARY KEY,
+  kind         TEXT NOT NULL CHECK (kind IN ('direct', 'group')),
+  -- The name of a group (a direct chat is named after the other player).
+  title        TEXT,
+  -- A direct chat: the two players, the smaller id first.
+  direct_a     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  direct_b     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  -- A group: who made it (he invites, removes and renames). He is replaced by the longest-standing member if he leaves.
+  created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_ms   INTEGER NOT NULL,
+  last_ms      INTEGER NOT NULL,
+  -- A direct chat between players who are not friends starts as a message request: NULL = friends (or no request needed),
+  -- 'pending' = the requester wrote one message and waits, 'accepted', 'declined' (the requester is never told which of the two it is).
+  request      TEXT CHECK (request IN ('pending', 'accepted', 'declined')),
+  requester_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  request_ms   INTEGER,
+  CHECK ((kind = 'direct') = (direct_a IS NOT NULL AND direct_b IS NOT NULL)),
+  CHECK (direct_a IS NULL OR direct_a < direct_b),
+  CHECK (kind = 'direct' OR title IS NOT NULL)
+);
+CREATE UNIQUE INDEX conversations_direct_pair ON conversations(direct_a, direct_b) WHERE kind = 'direct';
+CREATE INDEX conversations_by_requester ON conversations(requester_id, request_ms) WHERE requester_id IS NOT NULL;
+
+-- Who is in a conversation. 'invited' is a group invitation that has not been answered: the player sees the invitation but not the messages.
+-- since_id: messages from before the player joined are not shown to him. read_id: the newest message he has read.
+CREATE TABLE conversation_members (
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  state           TEXT NOT NULL CHECK (state IN ('member', 'invited')),
+  invited_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  joined_ms       INTEGER NOT NULL,
+  since_id        INTEGER NOT NULL DEFAULT 0,
+  read_id         INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (conversation_id, user_id)
+);
+CREATE INDEX conversation_members_by_user ON conversation_members(user_id, state);
+
+CREATE TABLE private_messages (
+  id              INTEGER PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body            TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 1200),
+  created_ms      INTEGER NOT NULL
+);
+CREATE INDEX private_messages_by_conversation ON private_messages(conversation_id, id DESC);
+CREATE INDEX private_messages_by_user ON private_messages(user_id, id DESC);
+
+-- A player who blocked another: that player cannot write to him, ask to be his friend or invite him, and his messages in a shared group are hidden.
+CREATE TABLE blocks (
+  blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_ms INTEGER NOT NULL,
+  PRIMARY KEY (blocker_id, blocked_id),
+  CHECK (blocker_id <> blocked_id)
+);
+CREATE INDEX blocks_by_blocked ON blocks(blocked_id);
+
+-- A reported private message. The owner sees only what was reported: that message and the few before it, copied here at the time of the report
+-- (context_json), so it is still there if the conversation is later trimmed or deleted. One report per player and message.
+CREATE TABLE private_reports (
+  id              INTEGER PRIMARY KEY,
+  message_id      INTEGER NOT NULL,
+  conversation_id INTEGER NOT NULL,
+  reporter_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  author_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_ms      INTEGER NOT NULL,
+  resolved_ms     INTEGER,
+  context_json    TEXT NOT NULL,
+  UNIQUE (message_id, reporter_id)
+);
+CREATE INDEX private_reports_open ON private_reports(resolved_ms, message_id);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

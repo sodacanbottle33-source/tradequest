@@ -14,6 +14,7 @@ import type { Halts } from './halts';
 import type { Leases } from './lease';
 import type { MatchService } from './lobby/service';
 import type { Logger } from './log';
+import type { Messages } from './messages';
 import type { NewsScheduler } from './news/scheduler';
 import type { NewsService } from './news/service';
 import type { SseHub } from './sse';
@@ -52,6 +53,8 @@ export interface Services {
   readonly challenges: Challenges;
   /** The public chat room (server/chat.ts). */
   readonly chat: Chat;
+  /** Private chats: 1-to-1 and small groups, requests, blocking and reports (server/messages.ts). */
+  readonly messages: Messages;
   /** Null only when the app was created with news switched off (some tests). */
   readonly news: NewsService | null;
   readonly scheduler: NewsScheduler | null;

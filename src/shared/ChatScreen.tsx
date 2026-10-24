@@ -35,6 +35,11 @@ function Line({ message, mine, isOwner, reported, onReport, onNote }: { message:
         {message.role === 'owner' && <span className="badge-owner">Owner</span>}
         <span className="muted">{timeLabel(message.createdMs)}</span>
         <span className="chat-tools">
+          {!mine && (
+            <button type="button" className="link-btn" onClick={() => sharedStore.startCompose(message.username)} data-testid={`message-${message.id}`}>
+              Message
+            </button>
+          )}
           {canReport && !reported && !asking && (
             <button type="button" className="link-btn" onClick={() => setAsking(true)} data-testid={`report-${message.id}`}>
               Report

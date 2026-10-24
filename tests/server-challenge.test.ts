@@ -88,6 +88,15 @@ async function goOnline(r: Running, cookie: string): Promise<AbortController> {
   streams.push(controller);
   const res = await fetch(r.base + '/api/stream', { headers: { Cookie: cookie }, signal: controller.signal });
   expect(res.status).toBe(200);
+  // A real page reads its stream all the time. A test page that never reads would fill the server's buffer and be dropped as too slow.
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  void (async () => {
+    try {
+      for (;;) if ((await reader.read()).done) return;
+    } catch {
+      // closed by the test
+    }
+  })();
   return controller;
 }
 

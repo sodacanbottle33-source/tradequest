@@ -11,6 +11,8 @@ import { clockTime } from './format';
 import { LaunchScreen } from './LaunchScreen';
 import { LobbyScreen } from './LobbyScreen';
 import { MarketScreen } from './MarketScreen';
+import { MessagesScreen } from './MessagesScreen';
+import { pmBadge } from './messagesUtil';
 import { NewsList } from './NewsList';
 import { NewsScreen } from './NewsScreen';
 import { PlayersScreen } from './PlayersScreen';
@@ -20,7 +22,7 @@ import { Toasts } from './Toasts';
 import { ProfileMenu } from './ProfileMenu';
 import { sharedStore, useShared } from './store';
 
-type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'players' | 'chat' | 'account';
+type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'players' | 'chat' | 'messages' | 'account';
 const CAREER_TABS: [CareerTab, string][] = [
   ['market', 'Market'],
   ['coins', 'Memecoins'],
@@ -28,6 +30,7 @@ const CAREER_TABS: [CareerTab, string][] = [
   ['launch', 'Launch'],
   ['players', 'Players'],
   ['chat', 'Chat'],
+  ['messages', 'Messages'],
   ['account', 'My account'],
 ];
 
@@ -48,6 +51,15 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
     onMode('career');
     window.scrollTo?.(0, 0);
   };
+
+  // "Message" next to a player's name (Players, Chat) opens the Messages tab with that player ready.
+  useEffect(() => {
+    if (s.pmCompose !== null) {
+      setCareerTab('messages');
+      onMode('career');
+      window.scrollTo?.(0, 0);
+    }
+  }, [s.pmCompose, onMode]);
 
   const goSignIn = () => {
     setCareerTab('account');
@@ -80,6 +92,8 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
   const requests = s.friends?.incoming.length ?? 0;
   // Chat messages from other players that arrived while the Chat tab was not open.
   const unread = s.chat?.unread ?? 0;
+  // Private messages not read yet, plus message requests and group invitations waiting for an answer.
+  const privateWaiting = pmBadge(s.messages);
   const listed = s.companies.filter((c) => c.trading).length;
   const stockCount = s.companies.filter((c) => c.sector !== 'meme').length;
   const coinCount = s.companies.length - stockCount;
@@ -188,6 +202,11 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
                   {unread > 99 ? '99+' : unread}
                 </span>
               )}
+              {id === 'messages' && privateWaiting > 0 && (
+                <span className="tab-count" data-testid="messages-badge" aria-label={`${privateWaiting} private message${privateWaiting === 1 ? '' : 's'} waiting`}>
+                  {privateWaiting > 99 ? '99+' : privateWaiting}
+                </span>
+              )}
               {id === 'players' && requests > 0 && (
                 <span className="tab-count" data-testid="players-badge" aria-label={`${requests} friend request${requests === 1 ? '' : 's'}`}>
                   {requests}
@@ -204,6 +223,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
         {mode === 'career' && careerTab === 'launch' && <LaunchScreen onOpen={openCompany} />}
         {mode === 'career' && careerTab === 'players' && <PlayersScreen />}
         {mode === 'career' && careerTab === 'chat' && <ChatScreen />}
+        {mode === 'career' && careerTab === 'messages' && <MessagesScreen />}
         {mode === 'career' && careerTab === 'account' && <AccountScreen onOpen={openCompany} />}
         {mode === 'battle' && <LobbyScreen onGoSignIn={goSignIn} />}
         {mode === 'news' && <NewsScreen onTicker={openCompany} />}

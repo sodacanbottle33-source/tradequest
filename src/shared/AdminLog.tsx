@@ -49,6 +49,8 @@ function describe(e: Entry): string {
       return `let ${e.target} write in the chat again`;
     case 'chat_dismiss':
       return `closed the reports about a chat message (${e.target})`;
+    case 'pm_dismiss':
+      return `closed the reports about a private message (${e.target})`;
     case 'sens': // older entries: the per-stock setting no longer exists
       return `changed how strongly trades move ${e.target}: ${String(d.from)} → ${String(d.to)}`;
     default:

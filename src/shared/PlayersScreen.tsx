@@ -44,8 +44,27 @@ function Who({ name, role, you }: { name: string; role: 'player' | 'owner'; you?
   );
 }
 
+/** Opens the Messages tab with this player ready to be written to. */
+function MessageButton({ username }: { username: string }) {
+  return (
+    <button type="button" className="btn btn-small btn-ghost" onClick={() => sharedStore.startCompose(username)} data-testid={`message-${username}`}>
+      Message
+    </button>
+  );
+}
+
 /** What can be done with one player, depending on how he stands to you. */
 function PlayerActions({ username, relation, actions, onDone }: { username: string; relation: Relation; actions: Actions; onDone: (username: string, relation: Relation | null) => void }) {
+  if (relation === 'you') return <span className="muted">{relationLabel(relation)}</span>;
+  return (
+    <span className="people-actions">
+      <RelationActions username={username} relation={relation} actions={actions} onDone={onDone} />
+      <MessageButton username={username} />
+    </span>
+  );
+}
+
+function RelationActions({ username, relation, actions, onDone }: { username: string; relation: Relation; actions: Actions; onDone: (username: string, relation: Relation | null) => void }) {
   const go = async (what: FriendAction) => onDone(username, await actions.run(what, username));
   const busy = actions.busy !== null;
   if (relation === 'you') return <span className="muted">{relationLabel(relation)}</span>;
@@ -310,6 +329,7 @@ function FriendsPanel({ onFind }: { onFind: () => void }) {
               ) : (
                 <span className="people-actions">
                   <ChallengeButton username={e.username} actions={challengeActions} />
+                  <MessageButton username={e.username} />
                   <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => setConfirming(e.username)} data-testid={`remove-${e.username}`}>
                     Remove
                   </button>

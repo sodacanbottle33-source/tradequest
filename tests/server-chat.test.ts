@@ -549,8 +549,8 @@ describe('storage', () => {
       }
       for (const id of [1, 2, 3]) d.run("INSERT INTO users(id, username, display_name, pw_hash, role, created_ms) VALUES (?, ?, ?, 'x', 'player', 1)", id, `u${id}`, `u${id}`);
       d.run("INSERT INTO matches(id, state, created_ms, duration_ticks, start_cash_cents) VALUES (7, 'lobby', 5, 180, 10000000)");
-      expect(migrate(d)).toEqual([20]);
-      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(20);
+      expect(migrate(d)).toEqual([20, 21]); // (21 adds the empty private-chat tables)
+      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(21);
       expect(d.all('SELECT id, state, friends FROM matches')).toEqual([{ id: 7, state: 'lobby', friends: 0 }]);
       for (const table of ['challenges', 'chat_messages', 'chat_restrictions', 'chat_reports']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)?.n).toBe(0);
       expect(migrate(d)).toEqual([]);

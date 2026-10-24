@@ -5,7 +5,7 @@ import { useSyncExternalStore } from 'react';
 import { ApiError, api, isOffline } from './api';
 import { describeLimitEvent } from './limitText';
 import { describeNotice, type ToastText } from './positionNotice';
-import type { Account, Announcement, BanNotice, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, OverviewRow, PositionNotice, TradingPause, User } from './types';
+import type { Account, Announcement, BanNotice, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
 
 /** A pop-up about a position the market closed by itself. */
 export interface Toast extends ToastText {
@@ -29,6 +29,18 @@ export interface ChatState {
 
 /** The most messages the page keeps in memory; older ones are dropped (and can be asked for again). */
 export const MAX_CHAT_MESSAGES = 150;
+
+/** The private conversation on screen: its header as the server last described it and its newest messages (oldest first). */
+export interface PmThread {
+  readonly id: number;
+  readonly conversation: PmConversation;
+  readonly messages: readonly PmMessage[];
+  /** Whether older messages exist than the first one held. */
+  readonly more: boolean;
+}
+
+/** The most messages of one private conversation the page keeps in memory. */
+export const MAX_PM_MESSAGES = 300;
 
 export interface SharedState {
   readonly conn: 'connecting' | 'online' | 'offline';
@@ -58,6 +70,14 @@ export interface SharedState {
   readonly challengeNote: string | null;
   /** The chat room (null until loaded, and when signed out). */
   readonly chat: ChatState | null;
+  /** The private chats: conversations, message requests, blocked players (null until loaded, and when signed out). */
+  readonly messages: MessagesView | null;
+  /** The number of the private conversation the player opened (its messages follow once they are loaded). */
+  readonly pmOpen: number | null;
+  /** The private conversation on screen. */
+  readonly pmThread: PmThread | null;
+  /** A player another screen asked the Messages screen to write to ("Message" next to a name). */
+  readonly pmCompose: string | null;
   /** The player's open limit orders (Career), newest first. */
   readonly limits: readonly LimitOrder[];
   readonly match: Match | null;
@@ -89,6 +109,10 @@ const INITIAL: SharedState = {
   challengesTick: 0,
   challengeNote: null,
   chat: null,
+  messages: null,
+  pmOpen: null,
+  pmThread: null,
+  pmCompose: null,
   limits: [],
   match: null,
   searching: 0,
@@ -118,6 +142,8 @@ export class SharedStore {
   private noteTimer: ReturnType<typeof setTimeout> | null = null;
   /** True while the Chat tab is on screen: new messages are then read at once. */
   private chatViewing = false;
+  /** Set while a refresh of the private chats is waiting, so a burst of nudges asks the server once. */
+  private pmTimer: ReturnType<typeof setTimeout> | null = null;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -159,7 +185,7 @@ export class SharedStore {
       if (this.started) this.retry = setTimeout(() => void this.connect(), 3000);
       return;
     }
-    await Promise.all([this.refreshCompanies(), this.refreshNews(), this.refreshPrivate(), this.refreshFriends(), this.refreshChallenges(), this.refreshChat()]);
+    await Promise.all([this.refreshCompanies(), this.refreshNews(), this.refreshPrivate(), this.refreshFriends(), this.refreshChallenges(), this.refreshChat(), this.refreshMessages()]);
     this.openStream();
     for (const t of this.timers) clearInterval(t);
     this.timers = [
@@ -169,6 +195,7 @@ export class SharedStore {
       setInterval(() => {
         void this.refreshFriends();
         void this.refreshChallenges();
+        void this.refreshMessages();
       }, 30_000),
       // While in a lobby the server must keep hearing from us (it removes players who have gone away). During a live match this
       // also makes sure the final result reaches the page even if the live push was missed.
@@ -193,6 +220,7 @@ export class SharedStore {
       void this.refreshFriends();
       void this.refreshChallenges();
       void this.refreshChat();
+      void this.refreshMessages();
     });
     es.addEventListener('tick', (e) => this.onTick(JSON.parse((e as MessageEvent<string>).data) as TickPayload));
     es.addEventListener('news', (e) => this.onNews(JSON.parse((e as MessageEvent<string>).data) as NewsItem));
@@ -211,6 +239,12 @@ export class SharedStore {
     es.addEventListener('chat', (e) => this.addChatMessage((JSON.parse((e as MessageEvent<string>).data) as { message: ChatMessage }).message));
     es.addEventListener('chat_removed', (e) => this.removeChatMessage((JSON.parse((e as MessageEvent<string>).data) as { id: number }).id));
     es.addEventListener('chat_status', () => void this.refreshChat());
+    // Private chats: a new message in one of your conversations, or something about them changed (a request, an invitation, a read mark...).
+    es.addEventListener('pm', (e) => {
+      const d = JSON.parse((e as MessageEvent<string>).data) as { conversationId: number; message: PmMessage };
+      this.addPrivateMessage(d.conversationId, d.message);
+    });
+    es.addEventListener('pm_changed', () => this.onPmChanged());
     es.onerror = () => {
       if (es.readyState === EventSource.CLOSED && this.started) {
         this.set({ conn: 'offline', problem: 'The connection to the server was lost.' });
@@ -450,6 +484,124 @@ export class SharedStore {
     if (viewing && chat && chat.unread > 0) this.set({ chat: { ...chat, unread: 0 } });
   }
 
+  // ---- private chats -----------------------------------------------------------------------------------------------
+
+  async refreshMessages(): Promise<void> {
+    if (!this.state.user) {
+      if (this.state.messages || this.state.pmThread || this.state.pmOpen !== null) this.set({ messages: null, pmThread: null, pmOpen: null });
+      return;
+    }
+    try {
+      this.set({ messages: await api.messages() });
+    } catch (error) {
+      this.noteFailure(error);
+    }
+  }
+
+  /** Asks for the lists soon; several nudges in a row make one request. */
+  private scheduleMessages(): void {
+    if (this.pmTimer) return;
+    this.pmTimer = setTimeout(() => {
+      this.pmTimer = null;
+      void this.refreshMessages();
+    }, 250);
+  }
+
+  /** The lists a private-chat action answered with (so the screen is up to date without another request). */
+  setMessages(view: MessagesView): void {
+    if (this.state.user) this.set({ messages: view });
+  }
+
+  /** Opens a conversation on screen (null closes it). Its messages are loaded, and read once they are on screen. */
+  async openConversation(id: number | null): Promise<void> {
+    if (id === null) {
+      if (this.state.pmOpen !== null || this.state.pmThread) this.set({ pmOpen: null, pmThread: null });
+      return;
+    }
+    this.set({ pmOpen: id, pmThread: this.state.pmThread?.id === id ? this.state.pmThread : null });
+    await this.loadThread(id, true);
+  }
+
+  /** (Re)loads the newest page of the open conversation, keeping the older messages already held. */
+  private async loadThread(id: number, markRead: boolean): Promise<void> {
+    try {
+      const page = await api.messagesThread(id);
+      if (this.state.pmOpen !== id) return;
+      const held = this.state.pmThread?.id === id ? this.state.pmThread : null;
+      const first = page.messages[0]?.id ?? Number.MAX_SAFE_INTEGER;
+      const older = (held?.messages ?? []).filter((m) => m.id < first);
+      this.set({ pmThread: { id, conversation: page.conversation, messages: [...older, ...page.messages].slice(-MAX_PM_MESSAGES), more: older.length > 0 ? (held?.more ?? page.more) : page.more } });
+      if (markRead && page.conversation.unread > 0) void api.messagesRead(id).catch(() => undefined);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        // The conversation is not there any more (left, removed, closed): leave the screen empty and bring the lists up to date.
+        if (this.state.pmOpen === id) this.set({ pmOpen: null, pmThread: null });
+        this.scheduleMessages();
+      } else {
+        this.noteFailure(error);
+      }
+    }
+  }
+
+  /** Older messages of the open conversation, asked for with "Show earlier messages". */
+  async loadEarlierThread(): Promise<void> {
+    const held = this.state.pmThread;
+    const first = held?.messages[0];
+    if (!held || !first) return;
+    const page = await api.messagesThread(held.id, first.id, 50);
+    const latest = this.state.pmThread;
+    if (!latest || latest.id !== held.id) return;
+    const have = new Set(latest.messages.map((m) => m.id));
+    this.set({ pmThread: { ...latest, messages: [...page.messages.filter((m) => !have.has(m.id)), ...latest.messages], more: page.more } });
+  }
+
+  /** A message arrived (over the stream). Shown at once when its conversation is on screen, and then read. */
+  addPrivateMessage(conversationId: number, message: PmMessage): void {
+    const me = this.state.user;
+    if (!me) return;
+    const thread = this.state.pmThread;
+    if (thread && thread.id === conversationId && !thread.messages.some((m) => m.id === message.id)) {
+      const all = [...thread.messages, message].sort((a, b) => a.id - b.id);
+      this.set({ pmThread: { ...thread, messages: all.slice(-MAX_PM_MESSAGES), more: thread.more || all.length > MAX_PM_MESSAGES } });
+      // It is on screen: it counts as read at once.
+      if (message.username !== me.username) void api.messagesRead(conversationId, message.id).catch(() => undefined);
+    }
+    this.scheduleMessages();
+  }
+
+  /** The server said something about the private chats changed: bring the lists, and the conversation on screen, up to date. */
+  onPmChanged(): void {
+    if (!this.state.user) return;
+    this.scheduleMessages();
+    const open = this.state.pmOpen;
+    if (open !== null) void this.loadThread(open, false);
+  }
+
+  /** Our own send was accepted: show it at once. A message that opened a conversation opens it on screen. */
+  noteSentPrivate(out: PmSendResult): void {
+    if (!this.state.user) return;
+    const held = this.state.pmThread?.id === out.conversationId ? this.state.pmThread : null;
+    const base = held?.messages ?? [];
+    const messages = base.some((m) => m.id === out.message.id) ? base : [...base, out.message].sort((a, b) => a.id - b.id).slice(-MAX_PM_MESSAGES);
+    this.set({
+      pmOpen: out.conversationId,
+      pmThread: { id: out.conversationId, conversation: out.conversation, messages, more: held?.more ?? false },
+      messages: this.state.messages ? { ...this.state.messages, you: out.you } : this.state.messages,
+    });
+    this.scheduleMessages();
+    // Writing to somebody by name may have opened an old conversation: bring its earlier messages in.
+    if (held === null) void this.loadThread(out.conversationId, false);
+  }
+
+  /** "Message" next to a player's name elsewhere: the Messages screen opens with that player ready to be written to. */
+  startCompose(username: string): void {
+    this.set({ pmCompose: username });
+  }
+
+  clearCompose(): void {
+    if (this.state.pmCompose !== null) this.set({ pmCompose: null });
+  }
+
   async refreshAccount(): Promise<void> {
     await this.refreshPrivate(false);
   }
@@ -476,7 +628,7 @@ export class SharedStore {
     if (isOffline(error)) this.set({ conn: 'offline', problem: (error as ApiError).message });
     else if (error instanceof ApiError && error.status === 401 && this.state.user) {
       // The session ended. If the owner banned this account, say so instead of just showing a login form.
-      this.set({ user: null, career: null, friends: null, challenges: null, chat: null, limits: [], match: null });
+      this.set({ user: null, career: null, friends: null, challenges: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, limits: [], match: null });
       void this.recheckMe();
     }
   }
@@ -502,13 +654,14 @@ export class SharedStore {
     void this.refreshFriends();
     void this.refreshChallenges();
     void this.refreshChat();
+    void this.refreshMessages();
   }
 
   async signOut(): Promise<void> {
     try {
       await api.logout();
     } finally {
-      this.set({ user: null, banned: null, career: null, friends: null, challenges: null, challengeNote: null, chat: null, limits: [], match: null, walletCents: 0, toasts: [] });
+      this.set({ user: null, banned: null, career: null, friends: null, challenges: null, challengeNote: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, limits: [], match: null, walletCents: 0, toasts: [] });
       for (const t of this.toastTimers.values()) clearTimeout(t);
       this.toastTimers.clear();
       if (this.started) this.openStream();

@@ -22,6 +22,7 @@ import { LimitOrders } from './limitOrders';
 import { MarketBots } from './marketBots';
 import { MarketSignals } from './marketSignals';
 import { MatchService } from './lobby/service';
+import { Messages } from './messages';
 import { Logger } from './log';
 import { NewsScheduler } from './news/scheduler';
 import { NewsService } from './news/service';
@@ -36,6 +37,7 @@ import { registerEarningsRoutes } from './routes/earnings';
 import { registerLimitRoutes } from './routes/limits';
 import { registerNewsRoutes } from './routes/news';
 import { registerChatRoutes } from './routes/chat';
+import { registerMessageRoutes } from './routes/messages';
 import { registerSocialRoutes } from './routes/social';
 import { Social } from './social';
 import { migrate } from './schema';
@@ -286,6 +288,17 @@ export function createApp(options: AppOptions): App {
     publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
     audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
   });
+  // Private chats. Only the members of a conversation can read it; the owner sees only what players report (written to the admin log when closed).
+  const messages = new Messages({
+    db,
+    log,
+    now,
+    publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
+    isBanned: (userId) => auth.banOf(userId) !== null,
+    notifyFriends: (userId) => hub.publishTo(userId, 'friends', {}),
+    notifyChallenges: (userId) => hub.publishTo(userId, 'challenges', {}),
+    audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
+  });
   const launches = new Launches({ db, world, trading, halts, news: newsService, views, hub, log, now, notify: () => hub.publish('notice', admin.notice()), inMatch: (userId) => matches.inMatch(userId) });
   const breaker = options.autoPauses === false ? null : new CircuitBreaker({ world, halts, log, onChange: () => { views.invalidate(); hub.publish('notice', admin.notice()); } });
   breakerStep = breaker ? (tick) => breaker.step(tick) : null;
@@ -311,6 +324,7 @@ export function createApp(options: AppOptions): App {
     social,
     challenges,
     chat,
+    messages,
     news: newsService,
     scheduler,
     resolveAccount(user, which) {
@@ -333,6 +347,7 @@ export function createApp(options: AppOptions): App {
   registerLobbyRoutes(router, services);
   registerSocialRoutes(router, services);
   registerChatRoutes(router, services);
+  registerMessageRoutes(router, services);
   options.extend?.(services, router);
 
   world.onSaved((tick) => matches.settleDue(tick));

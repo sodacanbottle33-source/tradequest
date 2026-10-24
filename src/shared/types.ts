@@ -904,3 +904,106 @@ export interface AdminChatView {
   readonly reports: readonly AdminChatReport[];
   readonly restricted: readonly AdminChatRestriction[];
 }
+
+// ---- private chats (one player, or a small group of friends) -------------------------------------------------------------------
+
+export interface PmPerson {
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: 'player' | 'owner';
+}
+
+export interface PmMessage {
+  readonly id: number;
+  readonly conversationId: number;
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: 'player' | 'owner';
+  readonly text: string;
+  readonly createdMs: number;
+}
+
+/** Whether the player can write at all right now (a brand-new account cannot yet). */
+export interface PmYou {
+  readonly canWrite: boolean;
+  readonly reason: 'new_account' | null;
+  readonly untilMs: number | null;
+  readonly message: string | null;
+}
+
+export interface PmConversation {
+  readonly id: number;
+  readonly kind: 'direct' | 'group';
+  /** The other player's name (a direct chat) or the name of the group. */
+  readonly title: string;
+  readonly other: PmPerson | null;
+  readonly members: readonly PmPerson[];
+  /** Players invited to a group who have not answered. */
+  readonly invited: readonly PmPerson[];
+  /** The username of the group's creator. */
+  readonly creator: string | null;
+  readonly last: PmMessage | null;
+  readonly lastMs: number;
+  readonly unread: number;
+  /** Whether the player can write here, and the server's words about it (a request, a block...). */
+  readonly canWrite: boolean;
+  readonly note: string | null;
+  /** 'incoming' = the other player asked to talk and has not been answered; 'waiting' = you asked and nothing more can be sent yet. */
+  readonly requestState: 'incoming' | 'waiting' | null;
+  readonly friends: boolean;
+}
+
+export type PmRequest =
+  | { readonly kind: 'message'; readonly conversationId: number; readonly from: PmPerson; readonly text: string; readonly sinceMs: number }
+  | { readonly kind: 'invite'; readonly conversationId: number; readonly title: string; readonly from: PmPerson; readonly memberCount: number; readonly sinceMs: number };
+
+export interface PmBlocked {
+  readonly username: string;
+  readonly displayName: string;
+  readonly sinceMs: number;
+}
+
+export interface MessagesView {
+  readonly conversations: readonly PmConversation[];
+  readonly requests: readonly PmRequest[];
+  readonly blocked: readonly PmBlocked[];
+  readonly unread: number;
+  readonly you: PmYou;
+  readonly limits: { readonly maxLength: number; readonly minGapMs: number; readonly maxGroupMembers: number; readonly maxGroups: number; readonly maxGroupTitle: number };
+}
+
+export interface PmThreadPage {
+  readonly conversation: PmConversation;
+  readonly messages: readonly PmMessage[];
+  readonly more: boolean;
+}
+
+export interface PmSendResult {
+  readonly conversationId: number;
+  readonly message: PmMessage;
+  readonly conversation: PmConversation;
+  readonly you: PmYou;
+}
+
+export interface PrivateReportLine {
+  readonly username: string;
+  readonly displayName: string;
+  readonly text: string;
+  readonly createdMs: number;
+  readonly reported: boolean;
+}
+
+export interface PrivateReport {
+  readonly messageId: number;
+  readonly kind: 'direct' | 'group' | null;
+  readonly groupTitle: string | null;
+  readonly author: PmPerson;
+  readonly reporters: number;
+  readonly firstReportedMs: number;
+  readonly lines: readonly PrivateReportLine[];
+  readonly authorOpenReports: number;
+}
+
+export interface AdminPrivateView {
+  readonly reports: readonly PrivateReport[];
+}

@@ -4,6 +4,7 @@
 import type {
   Account,
   AdminChatView,
+  AdminPrivateView,
   Announcement,
   BanNotice,
   ChallengeAction,
@@ -32,11 +33,15 @@ import type {
   LimitOrder,
   LimitResult,
   Match,
+  MessagesView,
   NewsItem,
   NewsPage,
   OrderResult,
   Overview,
   PlayerPage,
+  PmConversation,
+  PmSendResult,
+  PmThreadPage,
   Relation,
   Resolution,
   DrainResult,
@@ -177,6 +182,22 @@ export const api = {
   chatSend: (text: string) => request<{ message: ChatMessage; you: ChatYou }>('POST', '/api/chat/send', { text }),
   chatReport: (messageId: number) => request<{ ok: boolean }>('POST', '/api/chat/report', { messageId }),
 
+  // Private chats (any signed-in player). The server decides who may write to whom; the owner cannot read them.
+  messages: () => request<MessagesView>('GET', '/api/messages'),
+  messagesThread: (id: number, beforeId?: number, limit = 50) => request<PmThreadPage>('GET', `/api/messages/thread/${id}?limit=${limit}${beforeId === undefined ? '' : `&before=${beforeId}`}`),
+  /** Writes into a conversation (by its number) or to a player (by name: that opens the chat, as a request when you are not friends). */
+  messagesSend: (body: { conversationId: number; text: string } | { username: string; text: string }) => request<PmSendResult>('POST', '/api/messages/send', body),
+  messagesRead: (conversationId: number, upToId?: number) => request<{ ok: boolean }>('POST', '/api/messages/read', upToId === undefined ? { conversationId } : { conversationId, upToId }),
+  messagesRespond: (conversationId: number, answer: 'accept' | 'decline') => request<MessagesView>('POST', '/api/messages/respond', { conversationId, answer }),
+  messagesReport: (messageId: number) => request<{ ok: boolean }>('POST', '/api/messages/report', { messageId }),
+  messagesBlock: (username: string) => request<MessagesView>('POST', '/api/messages/block', { username }),
+  messagesUnblock: (username: string) => request<MessagesView>('POST', '/api/messages/unblock', { username }),
+  groupCreate: (title: string, usernames: string[]) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/create', { title, usernames }),
+  groupInvite: (conversationId: number, username: string) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/invite', { conversationId, username }),
+  groupRemove: (conversationId: number, username: string) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/remove', { conversationId, username }),
+  groupRename: (conversationId: number, title: string) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/rename', { conversationId, title }),
+  groupLeave: (conversationId: number) => request<MessagesView>('POST', '/api/messages/group/leave', { conversationId }),
+
   // Owner only: the server answers 403 to anybody else.
   adminChat: () => request<AdminChatView>('GET', '/api/admin/chat'),
   adminChatDelete: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/chat/delete', body),
@@ -184,6 +205,8 @@ export const api = {
   adminChatMute: (body: { requestId: string; username: string; minutes: number; reason?: string }) => request<{ ok: boolean; duplicate: boolean; username: string; untilMs: number }>('POST', '/api/admin/chat/mute', body),
   adminChatBan: (body: { requestId: string; username: string; reason?: string }) => request<{ ok: boolean; duplicate: boolean; username: string }>('POST', '/api/admin/chat/ban', body),
   adminChatLift: (body: { requestId: string; username: string }) => request<{ ok: boolean; duplicate: boolean; username: string }>('POST', '/api/admin/chat/lift', body),
+  adminPrivateReports: () => request<AdminPrivateView>('GET', '/api/admin/private-reports'),
+  adminPrivateDismiss: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/private-reports/dismiss', body),
   adminState: (q = '') => request<AdminState>('GET', `/api/admin/state${q.trim() === '' ? '' : `?q=${enc(q.trim())}`}`),
   adminShock: (body: { requestId: string; ticker: string; percent: number; style: AdminStyle; speed: AdminSpeed; headline?: string; body?: string; breaking?: boolean }) =>
     request<{ ok: boolean; duplicate: boolean; ticker: string; startsAtTick: number; priceBeforeCents: number }>('POST', '/api/admin/shock', body),

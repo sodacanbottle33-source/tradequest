@@ -5,16 +5,19 @@ import { api } from './api';
 import { newRequestId, whenText } from './adminUtil';
 import { MUTE_CHOICES } from './chatUtil';
 import { problemText } from './playersUtil';
-import type { AdminChatView } from './types';
+import type { AdminChatView, AdminPrivateView } from './types';
 
 export function AdminChat() {
   const [view, setView] = useState<AdminChatView | null>(null);
+  const [priv, setPriv] = useState<AdminPrivateView | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
-      setView(await api.adminChat());
+      const [chat, reports] = await Promise.all([api.adminChat(), api.adminPrivateReports()]);
+      setView(chat);
+      setPriv(reports);
     } catch (e) {
       setMessage({ kind: 'error', text: problemText(e) });
     }
@@ -111,6 +114,48 @@ export function AdminChat() {
             </table>
           </div>
         )}
+      </section>
+
+      <section className="card" aria-label="Reported private messages" data-testid="admin-private">
+        <h2>
+          Reported private messages <span className="h2-note">{priv ? priv.reports.length : ''}</span>
+        </h2>
+        {priv !== null && priv.reports.length === 0 && (
+          <p className="hint" data-testid="admin-private-none">
+            Nobody has reported a private message. You cannot read private chats; you see only a message a player presses Report on, with the few lines before it.
+          </p>
+        )}
+        {priv !== null && priv.reports.length > 0 && (
+          <ul className="pm-reports" data-testid="admin-private-reports">
+            {priv.reports.map((r) => (
+              <li key={r.messageId} className="pm-report" data-testid={`admin-private-report-${r.messageId}`}>
+                <div className="row-between">
+                  <span>
+                    <strong>{r.author.displayName}</strong> <span className="muted">({r.author.username})</span>{' '}
+                    <span className="tag">{r.kind === 'group' ? `Group "${r.groupTitle ?? ''}"` : r.kind === 'direct' ? 'Direct chat' : 'Chat closed'}</span>
+                    <span className="muted">
+                      {' '}
+                      · reported by {r.reporters} {r.reporters === 1 ? 'player' : 'players'}, first {whenText(r.firstReportedMs)}
+                      {r.authorOpenReports > 1 ? ` · ${r.authorOpenReports} of their messages are reported` : ''}
+                    </span>
+                  </span>
+                  <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => void run('Report closed.', () => api.adminPrivateDismiss({ requestId: newRequestId(), messageId: r.messageId }))} data-testid={`admin-private-dismiss-${r.messageId}`}>
+                    Dismiss
+                  </button>
+                </div>
+                <ul className="pm-report-lines">
+                  {r.lines.map((l, i) => (
+                    <li key={i} className={l.reported ? 'pm-report-line reported' : 'pm-report-line'}>
+                      <strong>{l.displayName}</strong> <span className="muted">{whenText(l.createdMs)}</span>
+                      <span className="chat-text">{l.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="hint">The highlighted line is the one that was reported. Dismissing a report only closes it. To act on a player, ban him from the game (Players tab) or from the public chat (above); neither stops anyone from reading their own private chats.</p>
       </section>
 
       <section className="card" aria-label="Muted and banned">

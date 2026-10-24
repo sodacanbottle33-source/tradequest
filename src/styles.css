@@ -2534,3 +2534,197 @@ code {
     flex-basis: 100%;
   }
 }
+
+/* ---------- Private chats ---------- */
+.pm-layout {
+  display: grid;
+  grid-template-columns: minmax(250px, 340px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.pm-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pm-side h2,
+.pm-side h3 {
+  margin: 0;
+}
+.pm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pm-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.pm-item:hover {
+  border-color: var(--accent);
+}
+.pm-item.active {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.12);
+}
+.pm-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+}
+.pm-when {
+  margin-left: auto;
+  font-size: 12px;
+}
+.pm-preview {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.pm-request {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+.pm-requests {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pm-main {
+  min-width: 0;
+}
+.pm-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.pm-head-main {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.pm-head-main h2 {
+  margin: 0;
+}
+.pm-back {
+  display: none;
+}
+.pm-members {
+  margin: 2px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.pm-admin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.pm-request-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.pm-form {
+  display: grid;
+  gap: 10px;
+  max-width: 520px;
+}
+.pm-pick {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.pm-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pm-reports {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.pm-report {
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.pm-report-lines {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+.pm-report-line {
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.pm-report-line.reported {
+  background: rgba(239, 68, 68, 0.15);
+}
+@media (max-width: 760px) {
+  .pm-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* On a narrow screen the list and the open conversation take turns. */
+  .pm-layout.pm-open .pm-side {
+    display: none;
+  }
+  .pm-layout:not(.pm-open) .pm-main {
+    display: none;
+  }
+  .pm-back {
+    display: inline-block;
+  }
+}
+.pm-requests h3 {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pm-request .people-actions {
+  justify-content: flex-start;
+}
+.pm-side .link-btn {
+  align-self: flex-start;
+}
+.pm-report-line .chat-text {
+  display: block;
+}

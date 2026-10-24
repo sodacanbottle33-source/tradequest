@@ -31,7 +31,7 @@ export type Relation = 'you' | 'friend' | 'outgoing' | 'incoming' | 'none';
 
 export class SocialError extends Error {
   constructor(
-    readonly code: 'no_such_player' | 'no_request' | 'not_friends' | 'bad_request' | 'too_many_friends' | 'too_many_requests' | 'player_busy',
+    readonly code: 'no_such_player' | 'no_request' | 'not_friends' | 'bad_request' | 'too_many_friends' | 'too_many_requests' | 'player_busy' | 'blocked' | 'cannot_request',
     message: string,
     readonly status: number,
   ) {
@@ -340,6 +340,9 @@ export class Social {
   request(me: User, username: string): Relation {
     const target = this.findPlayer(username);
     if (target.id === me.id) throw new SocialError('bad_request', 'That is you.', 400);
+    // A player who blocked you cannot be asked (and is not told why), and you cannot ask somebody you blocked (server/messages.ts).
+    if (this.d.db.get('SELECT 1 AS x FROM blocks WHERE blocker_id = ? AND blocked_id = ?', me.id, target.id)) throw new SocialError('blocked', `You blocked ${target.displayName}. Unblock them first if you want to be friends.`, 409);
+    if (this.d.db.get('SELECT 1 AS x FROM blocks WHERE blocker_id = ? AND blocked_id = ?', target.id, me.id)) throw new SocialError('cannot_request', `${target.displayName} can't receive your friend request.`, 403);
     const result = this.d.db.tx((): Relation => {
       const link = this.linkOf(me.id, target.id);
       if (link?.status === 'accepted') return 'friend';
