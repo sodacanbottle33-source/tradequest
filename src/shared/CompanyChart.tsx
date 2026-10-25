@@ -1,10 +1,10 @@
 // The price chart of one company on the shared market: 10-second candles (exactly 10 ticks), hourly or daily candles.
 // The server owns every finished candle. The browser loads them once, then folds each new tick into the forming candle.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LiveCandle } from '../engine';
 import { LiveChart } from '../ui/LiveChart';
 import { api } from './api';
-import { CANDLE_TICKS, candleIndexOf, foldTick, toChartCandles } from './candles';
+import { CANDLE_TICKS, candleIndexOf, foldMore, missedTicks, toChartCandles, type FoldState } from './candles';
 import { useShared } from './store';
 import type { Resolution, ServerCandle } from './types';
 
@@ -57,7 +57,23 @@ export function CompanyChart({ ticker, name, price }: Props) {
     if (current && lastIndex > 0 && nowIndex > lastIndex + 1) setReloads((n) => n + 1);
   }, [current, lastIndex, nowIndex]);
 
-  const folded = useMemo(() => (current && price > 0 ? foldTick(current, tick, price, res) : current), [current, tick, price, res]);
+  // Every tick is folded into what was folded before (see foldMore), so a spike inside the forming candle stays in its wick.
+  const foldState = useRef<FoldState | null>(null);
+  const folded = useMemo(() => {
+    if (!current || price <= 0) {
+      foldState.current = null;
+      return current;
+    }
+    foldState.current = foldMore(foldState.current, current, tick, price, res);
+    return foldState.current.candles;
+  }, [current, tick, price, res]);
+
+  // Ticks went by without being folded in (the page was asleep): ask the server for the real candles.
+  const lastFolded = useRef(0);
+  useEffect(() => {
+    if (current && missedTicks(lastFolded.current, tick)) setReloads((n) => n + 1);
+    lastFolded.current = tick;
+  }, [tick, current]);
   const chart = useMemo(() => (folded && folded.length > 0 ? toChartCandles(folded, res) : null), [folded, res]);
 
   const describe = useMemo(() => {

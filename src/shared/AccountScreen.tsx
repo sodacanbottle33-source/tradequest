@@ -1,5 +1,6 @@
 // The player's Career account: cash, holdings, trades. Career money is separate from the 1v1 match cash and rewards.
 import { useEffect, useState } from 'react';
+import { pulseClass, usePulse, useTween } from '../ui/usePulse';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
 import { formatBps, formatCents, formatShares, toneOf } from './format';
@@ -25,6 +26,10 @@ export function AccountScreen({ onOpen }: { onOpen: (ticker: string) => void }) 
   const { user, career, walletCents, prices, companies, limits } = useShared();
   const [trades, setTrades] = useState<Trade[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Looks only: net worth rolls to its new value, and cash flashes when a trade changes it.
+  const netShown = useTween(career?.netWorthCents ?? 0, 450, user?.id ?? '');
+  const cashPulse = usePulse(career?.cashCents ?? 0, user?.id ?? '');
 
   const tradeCount = career ? career.positions.length : 0;
   useEffect(() => {
@@ -62,11 +67,15 @@ export function AccountScreen({ onOpen }: { onOpen: (ticker: string) => void }) 
           <dl className="stats">
             <div className="stat">
               <dt>Net worth</dt>
-              <dd data-testid="career-net">{formatCents(career.netWorthCents)}</dd>
+              <dd data-testid="career-net">
+                <span className="price-roll">{formatCents(Math.round(netShown))}</span>
+              </dd>
             </div>
             <div className="stat">
               <dt>Cash</dt>
-              <dd data-testid="career-cash">{formatCents(career.cashCents)}</dd>
+              <dd data-testid="career-cash">
+                <span className={`price-roll ${pulseClass(cashPulse, 'flash')}`.trim()}>{formatCents(career.cashCents)}</span>
+              </dd>
             </div>
             {career.reservedCents > 0 && (
               <div className="stat">
@@ -129,6 +138,11 @@ export function AccountScreen({ onOpen }: { onOpen: (ticker: string) => void }) 
                         {p.dead && (
                           <span className="tag neg" data-testid={`dead-tag-${p.ticker}`} title="Its developer took all the money out of the pool: worth nothing, cannot be sold.">
                             rug pulled
+                          </span>
+                        )}{' '}
+                        {p.bankrupt && (
+                          <span className="tag neg" data-testid={`bankrupt-tag-${p.ticker}`} title="The company went bankrupt: its price stopped. You can only sell it (or cover a short) at that price.">
+                            bankrupt
                           </span>
                         )}{' '}
                         <span className="muted">{c?.name ?? ''}</span>

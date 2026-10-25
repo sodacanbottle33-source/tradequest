@@ -2,7 +2,9 @@
 // Cancel, Mute, Hang up), a line about a call that just ended, and the "Call" button next to a friend. The page only shows what the call
 // controller holds (src/shared/callController.ts); the other player's voice is played by the hidden <audio> element below.
 import { useEffect, useRef, useState } from 'react';
+import { Avatar } from './Avatar';
 import { callHeadline, ringSecondsLeft } from './callsUtil';
+import { browserRingtone, type Ringtone } from './ringtone';
 import { sharedStore, useShared } from './store';
 
 /** The current time on this page's clock, refreshed every second while `running`. */
@@ -21,6 +23,15 @@ export function CallBar() {
   const { user, call, callNote, callStream } = useShared();
   const now = useNow(call !== null);
   const audio = useRef<HTMLAudioElement>(null);
+  const ringtone = useRef<Ringtone | null>(null);
+  // A call that is ringing for this player plays the ringtone until it is answered, declined, missed or cancelled.
+  const callingMe = call !== null && call.state === 'ringing' && call.phase !== 'mic' && call.direction === 'incoming';
+  useEffect(() => {
+    if (!callingMe) return undefined;
+    const tone = (ringtone.current ??= browserRingtone());
+    tone.start();
+    return () => tone.stop();
+  }, [callingMe, call?.id]);
 
   useEffect(() => {
     const el = audio.current;
@@ -51,6 +62,7 @@ export function CallBar() {
     <>
       {call.mine && <audio ref={audio} autoPlay playsInline data-testid="call-audio" />}
       <div className={`call-bar${incoming ? ' incoming' : ''}${live ? ' live' : ''}`} role={incoming ? 'alert' : 'status'} data-testid="call-bar" data-phase={call.phase} data-state={call.state}>
+        <Avatar username={call.other.username} displayName={call.other.displayName} size={40} className="call-pfp" />
         <div className="call-main">
           <span className="call-title" data-testid="call-title">
             {callHeadline(call, now)}

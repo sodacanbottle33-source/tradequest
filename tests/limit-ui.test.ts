@@ -93,7 +93,8 @@ describe('limit orders in the screens', () => {
   it('LUI-5: the form is for Career only, sends the request to the server and shows what the server worked out', () => {
     const panel = code(src('shared', 'TradePanel.tsx'));
     expect(panel).toMatch(/kind === 'career' && priceType === 'limit'/); // a match has no limit orders
-    expect(panel).toMatch(/\{kind === 'career' && !spotOnly && \(\s*<div className="segmented" role="group" aria-label="Price type">/); // (a coin with a money pool is spot only: no limit orders)
+    expect(panel).toMatch(/\{kind === 'career' && !plain && \(\s*<div className="segmented" role="group" aria-label="Price type">/); // (a coin with a money pool is spot only, and a bankrupt company is close-only: no limit orders)
+    expect(panel).toMatch(/const plain = spotOnly \|\| closeOnly;/);
     for (const call of ['api.placeLimit', 'api.limitEstimate']) expect(panel).toContain(call);
     for (const id of ['limit-estimate', 'limit-reserve', 'limit-when', 'limit-fills-now', 'limit-too-dear', 'open-orders-here']) expect(panel).toContain(`data-testid="${id}"`);
     for (const id of ['type-${t}', 'limit-price-${kind}', 'goodfor-${kind}', 'limit-now-${kind}']) expect(panel).toContain('data-testid={`' + id + '`}');

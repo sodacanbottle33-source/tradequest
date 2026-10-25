@@ -7,6 +7,7 @@ import { CallController, type ControllerDeps } from './callController';
 import { describeLimitEvent } from './limitText';
 import { describeNotice, type ToastText } from './positionNotice';
 import { browserVoiceDeps, VoiceSession } from './voice';
+import { profileStore } from './profileStore';
 import type { Account, Announcement, BanNotice, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
 
 /** A pop-up about a position the market closed by itself. */
@@ -255,7 +256,10 @@ export class SharedStore {
       void this.refreshChallenges();
       void this.refreshChat();
       void this.refreshMessages();
-      if (this.state.user) void this.calls.reconcile();
+      if (this.state.user) {
+        void this.calls.reconcile();
+        void profileStore.start();
+      }
     });
     es.addEventListener('tick', (e) => this.onTick(JSON.parse((e as MessageEvent<string>).data) as TickPayload));
     es.addEventListener('news', (e) => this.onNews(JSON.parse((e as MessageEvent<string>).data) as NewsItem));
@@ -274,12 +278,19 @@ export class SharedStore {
     es.addEventListener('chat', (e) => this.addChatMessage((JSON.parse((e as MessageEvent<string>).data) as { message: ChatMessage }).message));
     es.addEventListener('chat_removed', (e) => this.removeChatMessage((JSON.parse((e as MessageEvent<string>).data) as { id: number }).id));
     es.addEventListener('chat_status', () => void this.refreshChat());
+    // A player set or removed his profile picture.
+    es.addEventListener('avatar', (e) => profileStore.onAvatar(JSON.parse((e as MessageEvent<string>).data) as { username: string; v: number | null }));
     // Private chats: a new message in one of your conversations, or something about them changed (a request, an invitation, a read mark...).
     es.addEventListener('pm', (e) => {
       const d = JSON.parse((e as MessageEvent<string>).data) as { conversationId: number; message: PmMessage };
       this.addPrivateMessage(d.conversationId, d.message);
     });
     es.addEventListener('pm_changed', () => this.onPmChanged());
+    // A player deleted a message he wrote: it leaves the conversation on screen.
+    es.addEventListener('pm_deleted', (e) => {
+      const d = JSON.parse((e as MessageEvent<string>).data) as { conversationId: number; id: number };
+      this.removePrivateMessage(d.conversationId, d.id);
+    });
     // Voice calls: a ring, an answer, the end of a call, and the small connection messages between the two browsers.
     es.addEventListener('call', (e) => this.calls.onCall(JSON.parse((e as MessageEvent<string>).data) as { call: CallView | null; ended?: CallEnded }));
     es.addEventListener('call_signal', (e) => this.calls.onSignal(JSON.parse((e as MessageEvent<string>).data) as { callId: string; signal: CallSignal }));
@@ -607,6 +618,15 @@ export class SharedStore {
     this.scheduleMessages();
   }
 
+  /** A message was deleted by its writer: take it off the conversation on screen. */
+  removePrivateMessage(conversationId: number, id: number): void {
+    const thread = this.state.pmThread;
+    if (thread && thread.id === conversationId && thread.messages.some((m) => m.id === id)) {
+      this.set({ pmThread: { ...thread, messages: thread.messages.filter((m) => m.id !== id) } });
+    }
+    this.scheduleMessages();
+  }
+
   /** The server said something about the private chats changed: bring the lists, and the conversation on screen, up to date. */
   onPmChanged(): void {
     if (!this.state.user) return;
@@ -668,6 +688,7 @@ export class SharedStore {
       // The session ended. If the owner banned this account, say so instead of just showing a login form.
       this.set({ user: null, career: null, friends: null, challenges: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, limits: [], match: null });
       this.calls.reset();
+      profileStore.stop();
       void this.recheckMe();
     }
   }
@@ -694,6 +715,7 @@ export class SharedStore {
     void this.refreshChallenges();
     void this.refreshChat();
     void this.refreshMessages();
+    void profileStore.start();
   }
 
   async signOut(): Promise<void> {
@@ -701,6 +723,7 @@ export class SharedStore {
       await api.logout();
     } finally {
       this.calls.reset();
+      profileStore.stop();
       this.set({ user: null, banned: null, career: null, friends: null, challenges: null, challengeNote: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, limits: [], match: null, walletCents: 0, toasts: [] });
       for (const t of this.toastTimers.values()) clearTimeout(t);
       this.toastTimers.clear();

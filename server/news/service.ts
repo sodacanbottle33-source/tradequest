@@ -278,9 +278,9 @@ export class NewsService implements NewsHooks {
     return this.db.all<Row>(`SELECT ${COLUMNS} FROM news_items WHERE start_tick >= ? AND start_tick <= ? ORDER BY start_tick, id`, from, through).map((r) => this.toEvent(r));
   }
 
-  /** Every rug pull story (finished ones too): the world reads them to know which coins are dead (src/world/effects.ts `deathTickOf`). */
+  /** Every rug pull and bankruptcy story (finished ones too): the world reads them to know which companies are dead (src/world/effects.ts `deathTickOf`). */
   deadEvents(): WorldEvent[] {
-    return this.db.all<Row>(`SELECT ${COLUMNS} FROM news_items WHERE key LIKE 'rug:%:drain' ORDER BY start_tick, id`).map((r) => this.toEvent(r));
+    return this.db.all<Row>(`SELECT ${COLUMNS} FROM news_items WHERE key LIKE 'rug:%:drain' OR key LIKE 'bankrupt:%:fail' ORDER BY start_tick, id`).map((r) => this.toEvent(r));
   }
 
   recordMarks(rows: readonly MarkRow[]): void {

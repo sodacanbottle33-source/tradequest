@@ -11,7 +11,7 @@
 // It is worked out for everybody at once and kept for BOARD_CACHE_MS, so a busy page costs the server one pass over the players every
 // half minute, not one per request. A new player or a new ban shows up at once (the cache notices that the player list changed).
 
-import type { User } from './auth';
+import { START_CASH_CENTS, type User } from './auth';
 import type { Db } from './sqlite';
 import type { Trading } from './trading';
 
@@ -26,6 +26,21 @@ export const MAX_INCOMING = 100;
 /** How many players one page of the player list holds (at most). */
 export const PLAYERS_PAGE = 50;
 export const PLAYERS_PAGE_MAX = 100;
+
+/** The weekly board: a week starts on Monday at 00:00 Tokyo time. */
+export const WEEK_MS = 7 * 86_400_000;
+const TOKYO_OFFSET_MS = 9 * 3_600_000;
+/** A player needs at least this much (in cents) at the start of the week to be ranked: a gain from a few cents is not a result. */
+export const WEEKLY_MIN_START_CENTS = 10_000;
+/** How many players of last week's result are shown. */
+export const WEEKLY_PODIUM = 3;
+
+/** The start of the week (Monday 00:00 Tokyo time) that `ms` falls in. */
+export function weekStartOf(ms: number): number {
+  const day = Math.floor((ms + TOKYO_OFFSET_MS) / 86_400_000);
+  const sinceMonday = (((day + 3) % 7) + 7) % 7; // 1970-01-05 was a Monday
+  return (day - sinceMonday) * 86_400_000 - TOKYO_OFFSET_MS;
+}
 
 export type Relation = 'you' | 'friend' | 'outgoing' | 'incoming' | 'none';
 
@@ -74,6 +89,40 @@ export interface Leaderboard {
   readonly size: number;
   /** Where the player stands in this view, also when he is not in the top. Null when he is not ranked (the owner). */
   readonly me: { readonly rank: number; readonly netWorthCents: number; readonly inTop: boolean } | null;
+  readonly updatedMs: number;
+}
+
+/** One line of the weekly board: how much the net worth grew since the week began. Ranked by the percentage, so small and big accounts compete fairly. */
+export interface WeeklyEntry {
+  readonly rank: number;
+  readonly username: string;
+  readonly displayName: string;
+  readonly gainCents: number;
+  readonly gainPct: number;
+  readonly netWorthCents: number;
+  readonly relation: Relation;
+}
+
+export interface WeeklyWinner {
+  readonly username: string;
+  readonly displayName: string;
+  readonly gainCents: number;
+  readonly gainPct: number;
+}
+
+export interface WeeklyBoard {
+  readonly scope: 'all' | 'friends';
+  readonly weekStartMs: number;
+  /** When the week ends and the board starts again. */
+  readonly endsMs: number;
+  readonly rows: readonly WeeklyEntry[];
+  readonly total: number;
+  readonly size: number;
+  /** Where the player stands, also when he is not in the top. Null when he is not ranked (the owner, or less than the minimum at the start of the week). */
+  readonly me: { readonly rank: number; readonly gainCents: number; readonly gainPct: number; readonly inTop: boolean } | null;
+  readonly minStartCents: number;
+  /** The best players of last week (up to WEEKLY_PODIUM), or empty when there was no last week. */
+  readonly lastWeek: { readonly weekStartMs: number; readonly winners: readonly WeeklyWinner[] };
   readonly updatedMs: number;
 }
 
@@ -201,6 +250,86 @@ export class Social {
     const people = [...ranked, ...owners];
     this.ranking = { atMs: nowMs, signature, people, ranked, byId: new Map(people.map((p) => [p.id, p])) };
     return this.ranking;
+  }
+
+  // ---- the weekly board ----------------------------------------------------------------------------------------------
+
+  private markedWeek = -1;
+
+  /**
+   * Writes down every ranked player's net worth at the start of the week (once per week; the game calls it every few seconds and it does
+   * nothing until the week changes). Players who join later get their mark the first time the board is asked for. Marks older than last week are deleted.
+   */
+  rollWeek(): void {
+    const week = weekStartOf(this.d.now());
+    if (week === this.markedWeek) return;
+    // Working out the ranking is only needed for the marks; whatever ranking was kept stays as it was, so this never makes a page show older numbers.
+    const kept = this.ranking;
+    try {
+      this.markMissing(week);
+    } finally {
+      this.ranking = kept;
+    }
+    this.d.db.run('DELETE FROM weekly_marks WHERE week_start_ms < ?', week - WEEK_MS);
+    this.markedWeek = week;
+  }
+
+  /** Gives a mark to every ranked player who has none for this week. A player who joined this week started with the starting cash. */
+  private markMissing(week: number): void {
+    const b = this.board();
+    const have = new Set(this.d.db.all<{ user_id: number }>('SELECT user_id FROM weekly_marks WHERE week_start_ms = ?', week).map((r) => r.user_id));
+    if (b.ranked.every((p) => have.has(p.id))) return;
+    this.d.db.tx(() => {
+      for (const p of b.ranked) {
+        if (have.has(p.id)) continue;
+        this.d.db.run('INSERT OR IGNORE INTO weekly_marks(week_start_ms, user_id, net_worth_cents) VALUES (?, ?, ?)', week, p.id, p.createdMs >= week ? START_CASH_CENTS : (p.netWorthCents as number));
+      }
+    });
+  }
+
+  /** Who gained the most this week (as a percentage of what they had on Monday), and last week's best three. */
+  weekly(me: User, scope: 'all' | 'friends'): WeeklyBoard {
+    const b = this.board();
+    const week = weekStartOf(this.d.now());
+    this.rollWeek();
+    this.markMissing(week);
+    const marks = new Map(this.d.db.all<{ user_id: number; net_worth_cents: number }>('SELECT user_id, net_worth_cents FROM weekly_marks WHERE week_start_ms = ?', week).map((r) => [r.user_id, r.net_worth_cents] as const));
+    const links = new Map(this.links(me.id).map((l) => [l.other, l]));
+    let view: readonly Person[] = b.ranked;
+    if (scope === 'friends') {
+      const keep = new Set<number>([me.id]);
+      for (const l of links.values()) if (l.status === 'accepted') keep.add(l.other);
+      view = b.ranked.filter((p) => keep.has(p.id));
+    }
+    const scored = view
+      .map((p) => {
+        const start = marks.get(p.id);
+        return start === undefined || start < WEEKLY_MIN_START_CENTS ? null : { p, gainCents: (p.netWorthCents as number) - start, gainPct: Math.round((((p.netWorthCents as number) - start) / start) * 10_000) / 100 };
+      })
+      .filter((x): x is { p: Person; gainCents: number; gainPct: number } => x !== null);
+    // Best percentage first; the same percentage: the bigger gain, then the older account, then the lower id, so the order never flickers.
+    scored.sort((x, y) => y.gainPct - x.gainPct || y.gainCents - x.gainCents || x.p.createdMs - y.p.createdMs || x.p.id - y.p.id);
+    const rows = scored.slice(0, BOARD_SIZE).map(
+      (x, i): WeeklyEntry => ({ rank: i + 1, username: x.p.username, displayName: x.p.displayName, gainCents: x.gainCents, gainPct: x.gainPct, netWorthCents: x.p.netWorthCents as number, relation: this.relationOf(me.id, x.p.id, links) }),
+    );
+    const at = scored.findIndex((x) => x.p.id === me.id);
+    const mine = at < 0 ? null : { rank: at + 1, gainCents: (scored[at] as { gainCents: number }).gainCents, gainPct: (scored[at] as { gainPct: number }).gainPct, inTop: at < BOARD_SIZE };
+    return { scope, weekStartMs: week, endsMs: week + WEEK_MS, rows, total: scored.length, size: BOARD_SIZE, me: mine, minStartCents: WEEKLY_MIN_START_CENTS, lastWeek: this.lastWeek(b, week, marks), updatedMs: b.atMs };
+  }
+
+  /** Last week's best players: how much each grew between his mark of last week and his mark of this week. Only players with a gain are named. */
+  private lastWeek(b: Ranking, week: number, thisWeek: ReadonlyMap<number, number>): { weekStartMs: number; winners: WeeklyWinner[] } {
+    const previous = week - WEEK_MS;
+    const before = new Map(this.d.db.all<{ user_id: number; net_worth_cents: number }>('SELECT user_id, net_worth_cents FROM weekly_marks WHERE week_start_ms = ?', previous).map((r) => [r.user_id, r.net_worth_cents] as const));
+    const scored: { p: Person; gainCents: number; gainPct: number }[] = [];
+    for (const p of b.ranked) {
+      const start = before.get(p.id);
+      const end = thisWeek.get(p.id);
+      if (start === undefined || end === undefined || start < WEEKLY_MIN_START_CENTS || end <= start) continue;
+      scored.push({ p, gainCents: end - start, gainPct: Math.round(((end - start) / start) * 10_000) / 100 });
+    }
+    scored.sort((x, y) => y.gainPct - x.gainPct || y.gainCents - x.gainCents || x.p.createdMs - y.p.createdMs || x.p.id - y.p.id);
+    return { weekStartMs: previous, winners: scored.slice(0, WEEKLY_PODIUM).map((x) => ({ username: x.p.username, displayName: x.p.displayName, gainCents: x.gainCents, gainPct: x.gainPct })) };
   }
 
   // ---- friendships -------------------------------------------------------------------------------------------------

@@ -70,6 +70,13 @@ export class SseHub {
     return false;
   }
 
+  /** The ids of the signed-in players who have a page open right now. */
+  userIds(): number[] {
+    const out = new Set<number>();
+    for (const c of this.clients.values()) if (c.userId !== null) out.add(c.userId);
+    return [...out];
+  }
+
   /** Closes every open stream of one user (a banned player). The browser reconnects at once and is then treated as signed out. */
   dropUser(userId: number): number {
     let n = 0;

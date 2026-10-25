@@ -31,6 +31,7 @@ const Row = memo(function Row({ coins, row, price, selected, onOpen }: RowProps)
         </button>{' '}
         <span className="muted company-name">{row.name}</span>
         {row.halted && <span className="badge-halted">{row.autoPause ? 'Paused' : 'Halted'}</span>}
+        {row.bankrupt && <span className="badge-bankrupt" data-testid={`bankrupt-${row.ticker}`}>Bankrupt</span>}
       </td>
       {!coins && <td className="col-sector">{SECTOR_NAMES[row.sector] ?? row.sector}</td>}
       <td className="num mono">

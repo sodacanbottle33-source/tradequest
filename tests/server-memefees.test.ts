@@ -346,7 +346,7 @@ describe('Estimates and refusals count the fee', () => {
 });
 
 describe('Who pays the fee', () => {
-  it('FEE-15: stocks pay none; a 1v1 match account pays none, not even for a coin', async () => {
+  it('FEE-15: with no stock rate given stocks pay none (the game gives 0.1 %, tests/server-fees.test.ts); a 1v1 match account pays none, not even for a coin', async () => {
     const { trading, db, order, user, cash, account, position, qty } = await setup();
     const stock = trading.placeOrder(order({ companyId: 0, side: 'buy', qty: 5 }));
     expect(stock.trade.feeCents).toBe(0);

@@ -20,6 +20,7 @@ export interface TradeContext {
 }
 
 const LAUNCHED_MESSAGE = 'Companies that players launched cannot be traded in a 1v1 match, so nobody can win by pumping their own coin or stock. Pick any other company.';
+const BANKRUPT_MESSAGE = (ticker: string): string => `${ticker} went bankrupt. Its price stopped for good and nobody can buy or short it any more. You hold none of it, so there is nothing to trade here.`;
 const HALTED_MESSAGE = (ticker: string): string => `Trading in ${ticker} is halted by the TradeQuest team. You can still watch the price, but nothing can be bought or sold for now.`;
 
 /** The market pauses a company by itself when its price has moved 10 % within 5 minutes (like a real exchange). */
@@ -141,6 +142,9 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
   const halted = listed?.halted ?? detail.halted;
   const autoPause = listed ? listed.autoPause : detail.autoPause;
   const launched = listed?.launched ?? detail.launched;
+  // A weak company that got a pile of bad news can go bankrupt (docs/world.md §18.2): its price has stopped, and only a position already held can be closed.
+  const bankrupt = listed?.bankrupt ?? detail.bankrupt ?? false;
+  const heldHere = ((trade ? trade.account : career)?.positions ?? []).some((p) => p.ticker === detail.ticker);
   // A coin launched with a money pool (docs/world.md §12.2): the cash behind it, and whether its developer took it all.
   const pool = listed ? listed.pool : detail.pool;
   const live = detail.trading && (prices[id] ?? 0) > 0;
@@ -171,6 +175,11 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
                 {autoPause ? 'Paused' : 'Halted'}
               </span>
             )}
+            {bankrupt && (
+              <span className="badge-bankrupt" data-testid="bankrupt-badge">
+                Bankrupt
+              </span>
+            )}
           </h2>
           <p className="muted">
             {SECTOR_NAMES[detail.sector] ?? detail.sector} · {detail.industry} · {coin ? `lives on ${detail.hq}` : detail.hq}
@@ -183,6 +192,12 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
           {coin && pool && !pool.dead && (
             <p className="hint coin-warning" data-testid="pool-warning">
               Memecoin with a money pool: about <strong data-testid="pool-cents">{formatCents(pool.cents)}</strong> of buyers' money sits in it. Sales are paid from it, and the player who launched {detail.ticker} can take ALL of it at any time (a rug pull): the coin then crashes and whoever still holds it is left with nothing. It can move 10 % in a minute. Every order pays a trading fee. Plain buying and selling only.
+            </p>
+          )}
+          {bankrupt && (
+            <p className="notice error" role="alert" data-testid="bankrupt-notice">
+              {detail.ticker} went bankrupt. Its price crashed and stopped for good. Nobody can buy or short it any more
+              {heldHere ? ', but you can still sell your shares (or cover your short) at the price it stopped at.' : '.'}
             </p>
           )}
           {coin && pool?.dead && (
@@ -259,7 +274,8 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
           account={trade ? trade.account : career}
           kind={trade ? trade.kind : 'career'}
           spotOnly={pool != null}
-          blocked={pool?.dead ? `${detail.ticker} is dead: its developer took all the money out of the pool. Nothing can be bought or sold.` : halted ? (autoPause ? PAUSED_MESSAGE(detail.ticker, autoPause) : HALTED_MESSAGE(detail.ticker)) : trade && trade.kind === 'match' && launched ? LAUNCHED_MESSAGE : trade ? trade.blocked : user ? null : 'Sign in on the My account tab to trade with your Career money.'}
+          closeOnly={bankrupt}
+          blocked={pool?.dead ? `${detail.ticker} is dead: its developer took all the money out of the pool. Nothing can be bought or sold.` : bankrupt && !heldHere ? BANKRUPT_MESSAGE(detail.ticker) : halted ? (autoPause ? PAUSED_MESSAGE(detail.ticker, autoPause) : HALTED_MESSAGE(detail.ticker)) : trade && trade.kind === 'match' && launched ? LAUNCHED_MESSAGE : trade ? trade.blocked : user ? null : 'Sign in on the My account tab to trade with your Career money.'}
           onTraded={(r) => {
             if (trade) trade.onTraded(r);
             else void sharedStore.refreshAccount();

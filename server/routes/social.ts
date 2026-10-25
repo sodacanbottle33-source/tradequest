@@ -48,6 +48,13 @@ export function registerSocialRoutes(router: Router, s: Services): void {
     return social.leaderboard(user, scope);
   });
 
+  router.get('/api/leaderboard/weekly', (ctx) => {
+    const user = ctx.requireUser();
+    const scope = ctx.url.searchParams.get('scope') ?? 'all';
+    if (scope !== 'all' && scope !== 'friends') throw new HttpError(400, 'bad_parameter', 'scope must be all or friends.');
+    return social.weekly(user, scope);
+  });
+
   router.get('/api/friends', (ctx) => social.friends(ctx.requireUser()));
 
   const act = (path: string, run: (user: Parameters<typeof social.friends>[0], name: string) => Relation | void): void => {

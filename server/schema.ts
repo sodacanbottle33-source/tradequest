@@ -815,6 +815,45 @@ CREATE TABLE private_reports (
 CREATE INDEX private_reports_open ON private_reports(resolved_ms, message_id);
 `,
   },
+  {
+    version: 22,
+    name: 'delete your own private message, profile pictures, weekly leaderboard marks',
+    sql: `
+-- A player can delete a message he wrote in a private chat (server/messages.ts): it is hidden for everybody in the chat. The row stays, so a report
+-- made before the deletion keeps its evidence (the report also holds its own copy), and the writing-speed limits still count it.
+ALTER TABLE private_messages ADD COLUMN deleted_ms INTEGER;
+
+-- A player's profile picture (server/profile.ts): one small picture, already shrunk by the browser, kept as the bytes the browser made.
+CREATE TABLE user_avatars (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  mime       TEXT NOT NULL CHECK (mime IN ('image/jpeg', 'image/png', 'image/webp')),
+  data       BLOB NOT NULL CHECK (length(data) BETWEEN 1 AND 65536),
+  updated_ms INTEGER NOT NULL
+);
+
+-- The weekly leaderboard (server/social.ts): each ranked player's net worth the first time he was seen in a week (weeks start Monday 00:00 Tokyo time).
+-- This week's gain is his net worth now minus this mark; last week's gain is this week's mark minus last week's. Only the last few weeks are kept.
+CREATE TABLE weekly_marks (
+  week_start_ms   INTEGER NOT NULL,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  net_worth_cents INTEGER NOT NULL,
+  PRIMARY KEY (week_start_ms, user_id)
+) WITHOUT ROWID;
+
+-- Companies that failed (server/bankruptcy.ts): a weak small company that gets a pile of bad news can go bankrupt. Its price crashes, it stops
+-- there for good, and nobody can open a new position in it any more (a player who holds it can still sell it, or cover a short, at that price).
+-- The news story with the key 'bankrupt:<company id>:fail' is what freezes the price (like a rug pull's story); this row is what the trading rules read.
+CREATE TABLE bankruptcies (
+  company_id         INTEGER PRIMARY KEY REFERENCES companies(id),
+  declared_tick      INTEGER NOT NULL,
+  declared_ms        INTEGER NOT NULL,
+  cycle              INTEGER NOT NULL,
+  negative_stories   INTEGER NOT NULL,
+  window_total       REAL NOT NULL,
+  price_before_cents INTEGER NOT NULL
+);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

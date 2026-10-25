@@ -379,6 +379,8 @@ export class LimitOrders {
         if (closing) {
           const hold = this.trading.holding(o.account_id, o.company_id);
           if (!hold || hold.short !== (o.short === 1)) due = true;
+        } else if (this.trading.isBankrupt(o.company_id)) {
+          due = true; // an order that waits to open a position in a company that went bankrupt is cancelled (see attempt)
         }
       }
       if (!due) {
@@ -434,6 +436,8 @@ export class LimitOrders {
         const hold = this.trading.holding(acc.id, o.company_id);
         if (!hold || hold.short !== short) return this.finish(o, 'cancelled', short ? 'Your short position is gone, so there was nothing to cover.' : 'Your shares are gone, so there was nothing to sell.');
       }
+      // A company that went bankrupt takes no new position: an order waiting to open one is cancelled, and its set-aside cash comes back.
+      if (opening && this.trading.isBankrupt(o.company_id)) return this.finish(o, 'cancelled', 'The company went bankrupt, so nothing new can be bought or shorted in it.');
       if (this.isBanned(acc.user_id) || tick < o.retry_tick) return;
       if (!this.world.sim.isListed(o.company_id)) return;
       const q = this.world.quote(o.company_id);

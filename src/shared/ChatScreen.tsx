@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
+import { Avatar, OnlineDot, useOnlineWatch } from './Avatar';
 import { newRequestId } from './adminUtil';
 import { MUTE_CHOICES, lengthOf, timeLabel, waitWords } from './chatUtil';
 import { problemText } from './playersUtil';
@@ -11,6 +12,7 @@ import type { ChatMessage } from './types';
 
 function Line({ message, mine, isOwner, reported, onReport, onNote }: { message: ChatMessage; mine: boolean; isOwner: boolean; reported: boolean; onReport: (id: number) => void; onNote: (text: string) => void }) {
   const [asking, setAsking] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [moderating, setModerating] = useState(false);
   const [busy, setBusy] = useState(false);
   const canReport = !mine && message.role !== 'owner' && !isOwner;
@@ -31,6 +33,10 @@ function Line({ message, mine, isOwner, reported, onReport, onNote }: { message:
   return (
     <li className={mine ? 'chat-msg mine' : 'chat-msg'} data-testid="chat-message" data-id={message.id} data-username={message.username}>
       <div className="chat-meta">
+        <span className="pfp-wrap">
+          <Avatar username={message.username} displayName={who} size={22} />
+          <OnlineDot username={message.username} />
+        </span>
         <strong>{who}</strong>
         {message.role === 'owner' && <span className="badge-owner">Owner</span>}
         <span className="muted">{timeLabel(message.createdMs)}</span>
@@ -75,6 +81,31 @@ function Line({ message, mine, isOwner, reported, onReport, onNote }: { message:
               Delete
             </button>
           )}
+          {!isOwner && mine && !deleting && (
+            <button type="button" className="link-btn" disabled={busy} onClick={() => setDeleting(true)} data-testid={`delete-own-${message.id}`}>
+              Delete
+            </button>
+          )}
+          {!isOwner && mine && deleting && (
+            <>
+              <span className="muted">Delete this message?</span>
+              <button
+                type="button"
+                className="link-btn"
+                disabled={busy}
+                onClick={() => {
+                  setDeleting(false);
+                  void moderate('Message deleted.', () => api.chatDelete(message.id));
+                }}
+                data-testid={`delete-own-yes-${message.id}`}
+              >
+                Yes
+              </button>
+              <button type="button" className="link-btn" onClick={() => setDeleting(false)}>
+                No
+              </button>
+            </>
+          )}
         </span>
       </div>
       <p className="chat-text">{message.text}</p>
@@ -113,6 +144,7 @@ export function ChatScreen() {
   const [reported, setReported] = useState<ReadonlySet<number>>(new Set());
   const [loadingMore, setLoadingMore] = useState(false);
   const log = useRef<HTMLUListElement | null>(null);
+  useOnlineWatch();
   const stick = useRef(true);
   const asked = useRef<number | null>(null);
 

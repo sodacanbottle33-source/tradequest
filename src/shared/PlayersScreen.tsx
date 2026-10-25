@@ -4,14 +4,15 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
+import { Avatar, OnlineDot, useOnlineWatch } from './Avatar';
 import { CallButton } from './CallBar';
 import { ChallengeButton, useChallengeActions } from './Challenges';
 import { clockTime, formatCents } from './format';
 import { problemText, relationLabel, shownText, standingText } from './playersUtil';
 import { sharedStore, useShared } from './store';
-import type { BoardScope, FriendAction, FriendEntry, Leaderboard, PlayerEntry, Relation } from './types';
+import type { BoardScope, FriendAction, FriendEntry, Leaderboard, PlayerEntry, Relation, WeeklyBoard } from './types';
 
-type View = 'board' | 'friends' | 'find';
+type View = 'board' | 'weekly' | 'friends' | 'find';
 
 /** Sends one friend action and hands the lists the server answered with to the store. */
 function useFriendActions() {
@@ -35,9 +36,13 @@ function useFriendActions() {
 }
 type Actions = ReturnType<typeof useFriendActions>;
 
-function Who({ name, role, you }: { name: string; role: 'player' | 'owner'; you?: boolean }) {
+function Who({ name, username, role, you }: { name: string; username: string; role: 'player' | 'owner'; you?: boolean }) {
   return (
     <>
+      <span className="pfp-wrap" style={{ marginRight: 8 }}>
+        <Avatar username={username} displayName={name} size={24} />
+        <OnlineDot username={username} />
+      </span>
       <strong>{name}</strong>
       {you && <span className="muted"> (you)</span>}
       {role === 'owner' && <span className="badge-owner">Owner</span>}
@@ -185,7 +190,7 @@ function BoardPanel({ isOwner }: { isOwner: boolean }) {
                     <tr key={row.username} className={row.relation === 'you' ? 'row-selected' : undefined} data-username={row.username}>
                       <td className={row.rank <= 3 ? 'num rank top' : 'num rank'}>{row.rank}</td>
                       <td>
-                        <Who name={row.displayName} role="player" you={row.relation === 'you'} />
+                        <Who name={row.displayName} username={row.username} role="player" you={row.relation === 'you'} />
                       </td>
                       <td className="num mono">{formatCents(row.netWorthCents)}</td>
                       <td className="num">
@@ -208,13 +213,165 @@ function BoardPanel({ isOwner }: { isOwner: boolean }) {
   );
 }
 
+// ---- the weekly board --------------------------------------------------------------------------------------------------------
+
+/** "+12.34%" or "-3.5%" */
+export function pctText(pct: number): string {
+  const sign = pct > 0 ? '+' : pct < 0 ? '-' : '';
+  return `${sign}${Math.abs(pct).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`;
+}
+
+/** "+$123.45" or "-$10.00" */
+export function gainText(cents: number): string {
+  const sign = cents > 0 ? '+' : cents < 0 ? '-' : '';
+  return `${sign}${formatCents(Math.abs(cents))}`;
+}
+
+/** How long until the week ends, in words ("2 days 5 hours", "3 hours", "12 minutes"). */
+export function weekLeftText(endsMs: number, nowMs: number): string {
+  const left = Math.max(0, endsMs - nowMs);
+  const minutes = Math.floor(left / 60_000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+  if (days >= 1) return hours > 0 ? `${plural(days, 'day')} ${plural(hours, 'hour')}` : plural(days, 'day');
+  if (hours >= 1) return plural(hours, 'hour');
+  return plural(Math.max(1, minutes), 'minute');
+}
+
+function WeeklyPanel({ isOwner }: { isOwner: boolean }) {
+  const [scope, setScope] = useState<BoardScope>('all');
+  const [board, setBoard] = useState<WeeklyBoard | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const actions = useFriendActions();
+  const { tickMs } = useShared();
+  const seq = useRef(0);
+
+  const load = useCallback(async () => {
+    const mine = (seq.current += 1);
+    try {
+      const b = await api.weeklyBoard(scope);
+      if (mine === seq.current) {
+        setBoard(b);
+        setError(null);
+      }
+    } catch (e) {
+      if (mine === seq.current) setError(problemText(e));
+    }
+  }, [scope]);
+
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), 30_000);
+    return () => {
+      clearInterval(timer);
+      seq.current += 1;
+    };
+  }, [load]);
+
+  const choose = (next: BoardScope) => {
+    if (next === scope) return;
+    setBoard(null);
+    setScope(next);
+  };
+
+  return (
+    <section className="card" aria-label="Weekly leaderboard" data-testid="weekly-board">
+      <div className="row-between">
+        <h2>
+          This week <span className="h2-note">{board ? `${weekLeftText(board.endsMs, tickMs || board.updatedMs)} left` : ''}</span>
+        </h2>
+      </div>
+      <div className="seg-group" role="group" aria-label="Who to rank this week">
+        <button type="button" className={scope === 'all' ? 'seg active' : 'seg'} aria-pressed={scope === 'all'} onClick={() => choose('all')} data-testid="weekly-all">
+          Everyone
+        </button>
+        <button type="button" className={scope === 'friends' ? 'seg active' : 'seg'} aria-pressed={scope === 'friends'} onClick={() => choose('friends')} data-testid="weekly-friends">
+          Friends
+        </button>
+      </div>
+      {error && (
+        <p className="notice error" role="alert">
+          {error}
+        </p>
+      )}
+      {actions.error && (
+        <p className="notice error" role="alert">
+          {actions.error}
+        </p>
+      )}
+      {!board && !error && <p className="hint">Loading this week…</p>}
+      {board && (
+        <>
+          <p className="board-me" data-testid="weekly-standing">
+            {board.me
+              ? `You are #${board.me.rank.toLocaleString('en-US')} of ${board.total.toLocaleString('en-US')} this week: ${gainText(board.me.gainCents)} (${pctText(board.me.gainPct)}).`
+              : isOwner
+                ? 'The owner is not ranked.'
+                : `You are not ranked this week. You need at least ${formatCents(board.minStartCents)} at the start of the week.`}
+          </p>
+          {board.rows.length > 0 && (
+            <div className="table-wrap">
+              <table className="trades board" data-testid="weekly-table">
+                <thead>
+                  <tr>
+                    <th className="num">#</th>
+                    <th>Player</th>
+                    <th className="num">This week</th>
+                    <th className="num">Net worth</th>
+                    <th className="num">Friend</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {board.rows.map((row) => (
+                    <tr key={row.username} className={row.relation === 'you' ? 'row-selected' : undefined} data-username={row.username}>
+                      <td className={row.rank <= 3 ? 'num rank top' : 'num rank'}>{row.rank}</td>
+                      <td>
+                        <Who name={row.displayName} username={row.username} role="player" you={row.relation === 'you'} />
+                      </td>
+                      <td className={row.gainCents > 0 ? 'num mono up' : row.gainCents < 0 ? 'num mono down' : 'num mono'}>
+                        {pctText(row.gainPct)} <span className="muted">{gainText(row.gainCents)}</span>
+                      </td>
+                      <td className="num mono">{formatCents(row.netWorthCents)}</td>
+                      <td className="num">
+                        <PlayerActions username={row.username} relation={row.relation} actions={actions} onDone={(_name, relation) => relation !== null && void load()} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {board.rows.length === 0 && <p className="hint">Nobody has a result yet. The week starts on Monday at 00:00 Tokyo time.</p>}
+          {board.lastWeek.winners.length > 0 && (
+            <div data-testid="weekly-last">
+              <h3>Last week&apos;s best</h3>
+              <ol className="podium">
+                {board.lastWeek.winners.map((w, i) => (
+                  <li key={w.username} data-username={w.username}>
+                    <span className="rank top">{i + 1}</span> <Who name={w.displayName} username={w.username} role="player" /> <span className="up mono">{pctText(w.gainPct)}</span> <span className="muted">{gainText(w.gainCents)}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </>
+      )}
+      <p className="hint">
+        Ranked by how much your net worth grew since Monday 00:00 Tokyo time, as a percentage of what you had then, so small and big accounts compete fairly. You need at least{' '}
+        {formatCents(board?.minStartCents ?? 10_000)} at the start of the week to be ranked; a player who joins during the week starts from the starting cash. The owner and the computer players are left out. A new week starts every Monday.
+      </p>
+    </section>
+  );
+}
+
 // ---- friends -----------------------------------------------------------------------------------------------------------------
 
 function FriendRow({ entry, children }: { entry: FriendEntry; children: ReactNode }) {
   return (
     <tr data-username={entry.username}>
       <td>
-        <Who name={entry.displayName} role={entry.role} />
+        <Who name={entry.displayName} username={entry.username} role={entry.role} />
       </td>
       <td className="num mono">{entry.netWorthCents === null ? '—' : formatCents(entry.netWorthCents)}</td>
       <td className="num">{entry.rank === null ? '—' : `#${entry.rank.toLocaleString('en-US')}`}</td>
@@ -438,7 +595,7 @@ function FindPanel() {
               {rows.map((p) => (
                 <tr key={p.username} data-username={p.username} className={p.relation === 'you' ? 'row-selected' : undefined}>
                   <td>
-                    <Who name={p.displayName} role={p.role} you={p.relation === 'you'} />
+                    <Who name={p.displayName} username={p.username} role={p.role} you={p.relation === 'you'} />
                   </td>
                   <td className="num mono">{p.netWorthCents === null ? '—' : formatCents(p.netWorthCents)}</td>
                   <td className="num">{p.rank === null ? '—' : `#${p.rank.toLocaleString('en-US')}`}</td>
@@ -467,10 +624,12 @@ function FindPanel() {
 export function PlayersScreen() {
   const { user, friends } = useShared();
   const [view, setView] = useState<View>('board');
+  useOnlineWatch();
   if (!user) return <AuthPanel />;
   const waiting = friends?.incoming.length ?? 0;
   const tabs: [View, string][] = [
     ['board', 'Leaderboard'],
+    ['weekly', 'This week'],
     ['friends', 'Friends'],
     ['find', 'Find players'],
   ];
@@ -489,6 +648,7 @@ export function PlayersScreen() {
         ))}
       </div>
       {view === 'board' && <BoardPanel isOwner={user.role === 'owner'} />}
+      {view === 'weekly' && <WeeklyPanel isOwner={user.role === 'owner'} />}
       {view === 'friends' && <FriendsPanel onFind={() => setView('find')} />}
       {view === 'find' && <FindPanel />}
     </div>

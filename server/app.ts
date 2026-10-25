@@ -24,6 +24,8 @@ import { MarketBots } from './marketBots';
 import { MarketSignals } from './marketSignals';
 import { MatchService } from './lobby/service';
 import { Messages } from './messages';
+import { Bankruptcies } from './bankruptcy';
+import { Profiles } from './profile';
 import { Logger } from './log';
 import { NewsScheduler } from './news/scheduler';
 import { NewsService } from './news/service';
@@ -38,6 +40,7 @@ import { registerEarningsRoutes } from './routes/earnings';
 import { registerLimitRoutes } from './routes/limits';
 import { registerNewsRoutes } from './routes/news';
 import { registerChatRoutes } from './routes/chat';
+import { registerProfileRoutes } from './routes/profile';
 import { registerCallRoutes } from './routes/calls';
 import { registerMessageRoutes } from './routes/messages';
 import { registerSocialRoutes } from './routes/social';
@@ -71,6 +74,8 @@ export interface AppOptions {
   readonly botWaitMs?: number;
   /** The bots also trade in the main market with their own Career accounts (the game turns this on in main.ts; tests of other things leave it out). */
   readonly marketBots?: boolean;
+  /** The fee on stock orders in Career, in basis points of the order's value (the game turns it on in main.ts with STOCK_FEE_BPS; tests of other things leave it at 0). */
+  readonly stockFeeBps?: number;
   /** Folder with the built web app (npm run build), served by the same server. */
   readonly staticDir?: string;
   /** Extra setup after the services exist (news, lobby). */
@@ -192,7 +197,7 @@ export function createApp(options: AppOptions): App {
   log.info('auth', owner ? `The owner is "${owner}".` : config.ownerUsername ? `The owner will be "${config.ownerUsername}" once that name is registered.` : 'There is no owner (the admin panel is off). Run "npm run owner -- <username>" to choose one.');
   const halts = new Halts(db);
   halts.setClock(() => world.sim.tick);
-  const trading = new Trading(db, world, now);
+  const trading = new Trading(db, world, now, undefined, options.stockFeeBps ?? 0);
   trading.setHalts(halts);
   trading.setFlow(flow);
   trading.setMarginCosts(costs);
@@ -324,9 +329,21 @@ export function createApp(options: AppOptions): App {
     notifyChallenges: (userId) => hub.publishTo(userId, 'challenges', {}),
     audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
   });
+  // Profile pictures (everybody sees them; the owner can remove any) and who is online.
+  const profiles = new Profiles({
+    db,
+    now,
+    onlineIds: () => hub.userIds(),
+    publish: (event, data) => hub.publishSignedIn(event, data),
+    audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
+  });
   const launches = new Launches({ db, world, trading, halts, news: newsService, views, hub, log, now, notify: () => hub.publish('notice', admin.notice()), inMatch: (userId) => matches.inMatch(userId) });
   const breaker = options.autoPauses === false ? null : new CircuitBreaker({ world, halts, log, onChange: () => { views.invalidate(); hub.publish('notice', admin.notice()); } });
   breakerStep = breaker ? (tick) => breaker.step(tick) : null;
+  // Weak small companies that get a pile of bad news can go bankrupt (server/bankruptcy.ts): the price stops and nothing new can be opened in them.
+  const bankruptcies = new Bankruptcies({ db, world, news: newsService, log, now, onDeclared: () => { views.invalidate(); hub.publish('notice', admin.notice()); } });
+  trading.setBankrupt((companyId) => bankruptcies.isBankrupt(companyId));
+  views.setBankrupt(() => bankruptcies.ids());
   const services: Services = {
     config,
     db,
@@ -350,6 +367,8 @@ export function createApp(options: AppOptions): App {
     challenges,
     chat,
     messages,
+    profiles,
+    bankruptcies,
     calls,
     news: newsService,
     scheduler,
@@ -374,6 +393,7 @@ export function createApp(options: AppOptions): App {
   registerSocialRoutes(router, services);
   registerChatRoutes(router, services);
   registerMessageRoutes(router, services);
+  registerProfileRoutes(router, services);
   registerCallRoutes(router, services);
   options.extend?.(services, router);
 
@@ -393,6 +413,16 @@ export function createApp(options: AppOptions): App {
       marketBots?.step();
     } catch (error) {
       log.error('bots', `Market bot update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
+      bankruptcies.step();
+    } catch (error) {
+      log.error('bankruptcy', `Bankruptcy check failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
+      social.rollWeek();
+    } catch (error) {
+      log.error('social', `Weekly board update failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     try {
       calls.sweep();

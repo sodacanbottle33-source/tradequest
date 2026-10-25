@@ -2,6 +2,8 @@
 // and reset a Career account. Every action is a request to the server, which does (or refuses) it and writes it to the log.
 import { useMemo, useState } from 'react';
 import { ApiError, api } from './api';
+import { Avatar } from './Avatar';
+import { useProfiles } from './profileStore';
 import { dollarsToCents, newRequestId, whenText } from './adminUtil';
 import { formatCents } from './format';
 import { useShared } from './store';
@@ -29,6 +31,7 @@ function banText(p: AdminPlayer): string {
 
 export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminState | null; query: string; onQuery: (q: string) => void; reload: () => Promise<void> }) {
   const { companies } = useShared();
+  const { avatars } = useProfiles();
   const [selected, setSelected] = useState<string | null>(null);
   const [kind, setKind] = useState<Kind>('cash');
   const [amountText, setAmountText] = useState('');
@@ -319,6 +322,29 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
                       Cancel
                     </button>
                   </div>
+                </div>
+              )}
+
+              <h3 className="admin-h3">Profile picture</h3>
+              {avatars[player.username] === undefined ? (
+                <p className="hint" data-testid="admin-no-picture">
+                  {player.username} has no picture.
+                </p>
+              ) : (
+                <div className="pfp-edit">
+                  <Avatar username={player.username} size={56} />
+                  <button
+                    type="button"
+                    className="btn btn-sell"
+                    disabled={busy}
+                    onClick={() => void run(async () => {
+                      const r = await api.adminAvatarRemove({ requestId: newRequestId(), username: player.username });
+                      return `${r.username}'s picture is removed. They can choose another one.`;
+                    })}
+                    data-testid="admin-remove-picture"
+                  >
+                    Remove {player.username}&apos;s picture
+                  </button>
                 </div>
               )}
             </>

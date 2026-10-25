@@ -58,6 +58,13 @@ export function registerChatRoutes(router: Router, s: Services): void {
     return { ok: true };
   });
 
+  router.post('/api/chat/delete', async (ctx) => {
+    const user = ctx.requireUser();
+    limited(user.id, 10, 'deletes');
+    const b = await ctx.body();
+    return guard(() => chat.removeOwn(user, b.messageId));
+  });
+
   // ---- the owner ---------------------------------------------------------------------------------------------------------
 
   router.get('/api/admin/chat', (ctx) => {

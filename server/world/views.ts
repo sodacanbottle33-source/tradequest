@@ -22,6 +22,8 @@ export interface OverviewRow {
   readonly launched: boolean;
   /** The money pool behind a coin that was launched with one (null for every other company): the cash in it, and `dead` once its developer took it all. */
   readonly pool: { readonly cents: number; readonly dead: boolean } | null;
+  /** True for a company that went bankrupt (server/bankruptcy.ts): its price stopped for good, nobody can open a new position, holders can still sell. */
+  readonly bankrupt: boolean;
   readonly price: number;
   readonly bid: number;
   readonly ask: number;
@@ -62,6 +64,7 @@ export class MarketViews {
   private halts: Halts | null = null;
   private launchedIds: () => ReadonlySet<number> = () => new Set();
   private pools: () => ReadonlyMap<number, { cents: number; dead: boolean }> = () => new Map();
+  private bankruptIds: () => ReadonlySet<number> = () => new Set();
 
   constructor(private readonly world: WorldRuntime) {}
 
@@ -82,6 +85,12 @@ export class MarketViews {
     this.invalidate();
   }
 
+  /** Where the ids of the companies that went bankrupt come from (asked once for each set of rows built). */
+  setBankrupt(source: () => ReadonlySet<number>): void {
+    this.bankruptIds = source;
+    this.invalidate();
+  }
+
   /** Forget the rows built for this tick (after a halt or resume, so the change shows at once). */
   invalidate(): void {
     this.cache = null;
@@ -93,19 +102,20 @@ export class MarketViews {
     if (this.cache && this.cacheTick === w.sim.tick) return this.cache;
     const launched = this.launchedIds();
     const pools = this.pools();
-    const rows: OverviewRow[] = w.companies.map((c) => this.row(c, launched.has(c.id), pools.get(c.id) ?? null));
+    const bankrupt = this.bankruptIds();
+    const rows: OverviewRow[] = w.companies.map((c) => this.row(c, launched.has(c.id), pools.get(c.id) ?? null, bankrupt.has(c.id)));
     this.cache = { tick: w.sim.tick, ms: w.msOfTick(w.sim.tick), companies: rows };
     this.cacheTick = w.sim.tick;
     return this.cache;
   }
 
-  private row(c: Company, launched: boolean, pool: { cents: number; dead: boolean } | null): OverviewRow {
+  private row(c: Company, launched: boolean, pool: { cents: number; dead: boolean } | null, bankrupt: boolean): OverviewRow {
     const w = this.world;
     const i = c.id;
     if (!w.sim.isListed(i)) {
       return {
         id: i, ticker: c.ticker, name: c.name, sector: c.sector, tier: c.tier, trading: false, halted: false, autoPause: null,
-        listsInTicks: Math.max(0, c.listingTick - w.sim.tick), launched, pool, price: 0, bid: 0, ask: 0, spreadBps: 0, open24h: 0,
+        listsInTicks: Math.max(0, c.listingTick - w.sim.tick), launched, pool, bankrupt, price: 0, bid: 0, ask: 0, spreadBps: 0, open24h: 0,
         changeBps: 0, high24h: 0, low24h: 0, volume24h: 0, marketCapCents: 0, liquidity: liquidityLabel(c.liquidity), mood: 'Normal',
       };
     }
@@ -129,6 +139,7 @@ export class MarketViews {
       listsInTicks: 0,
       launched,
       pool,
+      bankrupt,
       price: cents(q.mid),
       bid: cents(q.bid),
       ask: cents(q.ask),

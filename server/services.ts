@@ -2,6 +2,7 @@
 
 import type { Admin } from './admin';
 import type { Auth, User } from './auth';
+import type { Bankruptcies } from './bankruptcy';
 import type { Calls } from './calls';
 import type { Challenges } from './challenges';
 import type { Chat } from './chat';
@@ -16,6 +17,7 @@ import type { Leases } from './lease';
 import type { MatchService } from './lobby/service';
 import type { Logger } from './log';
 import type { Messages } from './messages';
+import type { Profiles } from './profile';
 import type { NewsScheduler } from './news/scheduler';
 import type { NewsService } from './news/service';
 import type { SseHub } from './sse';
@@ -56,6 +58,10 @@ export interface Services {
   readonly chat: Chat;
   /** Private chats: 1-to-1 and small groups, requests, blocking and reports (server/messages.ts). */
   readonly messages: Messages;
+  /** Profile pictures and who is online (server/profile.ts). */
+  readonly profiles: Profiles;
+  /** Companies that went bankrupt, and the daily check that decides if another one does (server/bankruptcy.ts). */
+  readonly bankruptcies: Bankruptcies;
   /** Voice calls between two friends: ringing and passing the connection messages, nothing saved (server/calls.ts). */
   readonly calls: Calls;
   /** Null only when the app was created with news switched off (some tests). */

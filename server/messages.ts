@@ -253,8 +253,9 @@ interface UserLite {
 
 type Check = { readonly ok: true } | { readonly ok: false; readonly code: MessageErrorCode; readonly message: string };
 
-/** What makes a message of a conversation visible to one member: sent after he joined, not by somebody he blocked or the owner banned. */
+/** What makes a message of a conversation visible to one member: sent after he joined, not deleted by its writer, not by somebody he blocked or the owner banned. */
 const VISIBLE = `m.id > cm.since_id
+  AND m.deleted_ms IS NULL
   AND NOT EXISTS (SELECT 1 FROM blocks bl WHERE bl.blocker_id = cm.user_id AND bl.blocked_id = m.user_id)
   AND NOT EXISTS (SELECT 1 FROM user_bans ub WHERE ub.user_id = m.user_id AND (ub.until_ms IS NULL OR ub.until_ms > ?))`;
 
@@ -892,6 +893,30 @@ export class Messages {
       now,
       JSON.stringify(lines),
     );
+  }
+
+  /**
+   * The writer deletes a message of his own: it disappears for everybody in the chat. A report already made about it keeps its own copy for the
+   * owner. Deleting it twice changes nothing. Somebody else's message cannot be deleted (it can be reported or the player blocked).
+   */
+  deleteOwn(me: User, messageId: unknown): { ok: true } {
+    const id = this.idOf(messageId, 'messageId');
+    const msg = this.d.db.get<{ user_id: number; conversation_id: number; deleted_ms: number | null }>(
+      `SELECT m.user_id, m.conversation_id, m.deleted_ms FROM private_messages m
+         JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ? AND cm.state = 'member'
+        WHERE m.id = ?`,
+      me.id,
+      id,
+    );
+    if (!msg) throw new MessageError('no_such_message', 'That message is gone.', 404);
+    if (msg.user_id !== me.id) throw new MessageError('bad_request', 'You can only delete your own messages.', 403);
+    if (msg.deleted_ms !== null) return { ok: true };
+    this.d.db.run('UPDATE private_messages SET deleted_ms = ? WHERE id = ? AND deleted_ms IS NULL', this.d.now(), id);
+    const members = this.memberIds(msg.conversation_id);
+    // Every open page takes that one message off the screen at once (an older one it holds is not found again by a refresh of the newest page).
+    for (const member of new Set(members)) this.d.publishTo(member, 'pm_deleted', { conversationId: msg.conversation_id, id });
+    this.nudge(members);
+    return { ok: true };
   }
 
   // ---- the owner ---------------------------------------------------------------------------------------------------

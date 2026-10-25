@@ -256,6 +256,22 @@ export class Chat {
     this.d.db.run('INSERT OR IGNORE INTO chat_reports(message_id, reporter_id, created_ms) VALUES (?, ?, ?)', id, me.id, now);
   }
 
+  /**
+   * A player deletes a message he wrote himself: it disappears for everybody. If other players had reported it, the owner still sees those
+   * reports (with the text) until he closes them, so deleting a message does not make a rule-breaker disappear from his list.
+   * Somebody else's message cannot be deleted by a player (the owner uses his own tool). Deleting it twice changes nothing.
+   */
+  removeOwn(me: User, messageId: unknown): { ok: true } {
+    const id = this.messageId(messageId);
+    const msg = this.d.db.get<{ user_id: number; deleted_ms: number | null }>('SELECT user_id, deleted_ms FROM chat_messages WHERE id = ?', id);
+    if (!msg) throw new ChatError('no_such_message', 'That message is gone.', 404);
+    if (msg.user_id !== me.id) throw new ChatError('bad_request', 'You can only delete your own messages.', 403);
+    if (msg.deleted_ms !== null) return { ok: true };
+    this.d.db.run('UPDATE chat_messages SET deleted_ms = ?, deleted_by = ? WHERE id = ? AND deleted_ms IS NULL', this.d.now(), me.id, id);
+    this.d.publish('chat_removed', { id });
+    return { ok: true };
+  }
+
   private messageId(value: unknown): number {
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new ChatError('bad_request', 'messageId must be the number of a message.', 400);
     return value;
@@ -381,7 +397,7 @@ export class Chat {
     const reports = this.d.db.all<{ message_id: number; body: string; created_ms: number; username: string; display_name: string; reporters: number; first_ms: number; kind: 'mute' | 'ban' | null }>(
       `SELECT m.id AS message_id, m.body, m.created_ms, u.username, u.display_name, COUNT(r.id) AS reporters, MIN(r.created_ms) AS first_ms, cr.kind
          FROM chat_reports r JOIN chat_messages m ON m.id = r.message_id JOIN users u ON u.id = m.user_id LEFT JOIN chat_restrictions cr ON cr.user_id = u.id
-        WHERE r.resolved_ms IS NULL AND m.deleted_ms IS NULL
+        WHERE r.resolved_ms IS NULL AND (m.deleted_ms IS NULL OR m.deleted_by = m.user_id)
         GROUP BY m.id ORDER BY first_ms DESC, m.id DESC LIMIT 100`,
     );
     const restricted = this.d.db.all<{ username: string; display_name: string; kind: 'mute' | 'ban'; until_ms: number | null; reason: string; created_ms: number; by: string }>(

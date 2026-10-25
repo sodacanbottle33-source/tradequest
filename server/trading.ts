@@ -118,6 +118,8 @@ export interface PositionView {
   readonly chargedCents: number;
   /** True for shares of a coin whose developer took the money out of its pool (a rug pull): they are worth nothing and cannot be sold. */
   readonly dead: boolean;
+  /** True for shares of a company that went bankrupt (server/bankruptcy.ts): the price stopped, and the position can only be closed. */
+  readonly bankrupt: boolean;
 }
 
 export interface AccountView {
@@ -277,6 +279,7 @@ export class Trading {
   private gate: TradeGate | null = null;
   private companyRule: CompanyRule | null = null;
   private halts: Halts | null = null;
+  private bankrupt: ((companyId: number) => boolean) | null = null;
   private flow: FlowService | null = null;
   private costs: MarginCosts | null = null;
   private leverageListener: (() => void) | null = null;
@@ -287,13 +290,17 @@ export class Trading {
     private readonly now: () => number,
     /** The memecoin fee in basis points of an order's value. The game always uses MEME_FEE_BPS; tests may pass another rate (0 = no fee). */
     private readonly memeFeeBps: number = MEME_FEE_BPS,
+    /** The stock fee in basis points of an order's value. The game passes STOCK_FEE_BPS (server/main.ts); left out it is 0, so a test of something else sees no stock fee. */
+    private readonly stockFeeBps: number = 0,
   ) {
     if (!Number.isSafeInteger(memeFeeBps) || memeFeeBps < 0 || memeFeeBps > 10_000) throw new Error('The memecoin fee must be a whole number of basis points from 0 to 10000.');
+    if (!Number.isSafeInteger(stockFeeBps) || stockFeeBps < 0 || stockFeeBps > 10_000) throw new Error('The stock fee must be a whole number of basis points from 0 to 10000.');
   }
 
-  /** The fee rate (basis points) an order pays: memecoins in Career only; stocks and every 1v1 match order pay none. */
+  /** The fee rate (basis points) an order pays: memecoins and stocks in Career; every 1v1 match order pays none. */
   private feeBpsFor(companyId: number, kind: 'career' | 'match' | undefined): number {
-    return kind !== 'match' && this.world.companies[companyId]?.sector === 'meme' ? this.memeFeeBps : 0;
+    if (kind === 'match') return 0;
+    return this.world.companies[companyId]?.sector === 'meme' ? this.memeFeeBps : this.stockFeeBps;
   }
 
   setCompanyRule(rule: CompanyRule | null): void {
@@ -307,6 +314,23 @@ export class Trading {
   /** Lets the owner stop trading in a company (see halts.ts). */
   setHalts(halts: Halts | null): void {
     this.halts = halts;
+  }
+
+  /** Tells the trading rules which companies went bankrupt (server/bankruptcy.ts): nothing new can be opened in them. */
+  setBankrupt(source: ((companyId: number) => boolean) | null): void {
+    this.bankrupt = source;
+  }
+
+  /** True for a company that went bankrupt. */
+  isBankrupt(companyId: number): boolean {
+    return this.bankrupt !== null && this.bankrupt(companyId);
+  }
+
+  /** A bankrupt company takes only orders that close a position (a sale, or the cover of a short) at the price it stopped at. */
+  private checkBankrupt(companyId: number, opening: boolean, ticker: string): void {
+    if (opening && this.isBankrupt(companyId)) {
+      throw new OrderError('not_allowed', `${ticker} went bankrupt. Nobody can buy or short it any more. If you hold it you can still sell it (or cover a short) at the price it stopped at. Nothing was changed.`, { bankrupt: true }, 403);
+    }
   }
 
   /** Lets Career trades move prices (see flow.ts). Without it, trades never change a price. */
@@ -399,6 +423,7 @@ export class Trading {
         unrealizedCents: equity - p.cost_cents,
         ...this.costView(acc.kind, company, p),
         dead,
+        bankrupt: this.isBankrupt(p.company_id),
       };
     });
     const realized = this.db.get<{ s: number | null }>('SELECT SUM(realized_cents) AS s FROM trades WHERE account_id = ? AND id > ?', accountId, this.resetMark(accountId))?.s ?? 0;
@@ -523,6 +548,7 @@ export class Trading {
     const refused = acc && this.companyRule ? this.companyRule(acc, companyId) : null;
     if (refused) throw new OrderError('not_allowed', refused, {}, 403);
     const ticker = this.world.companies[companyId]?.ticker ?? '?';
+    this.checkBankrupt(companyId, opening, ticker);
     const pool = this.poolFor(companyId, acc?.kind);
     this.checkPool(pool, ticker, { short, leverage: lev, exits: false });
     this.checkFineHasPool(scale, pool, ticker);
@@ -887,6 +913,7 @@ export class Trading {
     if (refused) throw new OrderError('not_allowed', refused, {}, 403);
     // A coin with a money pool takes market orders only (pools.ts): a limit order would sit and wait while its developer can empty the pool.
     const ticker = this.world.companies[companyId]?.ticker ?? '?';
+    this.checkBankrupt(companyId, opening, ticker);
     const pool = this.poolFor(companyId, acc.kind);
     this.checkPool(pool, ticker, { short, leverage: 1, exits: false });
     if (pool) throw new OrderError('not_allowed', `${ticker}: ${POOL_SPOT_ONLY} Nothing was placed.`, { spotOnly: true }, 403);
@@ -931,6 +958,7 @@ export class Trading {
 
       const company = this.world.companies[req.companyId];
       if (!company) throw new OrderError('unknown_company', 'That company does not exist.', {}, 404);
+      this.checkBankrupt(req.companyId, opening, company.ticker);
       // A coin with a money pool takes plain market buys and sells only, and nothing once its pool was taken (pools.ts).
       const pool = this.poolFor(req.companyId, acc.kind);
       this.checkPool(pool, company.ticker, { short, leverage, exits: exits.stop !== undefined || exits.take !== undefined });

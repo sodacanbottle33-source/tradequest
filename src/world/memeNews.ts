@@ -4,6 +4,13 @@
 
 import { MORE_MEME_COMPANY_TEMPLATES, MORE_MEME_LISTING_TEMPLATES, MORE_MEME_SECTOR_TEMPLATES, MORE_MEME_VIRAL_TEMPLATES } from './memeNewsMore';
 import type { CompanyCategory, TemplateSet, ViralKind } from './newsText';
+import {
+  MORE2_MEME_COMPANY_TEMPLATES,
+  MORE2_MEME_FADE_TEMPLATES,
+  MORE2_MEME_LISTING_TEMPLATES,
+  MORE2_MEME_SECTOR_TEMPLATES,
+  MORE2_MEME_VIRAL_TEMPLATES,
+} from './memeNewsMore2';
 import { plus, plusEach } from './templateSets';
 
 const product: TemplateSet = {
@@ -255,7 +262,7 @@ const BASE_MEME_VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = {
  * Follow-ups when a low-credibility viral story about a COIN fades (stocks have their own, VIRAL_FADE_TEMPLATES in newsText.ts). The direction is the way the price
  * goes back: "negative" after a hype story (the excitement cools), "positive" after a scary one (the claim is cleared up).
  */
-export const MEME_FADE_TEMPLATES: TemplateSet = {
+const BASE_MEME_FADE_TEMPLATES: TemplateSet = {
   negative: [
     ['{co} hype cools off', 'The chat around {tk} is quieter than yesterday. Traders who rushed in are taking their coins and leaving.'],
     ['Buyers fade from {co} after the viral spike', 'The rush of attention around {tk} was not followed by anything new. {ceo} went back to posting memes.'],
@@ -278,8 +285,15 @@ export const MEME_FADE_TEMPLATES: TemplateSet = {
   ],
 };
 
-// The first batch above plus the extra wordings (memeNewsMore.ts), joined by templateSets.ts (the extra ones sit at the end of every list).
-export const MEME_COMPANY_TEMPLATES: Readonly<Record<CompanyCategory, TemplateSet>> = plusEach(BASE_MEME_COMPANY_TEMPLATES, MORE_MEME_COMPANY_TEMPLATES);
-export const MEME_LISTING_TEMPLATES: TemplateSet = plus(BASE_MEME_LISTING_TEMPLATES, MORE_MEME_LISTING_TEMPLATES);
-export const MEME_SECTOR_TEMPLATES: TemplateSet = plus(BASE_MEME_SECTOR_TEMPLATES, MORE_MEME_SECTOR_TEMPLATES);
-export const MEME_VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = plusEach(BASE_MEME_VIRAL_TEMPLATES, MORE_MEME_VIRAL_TEMPLATES);
+// The first batch above plus the extra wordings (memeNewsMore.ts, memeNewsMore2.ts), joined by templateSets.ts (the extra ones sit at the end of every list).
+export const MEME_COMPANY_TEMPLATES: Readonly<Record<CompanyCategory, TemplateSet>> = plusEach(
+  plusEach(BASE_MEME_COMPANY_TEMPLATES, MORE_MEME_COMPANY_TEMPLATES),
+  MORE2_MEME_COMPANY_TEMPLATES,
+);
+export const MEME_LISTING_TEMPLATES: TemplateSet = plus(plus(BASE_MEME_LISTING_TEMPLATES, MORE_MEME_LISTING_TEMPLATES), MORE2_MEME_LISTING_TEMPLATES);
+export const MEME_SECTOR_TEMPLATES: TemplateSet = plus(plus(BASE_MEME_SECTOR_TEMPLATES, MORE_MEME_SECTOR_TEMPLATES), MORE2_MEME_SECTOR_TEMPLATES);
+export const MEME_VIRAL_TEMPLATES: Readonly<Record<ViralKind, TemplateSet>> = plusEach(
+  plusEach(BASE_MEME_VIRAL_TEMPLATES, MORE_MEME_VIRAL_TEMPLATES),
+  MORE2_MEME_VIRAL_TEMPLATES,
+);
+export const MEME_FADE_TEMPLATES: TemplateSet = plus(BASE_MEME_FADE_TEMPLATES, MORE2_MEME_FADE_TEMPLATES);

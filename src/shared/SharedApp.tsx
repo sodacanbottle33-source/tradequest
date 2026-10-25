@@ -22,6 +22,7 @@ import { Notices } from './Notices';
 import { EarningsScreen } from './EarningsScreen';
 import { Toasts } from './Toasts';
 import { ProfileMenu } from './ProfileMenu';
+import { WinBurstLayer } from './WinBurst';
 import { sharedStore, useShared } from './store';
 
 type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'players' | 'chat' | 'messages' | 'account';
@@ -163,6 +164,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
       <ChallengeBanner />
       <Toasts />
       <CallBar />
+      <WinBurstLayer />
 
       {s.health && s.health.stalled && (
         <p className="notice error" role="alert">

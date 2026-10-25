@@ -30,6 +30,29 @@ export function foldTick(candles: readonly ServerCandle[], tick: number, price: 
   return [...candles.slice(0, -1), done, fresh];
 }
 
+/**
+ * What the chart has folded so far: the candles it was loaded with (`base`), the newest tick folded in, and the result.
+ * Each new tick is folded into the PREVIOUS result, not into the loaded candles again: the loaded candles are only refreshed from the
+ * server now and then, and folding just the latest price into them would leave out every price in between (the wick of the forming
+ * candle would miss a quick spike until the next reload, and then jump).
+ */
+export interface FoldState {
+  readonly base: readonly ServerCandle[];
+  readonly tick: number;
+  readonly candles: readonly ServerCandle[];
+}
+
+/** Folds one more tick. A different `base` (the chart was reloaded) starts again from the new candles. */
+export function foldMore(state: FoldState | null, base: readonly ServerCandle[], tick: number, price: number, res: Resolution): FoldState {
+  const from = state !== null && state.base === base && tick >= state.tick ? state.candles : base;
+  return { base, tick, candles: foldTick(from, tick, price, res) };
+}
+
+/** True when ticks went by that were never folded in (the page was asleep or the stream stalled): the wicks may miss prices, so ask the server again. */
+export function missedTicks(previousTick: number, tick: number): boolean {
+  return previousTick > 0 && tick - previousTick > 1;
+}
+
 /** Server candles → the chart's numbering (first candle is 1, no gaps). */
 export function toChartCandles(candles: readonly ServerCandle[], res: Resolution): { candles: LiveCandle[]; first: number } {
   const size = CANDLE_TICKS[res];

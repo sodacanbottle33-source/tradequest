@@ -27,6 +27,8 @@ export interface OverviewRow {
    * all (a rug pull): the coin is worthless then and cannot be traded.
    */
   readonly pool: { readonly cents: number; readonly dead: boolean } | null;
+  /** True for a company that went bankrupt: its price stopped for good, nobody can open a new position, and holders can still sell. */
+  readonly bankrupt: boolean;
   readonly price: number;
   readonly bid: number;
   readonly ask: number;
@@ -188,6 +190,8 @@ export interface Position {
   readonly chargedCents: number;
   /** True for shares of a coin whose developer took the money out of its pool: worth nothing, cannot be sold. */
   readonly dead: boolean;
+  /** True for shares of a company that went bankrupt: the price stopped; the position can still be closed. */
+  readonly bankrupt: boolean;
 }
 
 export interface Account {
@@ -811,6 +815,38 @@ export interface Leaderboard {
   readonly size: number;
   /** Where the player stands in this view, also outside the top; null when he is not ranked (the owner). */
   readonly me: { readonly rank: number; readonly netWorthCents: number; readonly inTop: boolean } | null;
+  readonly updatedMs: number;
+}
+
+/** One line of the weekly board: the growth of the net worth since Monday 00:00 Tokyo time, ranked by the percentage (server/social.ts). */
+export interface WeeklyEntry {
+  readonly rank: number;
+  readonly username: string;
+  readonly displayName: string;
+  readonly gainCents: number;
+  readonly gainPct: number;
+  readonly netWorthCents: number;
+  readonly relation: Relation;
+}
+
+export interface WeeklyWinner {
+  readonly username: string;
+  readonly displayName: string;
+  readonly gainCents: number;
+  readonly gainPct: number;
+}
+
+export interface WeeklyBoard {
+  readonly scope: BoardScope;
+  readonly weekStartMs: number;
+  readonly endsMs: number;
+  readonly rows: WeeklyEntry[];
+  readonly total: number;
+  readonly size: number;
+  /** Where the player stands; null when he is not ranked (the owner, or less than the minimum at the start of the week). */
+  readonly me: { readonly rank: number; readonly gainCents: number; readonly gainPct: number; readonly inTop: boolean } | null;
+  readonly minStartCents: number;
+  readonly lastWeek: { readonly weekStartMs: number; readonly winners: WeeklyWinner[] };
   readonly updatedMs: number;
 }
 

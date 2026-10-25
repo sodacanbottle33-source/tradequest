@@ -4,6 +4,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
+import { Avatar, OnlineDot, useOnlineWatch } from './Avatar';
 import { lengthOf } from './chatUtil';
 import { lastLine, previewOf, requestTitle, whenLabel } from './messagesUtil';
 import { PmThreadView } from './PmThreadView';
@@ -316,6 +317,7 @@ function Requests({ requests, onOpen }: { requests: readonly PmRequest[]; onOpen
 export function MessagesScreen() {
   const { user, messages, pmOpen, pmThread, pmCompose, tickMs } = useShared();
   const [panel, setPanel] = useState<Panel>('none');
+  useOnlineWatch();
 
   // The conversation on screen is closed when the player leaves this tab, so messages that arrive afterwards count as unread.
   useEffect(() => {
@@ -392,6 +394,12 @@ export function MessagesScreen() {
               <li key={c.id}>
                 <button type="button" className={pmOpen === c.id && panel === 'none' ? 'pm-item active' : 'pm-item'} onClick={() => open(c.id)} data-testid={`pm-open-${c.id}`} data-unread={c.unread}>
                   <span className="pm-title">
+                    {c.other && (
+                      <span className="pfp-wrap">
+                        <Avatar username={c.other.username} displayName={c.other.displayName} size={22} />
+                        <OnlineDot username={c.other.username} />
+                      </span>
+                    )}
                     <strong>{c.title}</strong>
                     {c.kind === 'group' && <span className="tag">Group</span>}
                     {c.requestState === 'waiting' && <span className="tag">Waiting for a reply</span>}

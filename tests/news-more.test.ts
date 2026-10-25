@@ -65,12 +65,12 @@ const coinWorld: Company[] = (() => {
 const coins = coinWorld.filter((c) => c.sector === 'meme');
 
 describe('how many stories the game can tell', () => {
-  it('NM-1: at least 550 different stories for stocks and 240 for memecoins, 800 together', () => {
+  it('NM-1: at least 550 different stories for stocks and 380 for memecoins, 930 together', () => {
     const stock = all('stock').length;
     const meme = all('meme').length;
     expect(stock).toBeGreaterThanOrEqual(550);
-    expect(meme).toBeGreaterThanOrEqual(240);
-    expect(stock + meme).toBeGreaterThanOrEqual(800);
+    expect(meme).toBeGreaterThanOrEqual(380);
+    expect(stock + meme).toBeGreaterThanOrEqual(930);
   });
 
   it('NM-2: no two stories of stocks share a headline, none of coins either, and no two stories anywhere share their text', () => {

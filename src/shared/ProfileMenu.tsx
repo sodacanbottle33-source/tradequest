@@ -3,7 +3,12 @@
 // the Admin panel (only for the owner) and "Log out". Whether somebody is the owner is decided by the server; this menu only
 // shows what the server said.
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { api } from './api';
 import { AuthPanel } from './AuthPanel';
+import { PICK_TYPES, shrinkPicture } from './avatarUtil';
+import { avatarUrl, useProfiles } from './profileStore';
+import { problemText } from './playersUtil';
+import { ringtoneOn, setRingtoneOn } from './ringtone';
 import { sharedStore, useShared } from './store';
 
 interface Props {
@@ -21,6 +26,91 @@ function Person() {
       <circle cx="12" cy="8" r="4" fill="currentColor" />
       <path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8z" fill="currentColor" />
     </svg>
+  );
+}
+
+/** The picture of the signed-in player (his own, if he set one), in the shape the profile button and the menu use. */
+function Mine({ username, initial, large }: { username: string; initial: string; large?: boolean }) {
+  const { avatars } = useProfiles();
+  const version = avatars[username];
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [version]);
+  if (version !== undefined && !failed) {
+    return <img className={large ? 'avatar avatar-lg avatar-img' : 'avatar avatar-img'} src={avatarUrl(username, version)} alt="" onError={() => setFailed(true)} data-testid="my-picture" />;
+  }
+  return (
+    <span className={large ? 'avatar avatar-lg' : 'avatar'} aria-hidden="true">
+      {initial}
+    </span>
+  );
+}
+
+/** Choose a picture from the device, or take it away. The browser shrinks the picture first; the server checks it again. */
+function PictureTools({ username }: { username: string }) {
+  const { avatars } = useProfiles();
+  const has = avatars[username] !== undefined;
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [ringing, setRinging] = useState(ringtoneOn());
+
+  const choose = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      const image = await shrinkPicture(file);
+      await api.setAvatar(image);
+      setNote('Your picture is changed. Everybody can see it.');
+    } catch (e) {
+      setNote(e instanceof Error && !('status' in e) ? e.message : problemText(e));
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = '';
+    }
+  };
+  const remove = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      await api.removeAvatar();
+      setNote('Your picture is removed.');
+    } catch (e) {
+      setNote(problemText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="menu-pic" data-testid="picture-tools">
+      <input ref={input} type="file" accept={PICK_TYPES} hidden onChange={(e) => void choose(e.target.files?.[0])} data-testid="picture-file" />
+      <button type="button" role="menuitem" className="menu-item" disabled={busy} onClick={() => input.current?.click()} data-testid="menu-picture">
+        {busy ? 'Working…' : has ? 'Change my picture' : 'Add a picture'}
+      </button>
+      {has && (
+        <button type="button" role="menuitem" className="menu-item" disabled={busy} onClick={() => void remove()} data-testid="menu-picture-remove">
+          Remove my picture
+        </button>
+      )}
+      <button
+        type="button"
+        role="menuitemcheckbox"
+        aria-checked={ringing}
+        className="menu-item"
+        onClick={() => {
+          setRingtoneOn(!ringing);
+          setRinging(!ringing);
+        }}
+        data-testid="menu-ringtone"
+      >
+        Call ringtone: {ringing ? 'on' : 'off'}
+      </button>
+      {note && (
+        <p className="hint menu-note" role="status" data-testid="picture-note">
+          {note}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -127,9 +217,13 @@ export function ProfileMenu({ onAccount, onAdmin, onLoggedOut }: Props) {
         data-testid="profile-button"
         onClick={() => setOpen((o) => !o)}
       >
-        <span className="avatar" aria-hidden="true">
-          {user ? initial : <Person />}
-        </span>
+        {user ? (
+          <Mine username={user.username} initial={initial} />
+        ) : (
+          <span className="avatar" aria-hidden="true">
+            <Person />
+          </span>
+        )}
       </button>
 
       {open && (
@@ -137,9 +231,7 @@ export function ProfileMenu({ onAccount, onAdmin, onLoggedOut }: Props) {
           {user ? (
             <>
               <div className="menu-head">
-                <span className="avatar avatar-lg" aria-hidden="true">
-                  {initial}
-                </span>
+                <Mine username={user.username} initial={initial} large />
                 <div className="menu-who">
                   <strong data-testid="menu-name">{user.displayName}</strong>
                   <span className="muted">@{user.username}</span>
@@ -158,6 +250,7 @@ export function ProfileMenu({ onAccount, onAdmin, onLoggedOut }: Props) {
                   Admin panel
                 </button>
               )}
+              <PictureTools username={user.username} />
               <hr className="menu-sep" />
               <button type="button" role="menuitem" className="menu-item" onClick={() => void logOut()} disabled={busy} data-testid="menu-logout">
                 Log out

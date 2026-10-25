@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { createApp } from './app';
 import { BackupRunner, backupSettingsFromEnv, restoreIfMissing, storeFromSettings } from './cloudBackup';
 import { loadConfig } from './config';
+import { STOCK_FEE_BPS } from './fees';
 import { Logger } from './log';
 
 async function main(): Promise<void> {
@@ -24,7 +25,7 @@ async function main(): Promise<void> {
     if (!status.isPrivate) log.warn('backup', `${status.repo} is a PUBLIC repository: anybody can download your database from it. Make it private.`);
     restored = (await restoreIfMissing(store, config.dbFile, log)).outcome === 'restored';
   }
-  const app = createApp({ config, log, memecoins: config.memecoins, bots: config.bots, marketBots: config.marketBots, staticDir: join(process.cwd(), 'dist') });
+  const app = createApp({ config, log, memecoins: config.memecoins, bots: config.bots, marketBots: config.marketBots, stockFeeBps: STOCK_FEE_BPS, staticDir: join(process.cwd(), 'dist') });
   const server = createServer((req, res) => {
     // Anything but a read may change saved data: the next scheduled save is then due (reads never change it).
     if (runner && req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS') res.once('close', () => runner?.markDirty());

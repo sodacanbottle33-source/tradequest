@@ -13,6 +13,7 @@ import { AuthPanel } from './AuthPanel';
 import { formatCap, formatCents, formatCount, toneOf } from './format';
 import { sharedStore, useShared } from './store';
 import type { CoinPreview, Estimate, LaunchState, LaunchView, StockLaunchPreview } from './types';
+import { celebrate, launchWin } from './winCelebration';
 
 type Message = { kind: 'ok' | 'error'; text: string } | null;
 type Preview<T> = { kind: 'none' } | { kind: 'ok'; preview: T } | { kind: 'problem'; text: string };
@@ -233,6 +234,7 @@ function CoinForm({ state, cash, onDone }: { state: LaunchState; cash: number; o
       setDev('');
       setDescription('');
       setMessage(null);
+      if (res.loaded !== false) celebrate(launchWin(res.ticker));
       await onDone({ kind: res.loaded === false ? 'error' : 'ok', text });
     } catch (error) {
       setConfirm(null);
@@ -462,6 +464,7 @@ function StockForm({ state, cash, onDone }: { state: LaunchState; cash: number; 
       setIndustry('');
       setDescription('');
       setMessage(null);
+      if (res.loaded !== false) celebrate(launchWin(res.ticker));
       await onDone({ kind: res.loaded === false ? 'error' : 'ok', text });
     } catch (error) {
       setConfirm(null);

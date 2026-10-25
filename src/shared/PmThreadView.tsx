@@ -3,6 +3,7 @@
 // Every message is shown as plain text, never as markup.
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api } from './api';
+import { Avatar, OnlineDot, useOnlineWatch } from './Avatar';
 import { CallButton } from './CallBar';
 import { lengthOf, timeLabel, waitWords } from './chatUtil';
 import { friendsToInvite, membersLine } from './messagesUtil';
@@ -44,12 +45,17 @@ function SureButton({ label, question, busy, onYes, testId, danger = false }: { 
   );
 }
 
-function Line({ message, mine, reported, onReport }: { message: PmMessage; mine: boolean; reported: boolean; onReport: (id: number) => void }) {
+function Line({ message, mine, reported, onReport, onDelete }: { message: PmMessage; mine: boolean; reported: boolean; onReport: (id: number) => void; onDelete: (id: number) => void }) {
   const [asking, setAsking] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const canReport = !mine && message.role !== 'owner';
   return (
     <li className={mine ? 'chat-msg mine' : 'chat-msg'} data-testid="pm-message" data-id={message.id} data-username={message.username}>
       <div className="chat-meta">
+        <span className="pfp-wrap">
+          <Avatar username={message.username} displayName={message.displayName} size={22} />
+          <OnlineDot username={message.username} />
+        </span>
         <strong>{message.displayName}</strong>
         {message.role === 'owner' && <span className="badge-owner">Owner</span>}
         <span className="muted">{timeLabel(message.createdMs)}</span>
@@ -79,6 +85,30 @@ function Line({ message, mine, reported, onReport }: { message: PmMessage; mine:
             </>
           )}
           {canReport && reported && <span className="muted">Reported</span>}
+          {mine && !deleting && (
+            <button type="button" className="link-btn" onClick={() => setDeleting(true)} data-testid={`pm-delete-${message.id}`}>
+              Delete
+            </button>
+          )}
+          {mine && deleting && (
+            <>
+              <span className="muted">Delete for everybody?</span>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setDeleting(false);
+                  onDelete(message.id);
+                }}
+                data-testid={`pm-delete-yes-${message.id}`}
+              >
+                Yes
+              </button>
+              <button type="button" className="link-btn" onClick={() => setDeleting(false)}>
+                No
+              </button>
+            </>
+          )}
         </span>
       </div>
       <p className="chat-text">{message.text}</p>
@@ -98,6 +128,7 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
   const [renaming, setRenaming] = useState<string | null>(null);
   const [inviting, setInviting] = useState('');
   const log = useRef<HTMLUListElement | null>(null);
+  useOnlineWatch();
   const stick = useRef(true);
   const asked = useRef<number | null>(null);
   const conv = thread.conversation;
@@ -189,6 +220,15 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
         next.delete(id);
         return next;
       });
+      setError(problemText(e));
+    }
+  };
+
+  const remove = async (id: number) => {
+    try {
+      await api.messagesDelete(id);
+      sharedStore.removePrivateMessage(thread.id, id);
+    } catch (e) {
       setError(problemText(e));
     }
   };
@@ -360,7 +400,7 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
       <ul className="chat-log pm-log" ref={log} role="log" aria-live="polite" aria-label="Messages" data-testid="pm-log" onScroll={onScroll}>
         {thread.messages.length === 0 && <li className="hint">No messages yet.</li>}
         {thread.messages.map((m) => (
-          <Line key={m.id} message={m} mine={m.username === me} reported={reported.has(m.id)} onReport={(id) => void report(id)} />
+          <Line key={m.id} message={m} mine={m.username === me} reported={reported.has(m.id)} onReport={(id) => void report(id)} onDelete={(id) => void remove(id)} />
         ))}
       </ul>
 

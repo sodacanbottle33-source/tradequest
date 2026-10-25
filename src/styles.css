@@ -1798,6 +1798,7 @@ code {
 }
 .badge-owner,
 .badge-banned,
+.badge-bankrupt,
 .badge-halted {
   display: inline-block;
   font-family: var(--mono);
@@ -1818,6 +1819,11 @@ code {
 .badge-banned {
   background: var(--down);
   color: #1c0404;
+}
+.badge-bankrupt {
+  background: transparent;
+  color: var(--down);
+  border: 1px solid var(--down);
 }
 .modal-backdrop {
   position: fixed;
@@ -2374,11 +2380,13 @@ code {
   .burst-banner,
   .burst-icon,
   .burst-flash,
+  .win-burst .piece,
   .fx-shake,
   .call-bar.incoming {
     animation: none !important;
   }
   .burst-origin,
+  .win-burst .piece,
   .burst-flash,
   .live-ring,
   .live-ping,
@@ -2493,7 +2501,7 @@ code {
 .chat-meta {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 4px 8px;
   font-size: 13px;
 }
@@ -2796,4 +2804,115 @@ code {
   50% {
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45), 0 0 0 8px rgba(245, 184, 61, 0);
   }
+}
+
+/* ---- profile pictures and the online dot (src/shared/Avatar.tsx) ---- */
+.pfp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--panel-2);
+  color: #fff;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+  user-select: none;
+}
+.pfp-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.online-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--up);
+  border: 2px solid var(--panel);
+  box-sizing: content-box;
+}
+.person {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pfp-edit {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.podium {
+  list-style: none;
+  margin: 6px 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.podium .rank {
+  display: inline-block;
+  min-width: 1.4em;
+  font-weight: 700;
+  color: var(--accent);
+}
+.avatar-img {
+  object-fit: cover;
+  background: var(--panel-2);
+}
+.menu-pic {
+  display: flex;
+  flex-direction: column;
+}
+.menu-note {
+  margin: 4px 12px 8px;
+}
+
+/* ---------- Celebrations for your own wins and launches, and gentle entrances on My account and Launch (looks only) ---------- */
+.win-burst .win-x {
+  font-size: 46px;
+  letter-spacing: -1px;
+  white-space: nowrap;
+  max-width: 94vw;
+}
+.win-burst.level-2 .win-x { font-size: 62px; }
+.win-burst.level-3 .win-x { font-size: 80px; }
+.win-burst[data-kind='launch'] .win-x { font-size: 54px; letter-spacing: 2px; }
+.win-burst .burst-sub { max-width: 90vw; }
+@media (max-width: 560px) {
+  .win-burst .win-x { font-size: 34px; }
+  .win-burst.level-2 .win-x { font-size: 44px; }
+  .win-burst.level-3 .win-x { font-size: 54px; }
+  .win-burst[data-kind='launch'] .win-x { font-size: 40px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes rise-in {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: none; }
+  }
+  .account-layout > .card,
+  .launch-layout > .card {
+    animation: rise-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .account-layout > .card:nth-child(2),
+  .launch-layout > .card:nth-child(2) { animation-delay: 70ms; }
+  .account-layout > .card:nth-child(3),
+  .launch-layout > .card:nth-child(3) { animation-delay: 140ms; }
+  .account-layout > .card:nth-child(4),
+  .launch-layout > .card:nth-child(4) { animation-delay: 210ms; }
+  .account-layout > .card:nth-child(n + 5),
+  .launch-layout > .card:nth-child(n + 5) { animation-delay: 280ms; }
+  .account-layout tbody tr,
+  .launch-card {
+    animation: rise-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  .launch-card { transition: background-color 0.2s ease; }
+  .launch-card:hover { background: rgba(255, 255, 255, 0.03); }
 }

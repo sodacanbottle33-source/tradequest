@@ -110,6 +110,13 @@ export function registerMessageRoutes(router: Router, s: Services): void {
     return { ok: true };
   });
 
+  router.post('/api/messages/delete', async (ctx) => {
+    const user = ctx.requireUser();
+    limited(user.id, 'other', 30);
+    const b = await ctx.body();
+    return guard(() => messages.deleteOwn(user, b.messageId));
+  });
+
   router.post('/api/messages/block', async (ctx) => {
     const user = ctx.requireUser();
     limited(user.id, 'other', 30);

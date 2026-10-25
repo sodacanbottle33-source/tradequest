@@ -86,11 +86,18 @@ export function effectsOf(event: WorldEvent, companies: readonly Company[]): Eff
 export const DRAIN_KEY = /^rug:(\d+):drain$/;
 
 /**
- * The tick from which the company of a rug pull's story is dead (its price no longer moves): the story's last effect tick. Null for any other
- * story. The stories of coins that were rug pulled before prices could freeze qualify as well: they freeze from the first tick this version runs.
+ * The key of the news story about a company that went bankrupt (server/bankruptcy.ts): "bankrupt:<company id>:fail". Like a rug pull's story it
+ * crashes the price and then freezes it for good, so a restart finds the same fact in the same stored row.
+ */
+export const BANKRUPT_KEY = /^bankrupt:(\d+):fail$/;
+
+/**
+ * The tick from which the company of a rug pull's (or a bankruptcy's) story is dead (its price no longer moves): the story's last effect tick.
+ * Null for any other story. The stories of coins that were rug pulled before prices could freeze qualify as well: they freeze from the first
+ * tick this version runs.
  */
 export function deathTickOf(event: Pick<WorldEvent, 'key' | 'companyId' | 'startTick' | 'shape' | 'durationTicks'>): number | null {
-  if (event.companyId === null || !DRAIN_KEY.test(event.key)) return null;
+  if (event.companyId === null || !(DRAIN_KEY.test(event.key) || BANKRUPT_KEY.test(event.key))) return null;
   return event.startTick + effectiveDuration(event.shape, event.durationTicks);
 }
 

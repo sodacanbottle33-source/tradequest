@@ -15,6 +15,7 @@ import { formatBps, formatCents, formatCount, formatShares, parsePriceInput, par
 import { GOOD_FOR_CHOICES, describeOrder, limitDirection } from './limitText';
 import { OpenOrders } from './OpenOrders';
 import { sharedStore, useShared } from './store';
+import { celebrateTrade } from './winCelebration';
 import type { Account, Estimate, GoodFor, LimitEstimate, LimitResult, OrderResult, Position } from './types';
 
 /** The highest leverage (the server enforces the same number). */
@@ -55,6 +56,8 @@ interface Props {
   onTraded: (r: OrderResult) => void;
   /** A coin with a money pool (docs/world.md §12.2): plain buying and selling at the market price only, no shorting, leverage, stops or limit orders. */
   spotOnly?: boolean;
+  /** A company that went bankrupt (docs/world.md §18.2): nobody can open a position in it any more. Only the closing order is offered (Sell, or Cover for a short), at the price it stopped at. */
+  closeOnly?: boolean;
 }
 
 function newOrderId(): string {
@@ -70,7 +73,7 @@ function describeTrade(r: OrderResult): string {
   const part = t.filled < t.requested ? (t.poolLimited ? ` (the money pool behind ${t.ticker} could pay for only ${formatShares(t.filled)} of the ${formatShares(t.requested)} you asked to sell)` : ` (only ${formatShares(t.filled)} of ${formatShares(t.requested)} shares were available at this depth)`) : '';
   const dup = r.duplicate ? ' (this order had already been placed)' : '';
   const avg = `at an average of ${formatCents(t.avgPrice)} · total ${formatCents(t.totalCents)}`;
-  // A memecoin order says what its fee was (the profit shown is already after it).
+  // An order says what its fee was (the profit shown is already after it).
   const fee = t.feeCents > 0 ? ` · fee ${formatCents(t.feeCents)}` : '';
   if (t.short && t.side === 'sell') {
     const margin = t.leverage > 1 ? ` with ${t.leverage}x leverage` : '';
@@ -103,9 +106,11 @@ function costPartOf(costCents: number, qty: number, shares: number): number {
   return Number((BigInt(costCents) * BigInt(qty)) / BigInt(shares));
 }
 
-export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blocked, onTraded, spotOnly = false }: Props) {
+export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blocked, onTraded, spotOnly = false, closeOnly = false }: Props) {
   const position: Position | undefined = account?.positions.find((p) => p.ticker === ticker);
-  const [mode, setMode] = useState<Mode>(position?.short ? 'cover' : 'buy');
+  const [mode, setMode] = useState<Mode>(position?.short ? 'cover' : closeOnly ? 'sell' : 'buy');
+  // A coin with a money pool, or a company that went bankrupt: plain orders only (no leverage, limit orders or stops).
+  const plain = spotOnly || closeOnly;
   const [qtyText, setQtyText] = useState('');
   const [leverage, setLeverage] = useState(1);
   const [stopText, setStopText] = useState('');
@@ -134,19 +139,19 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
   const stop = parsePriceInput(stopText);
   const take = parsePriceInput(takeText);
   // A limit order is for Career only (a 1v1 match is three minutes of market orders).
-  const isLimit = kind === 'career' && priceType === 'limit' && !spotOnly;
+  const isLimit = kind === 'career' && priceType === 'limit' && !plain;
   const limit = parsePriceInput(limitText);
   const limitCents = typeof limit === 'number' ? limit : null;
   // Shares of this company that other open limit orders of the same kind have already been promised.
   const promisedHere = limits.filter((o) => o.ticker === ticker && o.short === short && o.side === side).reduce((n, o) => n + o.remaining, 0);
 
   // Leverage only exists for orders that open a position (Buy, Short); closing is always 1x.
-  const lev = opening && !spotOnly ? leverage : 1;
+  const lev = opening && !plain ? leverage : 1;
 
   // Another company or account: start with a clean form (and no leverage: it is chosen again for each new order). A player who is short
   // in this company starts on Cover, because that is the only thing he can do with it besides shorting more.
   useEffect(() => {
-    setMode(positionRef.current?.short ? 'cover' : 'buy');
+    setMode(positionRef.current?.short ? 'cover' : closeOnly ? 'sell' : 'buy');
     setQtyText('');
     setLeverage(1);
     setStopText('');
@@ -160,6 +165,10 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
     setProblem(null);
     setResult(null);
   }, [ticker, kind]);
+  // A company that went bankrupt while the page was open: only the closing order is left.
+  useEffect(() => {
+    if (closeOnly) setMode(positionRef.current?.short ? 'cover' : 'sell');
+  }, [closeOnly]);
   // Another way of trading: clear the amounts, keep nothing that belonged to the other way.
   useEffect(() => {
     setQtyText('');
@@ -342,6 +351,8 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
       });
       orderId.current = null;
       setResult(describeTrade(r));
+      // A good win on your own Career money gets confetti (a 1v1 match is only three minutes of trading: no party there).
+      if (kind === 'career') celebrateTrade(r);
       setQtyText('');
       setStopText('');
       setTakeText('');
@@ -421,8 +432,8 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
       {!trading && <p className="notice info">This company is not trading yet.</p>}
       <form onSubmit={submit}>
         <fieldset disabled={disabled} className="order-fields">
-          <div className={spotOnly ? 'segmented' : 'segmented four'} role="group" aria-label="Order type">
-            {MODES.filter((m) => !spotOnly || m.mode === 'buy' || m.mode === 'sell').map((m) => (
+          <div className={plain ? 'segmented' : 'segmented four'} role="group" aria-label="Order type">
+            {MODES.filter((m) => (closeOnly ? m.mode === (position?.short ? 'cover' : 'sell') : !spotOnly || m.mode === 'buy' || m.mode === 'sell')).map((m) => (
               <button
                 key={m.mode}
                 type="button"
@@ -441,7 +452,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
               {estimate?.poolCents != null ? ` (it holds ${formatCents(estimate.poolCents)} now)` : ''}. Its developer can take all of it and kill the coin. Plain buying and selling at the market price only: no shorting, leverage, stop-loss or limit orders.
             </p>
           )}
-          {kind === 'career' && !spotOnly && (
+          {kind === 'career' && !plain && (
             <div className="segmented" role="group" aria-label="Price type">
               {(['market', 'limit'] as const).map((t) => (
                 <button key={t} type="button" className={priceType === t ? 'seg active price-type' : 'seg'} onClick={() => setPriceType(t)} data-testid={`type-${t}`} aria-pressed={priceType === t}>
@@ -480,7 +491,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
                   : `You are not short ${ticker}.`}
             </p>
           )}
-          {opening && !spotOnly && (
+          {opening && !plain && (
             <div className="leverage-box" data-testid={`leverage-${kind}`}>
               <div className="leverage-head">
                 <label htmlFor={`lev-${kind}`}>Leverage</label>
@@ -565,7 +576,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
               Max
             </button>
           </div>
-          {spotOnly && (
+          {plain && (
             <div className="exits-row" data-testid={`quick-qty-${kind}`}>
               {[25, 50, 75, 100].map((p) => (
                 <button key={p} type="button" className="lev-chip" onClick={() => fillPercent(p)} data-testid={`pct-${kind}-${p}`} title={opening ? `${p}% of your cash` : `${p}% of the coins you hold`}>
@@ -574,7 +585,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
               ))}
             </div>
           )}
-          {spotOnly && opening && (
+          {plain && opening && (
             <div className="exits-row">
               <label htmlFor={`spend-${kind}`}>Or spend $</label>
               <input
@@ -600,7 +611,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
             </div>
           )}
 
-          {opening && !spotOnly && (
+          {opening && !plain && (
             <div className="exits-box" data-testid={`exits-new-${kind}`}>
               <div className="exits-row">
                 <label htmlFor={`stop-${kind}`}>Stop-loss</label>
@@ -917,11 +928,12 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
           )}
           {estimate && estimate.feeBps > 0 && (
             <p className="hint" data-testid="fee-hint">
-              Memecoins charge a trading fee of {(estimate.feeBps / 100).toFixed(2)}% of the order&apos;s value on every buy, sell, short and cover, and when a
-              stop-loss or take-profit closes the position. The market closing a wiped-out position has no fee. Stocks have none.
+              Trading {ticker} costs a fee of {(estimate.feeBps / 100).toFixed(2)}% of the order&apos;s value on every buy, sell, short and cover, and when a
+              stop-loss or take-profit closes the position (memecoins pay 0.5%, stocks 0.1%, and a 1v1 match has no fee). The market closing a wiped-out
+              position has no fee.
             </p>
           )}
-          {!spotOnly && (
+          {!plain && (
             <p className="hint">
               Leverage (Buy and Short): you put in a part of the order&apos;s value (the margin) and the rest is borrowed (Buy) or held from the
               sale (Short). Borrowing costs a little every day (interest on the debt, a borrow fee on a short sale), taken from the position. When
@@ -937,7 +949,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
           <OpenOrders orders={limits.filter((o) => o.ticker === ticker)} showCompany={false} />
         </div>
       )}
-      {position && !disabled && account && !spotOnly && <ExitsEditor key={`${kind}:${ticker}:${position.short ? 's' : 'l'}`} position={position} kind={kind} onSaved={() => void sharedStore.refreshAccount()} />}
+      {position && !disabled && account && !plain && <ExitsEditor key={`${kind}:${ticker}:${position.short ? 's' : 'l'}`} position={position} kind={kind} onSaved={() => void sharedStore.refreshAccount()} />}
     </section>
   );
 }

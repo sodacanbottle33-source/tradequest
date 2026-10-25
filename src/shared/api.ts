@@ -31,6 +31,7 @@ import type {
   LaunchResult,
   LaunchState,
   Leaderboard,
+  WeeklyBoard,
   LimitEstimate,
   LimitOrder,
   LimitResult,
@@ -172,6 +173,7 @@ export const api = {
   // Players, friends and the leaderboard (any signed-in player). The server decides who is ranked where and what is visible.
   players: (q = '', offset = 0, limit = 50) => request<PlayerPage>('GET', `/api/players?limit=${limit}&offset=${offset}${q.trim() === '' ? '' : `&q=${enc(q.trim())}`}`),
   leaderboard: (scope: BoardScope) => request<Leaderboard>('GET', `/api/leaderboard?scope=${scope}`),
+  weeklyBoard: (scope: BoardScope) => request<WeeklyBoard>('GET', `/api/leaderboard/weekly?scope=${scope}`),
   friends: () => request<FriendsState>('GET', '/api/friends'),
   /** Asks, accepts, declines, cancels a request, or removes a friend. The answer is your friend lists as they are afterwards. */
   friendAction: (what: FriendAction, username: string) => request<FriendsState & { relation: Relation }>('POST', `/api/friends/${what}`, { username }),
@@ -184,6 +186,15 @@ export const api = {
   chat: (beforeId?: number, limit = 50) => request<ChatView>('GET', `/api/chat?limit=${limit}${beforeId === undefined ? '' : `&before=${beforeId}`}`),
   chatSend: (text: string) => request<{ message: ChatMessage; you: ChatYou }>('POST', '/api/chat/send', { text }),
   chatReport: (messageId: number) => request<{ ok: boolean }>('POST', '/api/chat/report', { messageId }),
+  /** Deletes a message you wrote yourself. */
+  chatDelete: (messageId: number) => request<{ ok: boolean }>('POST', '/api/chat/delete', { messageId }),
+
+  // Profile pictures and who is online (any signed-in player). A picture is shown at /api/avatar/<username>?v=<version>.
+  avatars: () => request<{ avatars: Record<string, number> }>('GET', '/api/avatars'),
+  setAvatar: (image: string) => request<{ version: number }>('POST', '/api/profile/avatar', { image }),
+  removeAvatar: () => request<{ ok: boolean }>('POST', '/api/profile/avatar/remove', {}),
+  online: () => request<{ online: string[] }>('GET', '/api/online'),
+  adminAvatarRemove: (body: { requestId: string; username: string }) => request<{ ok: boolean; duplicate: boolean; username: string }>('POST', '/api/admin/avatar/remove', body),
 
   // Private chats (any signed-in player). The server decides who may write to whom; the owner cannot read them.
   messages: () => request<MessagesView>('GET', '/api/messages'),
@@ -193,6 +204,8 @@ export const api = {
   messagesRead: (conversationId: number, upToId?: number) => request<{ ok: boolean }>('POST', '/api/messages/read', upToId === undefined ? { conversationId } : { conversationId, upToId }),
   messagesRespond: (conversationId: number, answer: 'accept' | 'decline') => request<MessagesView>('POST', '/api/messages/respond', { conversationId, answer }),
   messagesReport: (messageId: number) => request<{ ok: boolean }>('POST', '/api/messages/report', { messageId }),
+  /** Deletes a private message you wrote yourself (for both sides). */
+  messagesDelete: (messageId: number) => request<{ ok: boolean }>('POST', '/api/messages/delete', { messageId }),
   messagesBlock: (username: string) => request<MessagesView>('POST', '/api/messages/block', { username }),
   messagesUnblock: (username: string) => request<MessagesView>('POST', '/api/messages/unblock', { username }),
   groupCreate: (title: string, usernames: string[]) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/create', { title, usernames }),
