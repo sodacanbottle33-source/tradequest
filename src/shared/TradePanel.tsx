@@ -11,7 +11,7 @@
 // when it is placed; the server works that out and the form only shows it.
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, api } from './api';
-import { formatBps, formatCents, formatCount, parsePriceInput, priceInput } from './format';
+import { formatBps, formatCents, formatCount, formatShares, parsePriceInput, parseQty, priceInput } from './format';
 import { GOOD_FOR_CHOICES, describeOrder, limitDirection } from './limitText';
 import { OpenOrders } from './OpenOrders';
 import { sharedStore, useShared } from './store';
@@ -67,20 +67,20 @@ const signed = (cents: number): string => `${cents > 0 ? '+' : cents < 0 ? '−'
 
 function describeTrade(r: OrderResult): string {
   const t = r.trade;
-  const part = t.filled < t.requested ? (t.poolLimited ? ` (the money pool behind ${t.ticker} could pay for only ${t.filled} of the ${t.requested} you asked to sell)` : ` (only ${t.filled} of ${t.requested} shares were available at this depth)`) : '';
+  const part = t.filled < t.requested ? (t.poolLimited ? ` (the money pool behind ${t.ticker} could pay for only ${formatShares(t.filled)} of the ${formatShares(t.requested)} you asked to sell)` : ` (only ${formatShares(t.filled)} of ${formatShares(t.requested)} shares were available at this depth)`) : '';
   const dup = r.duplicate ? ' (this order had already been placed)' : '';
   const avg = `at an average of ${formatCents(t.avgPrice)} · total ${formatCents(t.totalCents)}`;
   // A memecoin order says what its fee was (the profit shown is already after it).
   const fee = t.feeCents > 0 ? ` · fee ${formatCents(t.feeCents)}` : '';
   if (t.short && t.side === 'sell') {
     const margin = t.leverage > 1 ? ` with ${t.leverage}x leverage` : '';
-    return `Sold short ${t.filled} ${t.ticker} ${avg}${margin}${fee}. The money from the sale is held on the position until you cover${part}${dup}.`;
+    return `Sold short ${formatShares(t.filled)} ${t.ticker} ${avg}${margin}${fee}. The money from the sale is held on the position until you cover${part}${dup}.`;
   }
-  if (t.short) return `Covered ${t.filled} ${t.ticker} ${avg} · ${signed(t.realizedCents)} on this part${fee ? ' after the fee' : ''}${fee}${part}${dup}.`;
+  if (t.short) return `Covered ${formatShares(t.filled)} ${t.ticker} ${avg} · ${signed(t.realizedCents)} on this part${fee ? ' after the fee' : ''}${fee}${part}${dup}.`;
   const verb = t.side === 'buy' ? 'Bought' : 'Sold';
   const lev = t.side === 'buy' && t.leverage > 1 ? ` with ${t.leverage}x leverage (your own cash: ${formatCents(t.totalCents - t.debtCents)}, borrowed: ${formatCents(t.debtCents)})` : '';
   const pnl = t.side === 'sell' ? ` · ${signed(t.realizedCents)} on this part${fee ? ' after the fee' : ''}` : '';
-  return `${verb} ${t.filled} ${t.ticker} ${avg}${lev}${pnl}${fee}${part}${dup}.`;
+  return `${verb} ${formatShares(t.filled)} ${t.ticker} ${avg}${lev}${pnl}${fee}${part}${dup}.`;
 }
 
 /** What the player is told when a limit order has been placed (it may also have traded at once). */
@@ -114,6 +114,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
   const [limitText, setLimitText] = useState('');
   const [goodFor, setGoodFor] = useState<GoodFor>('1d');
   const [limitEstimate, setLimitEstimate] = useState<LimitEstimate | null>(null);
+  const [spendText, setSpendText] = useState('');
   const { limits } = useShared();
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -126,7 +127,8 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
   const side = sideOf(mode);
   const short = isShort(mode);
   const opening = opens(mode);
-  const qty = /^\d{1,9}$/.test(qtyText.trim()) ? Number(qtyText.trim()) : null;
+  // Plain digits, or a letter after the number for big amounts (5k, 2m, 1.5b, 1t): a launched coin has a trillion tokens.
+  const qty = parseQty(qtyText);
   // Shares held (long) or owed (short) in the part of the position this mode acts on.
   const held = position && position.short === short ? position.shares : 0;
   const stop = parsePriceInput(stopText);
@@ -150,6 +152,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
     setStopText('');
     setTakeText('');
     setLimitText('');
+    setSpendText('');
     // A new company starts as a plain market order: a waiting order is something the player chooses each time.
     setPriceType('market');
     setEstimate(null);
@@ -164,6 +167,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
     setStopText('');
     setTakeText('');
     setLimitText('');
+    setSpendText('');
     setEstimate(null);
     setLimitEstimate(null);
     setProblem(null);
@@ -263,6 +267,30 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
     }
   };
 
+  // Quick amounts for a coin: a share of your cash (Buy) or of the coins you hold (Sell), or a sum of money to spend. The server works out
+  // how many coins that is (fee and rounding included); the form only puts the number in the box.
+  const fillBudget = async (budgetCents: number) => {
+    try {
+      const e = await api.estimate(ticker, 'buy', 1, kind, 1, false, budgetCents);
+      setQtyText(String(Math.max(0, e.maxQty)));
+      setProblem(null);
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : String(err));
+    }
+  };
+  const fillPercent = (pct: number) => {
+    if (!opening) {
+      setQtyText(String(held > 0 ? Math.max(1, Math.floor((held * pct) / 100)) : 0));
+      return;
+    }
+    void fillBudget(Math.floor(((account?.cashCents ?? 0) * pct) / 100));
+  };
+  const fillSpend = () => {
+    const cents = parsePriceInput(spendText);
+    if (typeof cents === 'number') void fillBudget(cents);
+    else setProblem('Enter how much to spend in dollars, like 5.00.');
+  };
+
   const exitProblem = opening && (stop === 'bad' || take === 'bad') ? 'A stop-loss or take-profit must be a price in dollars, like 12.50.' : null;
   const limitProblem = isLimit && limit === 'bad' ? 'The limit price must be a price in dollars, like 12.50.' : null;
   const needLimit = isLimit && limitCents === null;
@@ -322,7 +350,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
     } catch (err) {
       if (err instanceof ApiError) {
         const max = err.details.maxQty;
-        setProblem(typeof max === 'number' ? `${err.message} You can ${short ? 'short' : 'afford'} up to ${max} shares.` : err.message);
+        setProblem(typeof max === 'number' ? `${err.message} You can ${short ? 'short' : 'afford'} up to ${formatShares(max)} shares.` : err.message);
         // The server said no: that order id is finished, a new attempt is a new order.
         if (err.status !== 0) orderId.current = null;
       } else {
@@ -385,7 +413,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
         )}
         {account && (
           <span>
-            {position?.short ? 'Short' : 'Held'} <strong data-testid="held">{position?.shares ?? 0}</strong>
+            {position?.short ? 'Short' : 'Held'} <strong data-testid="held">{formatShares(position?.shares ?? 0)}</strong>
           </span>
         )}
       </div>
@@ -537,6 +565,40 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
               Max
             </button>
           </div>
+          {spotOnly && (
+            <div className="exits-row" data-testid={`quick-qty-${kind}`}>
+              {[25, 50, 75, 100].map((p) => (
+                <button key={p} type="button" className="lev-chip" onClick={() => fillPercent(p)} data-testid={`pct-${kind}-${p}`} title={opening ? `${p}% of your cash` : `${p}% of the coins you hold`}>
+                  {p}%
+                </button>
+              ))}
+            </div>
+          )}
+          {spotOnly && opening && (
+            <div className="exits-row">
+              <label htmlFor={`spend-${kind}`}>Or spend $</label>
+              <input
+                id={`spend-${kind}`}
+                className="price-input"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                placeholder="5.00"
+                value={spendText}
+                onChange={(e) => setSpendText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    fillSpend();
+                  }
+                }}
+                data-testid={`spend-${kind}`}
+              />
+              <button type="button" className="lev-chip" onClick={fillSpend} data-testid={`spend-fill-${kind}`}>
+                Fill
+              </button>
+            </div>
+          )}
 
           {opening && !spotOnly && (
             <div className="exits-box" data-testid={`exits-new-${kind}`}>
@@ -586,7 +648,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
             </div>
           )}
 
-          {qtyText !== '' && qty === null && <p className="notice error">Enter a whole number of shares.</p>}
+          {qtyText !== '' && qty === null && <p className="notice error">{spotOnly ? 'Enter a whole number of coins. For big amounts you can write 5k, 2m, 1.5b or 1t.' : 'Enter a whole number of shares.'}</p>}
           {exitProblem && <p className="notice error">{exitProblem}</p>}
           {limitProblem && <p className="notice error">{limitProblem}</p>}
           {isLimit && qty !== null && qty >= 1 && limitCents === null && limit !== 'bad' && <p className="hint">Enter your limit price to see what the order would set aside.</p>}

@@ -14,6 +14,7 @@
 
 import { BOOK_LEVELS, IMPACT_RECOVERY_TICKS, LEVEL_GROWTH, MAX_ORDER_SHARES, TOUCH_FRAC_MIN, TOUCH_FRAC_SPAN } from './params';
 import type { Company } from './types';
+import { unitsToMoney } from './units';
 
 export type Side = 'buy' | 'sell';
 
@@ -147,16 +148,24 @@ export function recoverConsumed(consumed: number, elapsedTicks: number): number 
   return left < 0.5 ? 0 : left;
 }
 
-function checkQty(qty: number): void {
+function checkQty(qty: number, max: number): void {
   if (!Number.isSafeInteger(qty) || qty < 1) throw new Error(`Quantity must be a whole number of shares, got ${qty}`);
-  if (qty > MAX_ORDER_SHARES) throw new Error(`Quantity ${qty} is above the limit of ${MAX_ORDER_SHARES}`);
+  if (qty > max) throw new Error(`Quantity ${qty} is above the limit of ${max}`);
 }
 
 export interface ExecuteOptions {
-  /** A buy is not filled above this price (cents per share), a sell not below it. */
+  /** A buy is not filled above this price (price units per share), a sell not below it. */
   readonly limitPrice?: number;
   /** Only used to split the cost into spread and impact; defaults to the first level's distance from mid. */
   readonly mid?: number;
+  /**
+   * Price units in one cent (src/world/units.ts): 1 (the default) when the ladder's prices are cents. For a fine-priced coin the totals
+   * are worked out exactly with BigInt and rounded in the house's favour (a buyer pays the next whole cent up, a seller gets the
+   * whole cent below); `avgPrice`, `firstPrice`, `lastPrice` and the parts stay in price units.
+   */
+  readonly scale?: number;
+  /** The most shares one order may ask for (default {@link MAX_ORDER_SHARES}; a coin with a trillion tokens needs more). */
+  readonly maxQty?: number;
 }
 
 /**
@@ -164,7 +173,9 @@ export interface ExecuteOptions {
  * skipped first). Pure: nothing is stored here; the caller keeps `consumedAfter`.
  */
 export function executeMarket(levels: readonly Level[], side: Side, qty: number, consumed: number, options: ExecuteOptions = {}): Execution {
-  checkQty(qty);
+  checkQty(qty, options.maxQty ?? MAX_ORDER_SHARES);
+  const scale = options.scale ?? 1;
+  if (scale !== 1) return executeScaled(levels, side, qty, consumed, options, scale);
   let skip = Math.max(0, Math.floor(consumed));
   let remaining = qty;
   let total = 0;
@@ -223,9 +234,74 @@ export function executeMarket(levels: readonly Level[], side: Side, qty: number,
   };
 }
 
-/** The most shares a buyer can pay for with `cashCents`, walking the ladder from the player's used-up depth. */
-export function maxAffordable(levels: readonly Level[], consumed: number, cashCents: number): { qty: number; costCents: number } {
+/** {@link executeMarket} for a ladder in price units finer than a cent: the same walk, with every sum kept exact in BigInt. */
+function executeScaled(levels: readonly Level[], side: Side, qty: number, consumed: number, options: ExecuteOptions, scale: number): Execution {
+  let skip = Math.max(0, Math.floor(consumed));
+  let remaining = qty;
+  let totalUnits = 0n;
+  let filled = 0;
+  const parts: FillPart[] = [];
+  let note: '' | 'depth' | 'limit' = '';
+  for (const level of levels) {
+    let avail = level.size;
+    if (skip > 0) {
+      const used = Math.min(skip, avail);
+      skip -= used;
+      avail -= used;
+    }
+    if (avail <= 0) continue;
+    if (options.limitPrice !== undefined) {
+      const worse = side === 'buy' ? level.price > options.limitPrice : level.price < options.limitPrice;
+      if (worse) {
+        note = 'limit';
+        break;
+      }
+    }
+    const take = Math.min(remaining, avail);
+    parts.push({ price: level.price, qty: take });
+    totalUnits += BigInt(level.price) * BigInt(take);
+    filled += take;
+    remaining -= take;
+    if (remaining === 0) break;
+  }
+  if (remaining > 0 && note === '') note = 'depth';
+  const first = parts[0]?.price ?? 0;
+  const last = parts[parts.length - 1]?.price ?? 0;
+  const touch = levels[0]?.price ?? 0;
+  const mid = options.mid ?? touch;
+  const f = BigInt(filled);
+  const half = BigInt(Math.round(Math.abs(touch - mid)));
+  const touchValue = f * BigInt(touch);
+  const impactUnits = side === 'buy' ? totalUnits - touchValue : touchValue - totalUnits;
+  const midValue = f * BigInt(Math.round(mid));
+  const slippage = side === 'buy' ? totalUnits - midValue : midValue - totalUnits;
+  return {
+    side,
+    requestedQty: qty,
+    filledQty: filled,
+    unfilledQty: qty - filled,
+    totalCents: unitsToMoney(totalUnits, scale, side === 'buy' ? 'up' : 'down'),
+    avgPrice: filled > 0 ? Number(totalUnits) / filled : 0,
+    parts,
+    firstPrice: first,
+    lastPrice: last,
+    spreadCostCents: unitsToMoney(f * half, scale, 'nearest'),
+    impactCostCents: impactUnits > 0n ? unitsToMoney(impactUnits, scale, 'nearest') : 0,
+    slippageBps: midValue > 0n ? Math.round((Number(slippage) / Number(midValue)) * 100_000) / 10 : 0,
+    note,
+    consumedAfter: Math.max(0, Math.floor(consumed)) + filled,
+  };
+}
+
+/**
+ * The most shares a buyer can pay for with `cashCents`, walking the ladder from the player's used-up depth. For a fine-priced coin
+ * (`scale` > 1, prices in units of 1/scale cent) the shares at each level are the most whole shares whose price rounds up to no more than
+ * the cash left, so the real order, which rounds once on the whole total, never costs more than this says.
+ */
+export function maxAffordable(levels: readonly Level[], consumed: number, cashCents: number, options: { readonly scale?: number; readonly maxQty?: number } = {}): { qty: number; costCents: number } {
   if (!Number.isSafeInteger(cashCents) || cashCents < 0) throw new Error(`Bad cash ${cashCents}`);
+  const scale = options.scale ?? 1;
+  if (scale !== 1) return maxAffordableScaled(levels, consumed, cashCents, scale, options.maxQty ?? MAX_ORDER_SHARES);
   let skip = Math.max(0, Math.floor(consumed));
   let cash = cashCents;
   let qty = 0;
@@ -247,6 +323,34 @@ export function maxAffordable(levels: readonly Level[], consumed: number, cashCe
     if (can < avail) break; // ran out of cash inside this level
   }
   return { qty: Math.min(qty, MAX_ORDER_SHARES), costCents: cost };
+}
+
+function maxAffordableScaled(levels: readonly Level[], consumed: number, cashCents: number, scale: number, maxQty: number): { qty: number; costCents: number } {
+  let skip = Math.max(0, Math.floor(consumed));
+  let cash = BigInt(cashCents);
+  const s = BigInt(scale);
+  let qty = 0;
+  let cost = 0n;
+  for (const level of levels) {
+    let avail = level.size;
+    if (skip > 0) {
+      const used = Math.min(skip, avail);
+      skip -= used;
+      avail -= used;
+    }
+    if (avail <= 0) continue;
+    const price = BigInt(level.price);
+    const afford = (cash * s) / price;
+    const can = afford < BigInt(avail) ? Number(afford) : avail;
+    if (can > 0) {
+      qty += can;
+      const paid = (BigInt(can) * price + s - 1n) / s; // rounded up, like the order
+      cost += paid;
+      cash -= paid;
+    }
+    if (can < avail) break;
+  }
+  return { qty: Math.min(qty, maxQty), costCents: Number(cost) };
 }
 
 export type LiquidityLabel = 'Very high' | 'High' | 'Medium' | 'Low' | 'Very low';

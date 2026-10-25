@@ -191,7 +191,7 @@ export function money(dollars: number): string {
 }
 
 function capDollars(c: Company): number {
-  return (c.basePriceCents * c.sharesOutstanding) / 100;
+  return ((c.basePriceCents / (c.priceScale ?? 1)) * c.sharesOutstanding) / 100;
 }
 
 interface Timing {

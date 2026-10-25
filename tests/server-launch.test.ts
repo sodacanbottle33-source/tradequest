@@ -1,12 +1,13 @@
 // Stocks and memecoins that ANY player can launch, and the "rug pull" (server/launch.ts, server/customCoin.ts, server/customStock.ts). The rules
-// checked here: the SIZE comes from the money the player puts in (from $2), never from a menu; the money comes out of his own Career cash
+// checked here: a coin has a trillion tokens and costs a tiny fraction of a cent (a free launch starts at $0.000000000064, every launch under a tenth
+// of a cent); the SIZE comes from the money the player puts in (from $2), never from a menu; the money comes out of his own Career cash
 // and comes back as shares he holds (no fee on the launch, no profit or loss from it); every input is checked and nothing is half-made; the same
 // request never launches twice; a player may hold only a few of his own launches at a time; the launched company is a real one (lists a few seconds
 // later, trades, has news, charts and an order book); only the player who launched a company can rug pull it; a rug pull is one ordinary market
 // order for everything he holds (fee, spread, price push, halts and partial fills all work as for any order) plus a news story; and adding a company
 // to the RUNNING market gives exactly the prices that loading it at a restart gives. (A COIN launched with this version has a money pool and its rug
 // pull takes the pool instead, see tests/server-pool.test.ts; the sale rug pull below is tested on stocks and on coins made to look like ones from before
-// pools, with `noPool`.)
+// pools: `asOldCoin` turns a fresh launch into one of those, counted in cents like every coin launched before the tiny prices.)
 import { cpSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -15,7 +16,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp, type App } from '../server/app';
 import { loadConfig } from '../server/config';
-import { COIN_SUPPLY, LAUNCH_FEE_CENTS, MAX_SEED_CENTS, MIN_COIN_PRICE_CENTS, MIN_SEED_CENTS, coinOptions, makeCoinEntry, previewCoin, priceFor, supplyFor } from '../server/customCoin';
+import { COIN_SUPPLY, LAUNCH_FEE_CENTS, MAX_SEED_CENTS, MIN_SEED_CENTS, capCentsFor, coinOptions, makeCoinEntry, previewCoin, priceUnitsFor } from '../server/customCoin';
 import { MAX_STOCK_SEED_CENTS, MIN_STOCK_SEED_CENTS, STOCK_LAUNCH_FEE_CENTS, makeLaunchedStockEntry, previewStock, stockLaunchOptions, stockPriceFor, tierOfSeed } from '../server/customStock';
 import { MAX_ACTIVE_PER_KIND, MAX_EVER_PER_KIND } from '../server/launch';
 import { Logger } from '../server/log';
@@ -117,8 +118,16 @@ let counter = 0;
 const rid = (): string => `req-${(counter += 1).toString().padStart(8, '0')}`;
 const post = (r: Running, path: string, cookie: string | undefined, body: Record<string, unknown>) => call(r, path, { method: 'POST', cookie, body: { requestId: rid(), ...body } });
 
-/** $5,000 put in: a micro coin. The money makes the price too: $160,000 of market cap over 80,000 coins is $2.00 a coin, so the player gets 2,500 coins for $5,000.00. */
+/**
+ * $5,000 put in: a micro coin. The money makes the price too: $160,000 of market cap over a trillion tokens is $0.00000016 a token
+ * (0.000016 cents), so the player gets 31.25 billion tokens for $5,000.00.
+ */
 const MOON = { name: 'Moon Pepe', ticker: 'MPEP', seedCents: 500_000 };
+const MOON_PRICE = 0.000016; // cents a token
+const MOON_UNITS = 16_000_000; // the same price in the coin's own price units (1 unit = a trillionth of a cent)
+const MOON_TOKENS = 31_250_000_000;
+/** A buy of this many tokens of the $5,000 coin costs about $160. */
+const BILLION = 1_000_000_000;
 const launchCoin = (r: Running, cookie: string | undefined, over: Record<string, unknown> = {}) => post(r, '/api/launch/coin', cookie, { ...MOON, ...over });
 /**
  * $5,000 put in: a micro-cap stock. The money makes the price too ($5,000 starts at $22.77 a share), so the player gets 219 shares for $4,986.63,
@@ -130,10 +139,26 @@ const ACME_SHARES = 219;
 const ACME_SPENT = ACME_SHARES * ACME_PRICE; // 498,663
 const launchStock = (r: Running, cookie: string | undefined, over: Record<string, unknown> = {}) => post(r, '/api/launch/stock', cookie, { ...ACME, ...over });
 const rug = (r: Running, cookie: string | undefined, ticker = 'MPEP', over: Record<string, unknown> = {}) => post(r, '/api/launch/rug', cookie, { ticker, ...over });
-/** Makes a coin look like one launched before money pools existed (no pool row): it trades with leverage etc. and its rug pull is the old market sale. */
-const noPool = (r: Running, ...tickers: string[]): void => {
-  for (const t of tickers.length > 0 ? tickers : ['MPEP']) r.app.services.db.run('DELETE FROM coin_pools WHERE company_id = ?', r.app.services.world.companyByTicker(t)?.id as number);
-};
+/**
+ * Turns a coin that was just launched (and has not listed yet) into one from before the tiny prices and before money pools: counted in cents, 80,000
+ * coins at $2.00 each (2,500 of them for the $5,000), no pool. That is what a coin launched earlier looks like in a world that already exists, and
+ * it must keep working exactly as it did: leverage, shorts, and a rug pull that is a market sale. The server is restarted so it loads the coin that way.
+ */
+async function asOldCoin(r: Running, ...tickers: string[]): Promise<Running> {
+  const db = r.app.services.db;
+  for (const t of tickers.length > 0 ? tickers : ['MPEP']) {
+    const row = db.get('SELECT company_id, entry_json FROM meme_companies WHERE ticker = ?', t) as { company_id: number; entry_json: string };
+    const entry = JSON.parse(row.entry_json);
+    entry.price = 200;
+    entry.meme.supply = 80_000;
+    delete entry.meme.priceScale;
+    db.run('UPDATE meme_companies SET entry_json = ? WHERE company_id = ?', JSON.stringify(entry), row.company_id);
+    db.run('UPDATE launches SET price_cents = 200, stake_shares = 2500, spent_cents = 500000 WHERE company_id = ?', row.company_id);
+    db.run('UPDATE positions SET shares = 2500 WHERE company_id = ?', row.company_id);
+    db.run('DELETE FROM coin_pools WHERE company_id = ?', row.company_id);
+  }
+  return restart(r);
+}
 /** The owner gives a player Career cash (a gift counts as a deposit, not as profit). */
 const fund = (r: Running, boss: string, username: string, amountCents: number) => post(r, '/api/admin/cash', boss, { username, amountCents });
 
@@ -187,24 +212,24 @@ describe('the size comes from the money', () => {
     const form = coinOptions(30);
     expect(form.ladder.map((l) => l.seedCents)).toEqual(rungs);
     expect(form.ladder.map((l) => l.sizeLabel)).toEqual(rungPreviews.map((p) => p.sizeLabel));
-    expect(form).toMatchObject({ launchFeeCents: LAUNCH_FEE_CENTS, minSeedCents: MIN_SEED_CENTS, maxSeedCents: MAX_SEED_CENTS, supply: COIN_SUPPLY, fullSupplyFromSeedCents: 500_000, minPriceCents: MIN_COIN_PRICE_CENTS });
+    expect(form).toMatchObject({ launchFeeCents: LAUNCH_FEE_CENTS, minSeedCents: MIN_SEED_CENTS, maxSeedCents: MAX_SEED_CENTS, supply: COIN_SUPPLY, lowestPriceCents: 1e-12, highestPriceCents: 100 });
     expect(form.ladder.map((l) => l.priceCents)).toEqual(rungPreviews.map((p) => p.priceCents)); // and the starting price each amount makes
     expect(form.ladder.map((l) => l.supply)).toEqual(rungPreviews.map((p) => p.supply)); // and how many coins there are
     expect(Object.keys(form)).not.toContain('tiers');
-    for (const gone of ['maxPriceCents', 'minSupply']) expect(Object.keys(form)).not.toContain(gone); // nobody types a price
+    for (const gone of ['maxPriceCents', 'minSupply', 'fullSupplyFromSeedCents', 'minPriceCents']) expect(Object.keys(form)).not.toContain(gone); // nobody types a price
   });
 
   it('LAUNCH-2: the money buys whole coins at the starting price it makes; the preview says exactly what leaves the cash', () => {
     const p = previewCoin(500_000);
-    expect(p).toMatchObject({ priceCents: 200, stakeShares: 2500, spentCents: 500_000, supply: COIN_SUPPLY });
-    // $5,000.50 buys the same 2,500 whole coins: they cost $5,000.00 and the last 50 cents are not taken.
-    expect(previewCoin(500_050)).toMatchObject({ stakeShares: 2500, spentCents: 500_000 });
-    // An amount the price does not divide into leaves the change in the player's cash.
+    expect(p).toMatchObject({ priceCents: MOON_PRICE, priceUnits: MOON_UNITS, stakeShares: MOON_TOKENS, spentCents: 500_000, supply: COIN_SUPPLY });
+    // A token costs a tiny fraction of a cent, so the money buys almost to the last cent: $5,000.50 buys 3,125,000 more tokens than $5,000.00.
+    expect(previewCoin(500_050)).toMatchObject({ priceUnits: 16_001_600, stakeShares: 31_250_000_000, spentCents: 500_050 }); // (the market cap follows the money, so the tokens stay the same share of the coin)
+    // Whole tokens are bought and the cost is rounded UP to a whole cent, so the player never pays less than the tokens cost and never more than he put in.
     const r = previewCoin(777_777);
-    expect(r.spentCents).toBe(r.stakeShares * r.priceCents);
-    expect(r.spentCents).toBeLessThanOrEqual(777_777);
-    expect(777_777 - r.spentCents).toBeLessThan(r.priceCents);
-    expect(r.supply * r.priceCents).toBe(r.marketCapCents);
+    expect(r.spentCents).toBe(777_777);
+    expect(BigInt(r.stakeShares) * BigInt(r.priceUnits)).toBeLessThanOrEqual(BigInt(777_777) * BigInt(r.priceScale));
+    expect((BigInt(r.stakeShares) + 1n) * BigInt(r.priceUnits)).toBeGreaterThan(BigInt(777_777) * BigInt(r.priceScale));
+    expect(Math.round(r.supply * r.priceCents)).toBe(r.marketCapCents);
     expect(r.floatShares).toBeLessThanOrEqual(r.supply);
   });
 
@@ -232,14 +257,16 @@ describe('the size comes from the money', () => {
   it('LAUNCH-4: bad money is refused with a sentence; every amount of money makes a sensible starting price on its own (nobody types one)', () => {
     for (const bad of [1, 100, 199, MAX_SEED_CENTS + 1, 1.5, -5, NaN, '500000', null, undefined, Infinity]) expect(() => previewCoin(bad)).toThrow(/money you put in/); // ($0 is allowed now: no first buy)
     expect(() => previewCoin(100)).toThrow(/\$2 to \$10,000,000/); // the least and the most are stated
-    // The least money starts at exactly $2.00 and the most at $5,500.00 (a $440 million market cap over 80,000 coins).
-    expect(priceFor(MIN_SEED_CENTS)).toBe(200);
-    expect(priceFor(MAX_SEED_CENTS)).toBe(550_000);
-    for (const seed of [500_000, 512_345, 999_999, 5_000_000, 12_345_678, 777_777_777, MAX_SEED_CENTS]) {
+    // The least money starts at $0.000000000064 (a $64 market cap over a trillion tokens) and the most at $0.00044 (a $440 million cap).
+    expect(priceUnitsFor(MIN_SEED_CENTS)).toBe(6400);
+    expect(priceUnitsFor(MAX_SEED_CENTS)).toBe(44_000_000_000);
+    expect(previewCoin(MIN_SEED_CENTS).priceCents).toBe(6.4e-9);
+    expect(previewCoin(MAX_SEED_CENTS).priceCents).toBe(0.044);
+    for (const seed of [200, 500_000, 512_345, 999_999, 5_000_000, 12_345_678, 777_777_777, MAX_SEED_CENTS]) {
       const v = previewCoin(seed);
-      expect(v.supply).toBe(COIN_SUPPLY); // from $5,000 up (below that: LAUNCH-29)
-      expect(v.priceCents).toBeGreaterThanOrEqual(200);
-      expect(v.priceCents).toBeLessThan(1_000_000); // under $10,000 a coin
+      expect(v.supply).toBe(COIN_SUPPLY); // a trillion tokens, whatever the money
+      expect(v.priceCents).toBeGreaterThan(0);
+      expect(v.priceCents).toBeLessThan(10); // under TEN CENTS a coin, like every real memecoin: even $10 million starts at under a twentieth of a cent
       expect(v.stakeShares).toBeGreaterThanOrEqual(1);
       expect(Number.isSafeInteger(v.marketCapCents)).toBe(true);
       expect(v.dumpFilledPct).toBeGreaterThan(90);
@@ -247,33 +274,34 @@ describe('the size comes from the money', () => {
   });
 
   it('LAUNCH-26: more money, a higher starting price, all the way up; every coin has the same number of coins; the price is the market cap divided by them', () => {
-    expect(COIN_SUPPLY).toBe(80_000);
+    expect(COIN_SUPPLY).toBe(1_000_000_000_000);
     let last = 0;
     for (let i = 0; i <= 120; i += 1) {
-      const seed = Math.round(500_000 * Math.pow(MAX_SEED_CENTS / 500_000, i / 120)); // $5,000 up to $10 million: all of these have 80,000 coins
+      const seed = Math.round(500_000 * Math.pow(MAX_SEED_CENTS / 500_000, i / 120)); // $5,000 up to $10 million
       const v = previewCoin(seed);
       expect(v.supply).toBe(COIN_SUPPLY);
-      expect(v.priceCents).toBe(priceFor(seed));
-      expect(v.priceCents).toBeGreaterThanOrEqual(last); // never goes down as the money goes up
-      expect(v.marketCapCents).toBe(COIN_SUPPLY * v.priceCents);
-      last = v.priceCents;
+      expect(v.priceUnits).toBe(priceUnitsFor(seed));
+      expect(v.priceUnits).toBeGreaterThanOrEqual(last); // never goes down as the money goes up
+      expect(v.priceUnits).toBe(v.marketCapCents); // a trillion tokens and a trillion units to the cent: the price in units IS the market cap in cents
+      expect(v.marketCapCents).toBe(capCentsFor(seed));
+      last = v.priceUnits;
     }
-    // The six steps of the ladder, in dollars a coin: $5,000 is $2.00 and each step up costs more per coin.
-    const prices = SEEDS.map((s) => previewCoin(s).priceCents);
-    expect(prices[0]).toBe(200);
+    // The six steps of the ladder, in units: each step up costs more than twice as much per coin.
+    const prices = SEEDS.map((s) => previewCoin(s).priceUnits);
+    expect(prices).toEqual([16_000_000, 80_000_000, 320_000_000, 1_700_000_000, 7_600_000_000, 44_000_000_000]);
     for (let i = 1; i < prices.length; i += 1) expect(prices[i]).toBeGreaterThan((prices[i - 1] as number) * 2);
     // Nothing about the price can be typed any more: an old page that still sends one gets the price the money makes.
     const taken = { names: new Set<string>(), tickers: new Set<string>() };
-    expect(makeCoinEntry({ ...MOON, priceCents: 9000 } as any, taken).entry.price).toBe(200);
-    expect(makeCoinEntry({ ...MOON, priceCents: 1 } as any, taken).entry.price).toBe(200);
+    expect(makeCoinEntry({ ...MOON, priceCents: 9000 } as any, taken).entry.price).toBe(MOON_UNITS);
+    expect(makeCoinEntry({ ...MOON, priceCents: 1 } as any, taken).entry.price).toBe(MOON_UNITS);
   });
 
   it('LAUNCH-5: the entry carries its own numbers (saved whole), the size follows the money, the name and ticker are checked', () => {
     const taken = { names: new Set(['woofy']), tickers: new Set(['TAKN']) };
     const { entry, preview } = makeCoinEntry({ ...MOON, dev: 'PepeKing', description: 'A moon frog.' }, taken);
-    expect(entry).toMatchObject({ ticker: 'MPEP', name: 'Moon Pepe', sector: 'meme', industry: 'Memecoin', price: 200, personality: 'volatile', description: 'A moon frog.' });
+    expect(entry).toMatchObject({ ticker: 'MPEP', name: 'Moon Pepe', sector: 'meme', industry: 'Memecoin', price: MOON_UNITS, personality: 'volatile', description: 'A moon frog.' });
     expect(entry.products).toEqual(['Moon Swap', 'Moon Vault']);
-    expect(entry.meme).toMatchObject({ supply: preview.supply, dev: 'PepeKing' });
+    expect(entry.meme).toMatchObject({ supply: preview.supply, dev: 'PepeKing', priceScale: 1e12 }); // the coin counts its price in trillionths of a cent
     expect(entry.meme?.vol3m).toBeGreaterThan(0.3); // a small coin: wild
     const big = makeCoinEntry({ ...MOON, name: 'Big Pepe', ticker: 'BPEP', seedCents: 100_000_000 }, taken).entry;
     expect(big.meme?.liquidity as number).toBeGreaterThan(entry.meme?.liquidity as number);
@@ -365,7 +393,7 @@ describe('launching', () => {
 
     const state = await launchState(r, alice);
     expect(state).toMatchObject({ cashCents: 1_100_000, limits: { activePerKind: MAX_ACTIVE_PER_KIND, everPerKind: MAX_EVER_PER_KIND }, counts: { coinActive: 0, coinEver: 0, stockActive: 0, stockEver: 0 }, mine: [] });
-    expect(state.coinForm).toMatchObject({ launchFeeCents: 200, minSeedCents: 200, maxSeedCents: 1_000_000_000, supply: 80_000, fullSupplyFromSeedCents: 500_000, minPriceCents: 200, listsInSeconds: 30 });
+    expect(state.coinForm).toMatchObject({ launchFeeCents: 200, minSeedCents: 200, maxSeedCents: 1_000_000_000, supply: COIN_SUPPLY, lowestPriceCents: 1e-12, highestPriceCents: 100, listsInSeconds: 30 });
     expect(state.coinForm.ladder).toHaveLength(10);
     expect(state.stockForm).toMatchObject({ launchFeeCents: 1_000, minSeedCents: 10_000, maxSeedCents: 1_000_000_000, listsInSeconds: 30 });
     expect(state.stockForm.tiers).toHaveLength(5);
@@ -378,7 +406,7 @@ describe('launching', () => {
     const { r, alice } = await twoPlayers();
     const ok = (await call(r, '/api/launch/coin-preview?seedCents=500000', { cookie: alice })).json;
     expect(ok.ok).toBe(true);
-    expect(ok.preview).toMatchObject({ priceCents: 200, stakeShares: 2500, spentCents: 500_000, cashCents: 1_100_000, enough: true, size: 'micro', dumpFilledPct: 100 });
+    expect(ok.preview).toMatchObject({ priceCents: MOON_PRICE, stakeShares: MOON_TOKENS, spentCents: 500_000, cashCents: 1_100_000, enough: true, size: 'micro', dumpFilledPct: 100 });
     const poor = (await call(r, '/api/launch/coin-preview?seedCents=5000000', { cookie: alice })).json;
     expect(poor.preview).toMatchObject({ spentCents: 5_000_000, enough: false });
     // An old page that still sends a price gets the same answer: the money makes the price, whatever is typed.
@@ -413,26 +441,26 @@ describe('launching', () => {
 
     const made = await launchCoin(r, alice);
     expect(made.status).toBe(200);
-    expect(made.json).toMatchObject({ ok: true, duplicate: false, kind: 'coin', ticker: 'MPEP', name: 'Moon Pepe', companyId: BASE, loaded: true, priceCents: 200, stakeShares: 2500, spentCents: 500_000, feeCents: 200, size: 'micro', sizeLabel: 'Micro coin' });
+    expect(made.json).toMatchObject({ ok: true, duplicate: false, kind: 'coin', ticker: 'MPEP', name: 'Moon Pepe', companyId: BASE, loaded: true, priceCents: MOON_PRICE, stakeShares: MOON_TOKENS, spentCents: 500_000, feeCents: 200, size: 'micro', sizeLabel: 'Micro coin' });
     expect(made.json.startsInSeconds).toBeGreaterThanOrEqual(30);
 
     const during = await account(r, alice);
     expect(during.cashCents).toBe(599_800); // the $5,000 first buy and the $2.00 launch fee
     expect(during.startCashCents).toBe(1_100_000);
     expect(during.positions).toHaveLength(1);
-    expect(during.positions[0]).toMatchObject({ ticker: 'MPEP', shares: 2500, costCents: 500_000, short: false, debtCents: 0 });
-    expect(during.positions[0].markCents).toBe(200); // not trading yet: worth what it started at
+    expect(during.positions[0]).toMatchObject({ ticker: 'MPEP', shares: MOON_TOKENS, costCents: 500_000, short: false, debtCents: 0 });
+    expect(during.positions[0].markCents).toBe(MOON_PRICE); // not trading yet: worth what it started at
     expect(during.netWorthCents).toBe(1_099_800); // the first buy is cash turned into coins; only the fee is gone
     expect(during.profitCents).toBe(-200);
     expect(rowsOf(r, 'SELECT * FROM trades WHERE account_id = ?', during.id)).toHaveLength(0); // the launch is no order: no fee, no trade row
     expect(rowsOf(r, 'SELECT user_id, kind, seed_cents, spent_cents, stake_shares, price_cents, fee_cents FROM launches')).toEqual([
-      { user_id: (rowsOf(r, "SELECT id FROM users WHERE username = 'alice'")[0] as { id: number }).id, kind: 'coin', seed_cents: 500_000, spent_cents: 500_000, stake_shares: 2500, price_cents: 200, fee_cents: 200 },
+      { user_id: (rowsOf(r, "SELECT id FROM users WHERE username = 'alice'")[0] as { id: number }).id, kind: 'coin', seed_cents: 500_000, spent_cents: 500_000, stake_shares: MOON_TOKENS, price_cents: MOON_UNITS, fee_cents: 200 }, // (the price is kept in the coin's own units: a trillionth of a cent)
     ]);
 
     // The Launch tab shows it, not trading yet.
     let state = await launchState(r, alice);
     expect(state.counts).toMatchObject({ coinActive: 1, coinEver: 1, stockActive: 0, stockEver: 0 });
-    expect(state.mine[0]).toMatchObject({ ticker: 'MPEP', kind: 'coin', listed: false, sharesNow: 2500, canRug: false, rugs: 0, feeCents: 200, profitCents: -200 });
+    expect(state.mine[0]).toMatchObject({ ticker: 'MPEP', kind: 'coin', listed: false, sharesNow: MOON_TOKENS, canRug: false, rugs: 0, feeCents: 200, profitCents: -200 });
     expect(state.mine[0].listsInSeconds).toBeGreaterThan(0);
     expect(state.mine[0].blocked).toMatch(/not trading yet/);
     // A coin that was made by Alice is not on Bob's list.
@@ -460,7 +488,7 @@ describe('launching', () => {
     expect(state.mine[0].valueNowCents).toBeLessThan(2_500_000);
 
     // Anybody can trade it and pays the coin fee; the book and the charts work.
-    const bought = await trade(r, bob);
+    const bought = await trade(r, bob, { qty: BILLION }); // (a billion tokens is about $160: ten tokens would cost less than a cent)
     expect(bought.status).toBe(201);
     expect(bought.json.trade.feeCents).toBeGreaterThan(0);
     expect((await call(r, '/api/market/MPEP/book')).status).toBe(200);
@@ -472,7 +500,7 @@ describe('launching', () => {
     // The owner sees who launched it; the owner's old "coin" log is unused.
     const admin = (await call(r, '/api/admin/state', { cookie: boss })).json;
     expect(admin.launches).toHaveLength(1);
-    expect(admin.launches[0]).toMatchObject({ ticker: 'MPEP', kind: 'coin', username: 'alice', spentCents: 500_000, stakeShares: 2500, sharesNow: 2500, trading: true, rugs: 0, ruggedShares: 0, ruggedCents: 0 });
+    expect(admin.launches[0]).toMatchObject({ ticker: 'MPEP', kind: 'coin', username: 'alice', spentCents: 500_000, stakeShares: MOON_TOKENS, sharesNow: MOON_TOKENS, trading: true, rugs: 0, ruggedShares: 0, ruggedCents: 0 });
     expect(admin.stocks).toEqual([]); // a launched coin is not one of the owner's "stocks"
     expect(rowsOf(r, "SELECT * FROM admin_log WHERE action = 'coin'")).toHaveLength(0);
     expect((await call(r, '/api/admin/state', { cookie: alice })).status).toBe(403); // the overview is the owner's
@@ -483,18 +511,18 @@ describe('launching', () => {
     expect((await fund(r, boss, 'alice', 20_000_000)).status).toBe(200);
     const bob = await signUp(r, 'bob');
     expect((await fund(r, boss, 'bob', 20_000_000)).status).toBe(200);
-    // An old page (or a script) asks for a $999 coin with $5,000: it gets the $2.00 coin that $5,000 makes.
+    // An old page (or a script) asks for a $999 coin with $5,000: it gets the tiny coin that $5,000 makes.
     const cheat = await launchCoin(r, alice, { priceCents: 99_900 });
     expect(cheat.status).toBe(200);
-    expect(cheat.json).toMatchObject({ priceCents: 200, stakeShares: 2500, spentCents: 500_000 });
-    expect(rowsOf(r, 'SELECT price_cents, stake_shares FROM launches')).toEqual([{ price_cents: 200, stake_shares: 2500 }]);
+    expect(cheat.json).toMatchObject({ priceCents: MOON_PRICE, stakeShares: MOON_TOKENS, spentCents: 500_000 });
+    expect(rowsOf(r, 'SELECT price_cents, stake_shares FROM launches')).toEqual([{ price_cents: MOON_UNITS, stake_shares: MOON_TOKENS }]);
     // Somebody else with the same money gets the same price; more money gets a higher one.
     const same = await launchCoin(r, bob, { name: 'Moon Frog', ticker: 'MFRG', priceCents: 1 });
-    expect(same.json.priceCents).toBe(200);
+    expect(same.json.priceCents).toBe(MOON_PRICE);
     const more = await launchCoin(r, bob, { name: 'Moon Whale', ticker: 'MWHL', seedCents: 5_000_000, priceCents: 200 });
     expect(more.status).toBe(200);
-    expect(more.json.priceCents).toBe(priceFor(5_000_000));
-    expect(more.json.priceCents).toBeGreaterThan(1000);
+    expect(more.json.priceCents).toBe(previewCoin(5_000_000).priceCents);
+    expect(more.json.priceCents).toBeGreaterThan(MOON_PRICE * 3);
     // The company really lists at that price with that many coins.
     advance(r, 45);
     const w = r.app.services.world;
@@ -662,12 +690,16 @@ describe('launching', () => {
 // ---- the rug pull -------------------------------------------------------------------------------------------------------------------
 
 describe('the rug pull', () => {
-  /** Alice launches the coin and it starts trading; Bob buys a little so there is some market. */
+  /**
+   * Alice launches the coin and it starts trading; Bob buys a little so there is some market. The coin is turned into one from before the tiny
+   * prices and pools (`asOldCoin`: $2.00 each, 2,500 of them), so the rug pull here is the plain market sale. The server restarts, so everybody logs in again.
+   */
   async function launched(options: { flowGain?: number; withCoins?: boolean } = {}) {
-    const { r, boss, alice } = await twoPlayers(options);
-    const bob = await signUp(r, 'bob');
-    expect((await launchCoin(r, alice)).status).toBe(200);
-    noPool(r); // (a coin from before pools: the rug pull sells on the market)
+    const first = await twoPlayers(options);
+    await signUp(first.r, 'bob');
+    expect((await launchCoin(first.r, first.alice)).status).toBe(200);
+    const r = await asOldCoin(first.r);
+    const [boss, alice, bob] = [await logIn(r, 'boss'), await logIn(r, 'alice'), await logIn(r, 'bob')] as [string, string, string];
     advance(r, 45);
     expect((await trade(r, bob, { qty: 50 })).status).toBe(201);
     return { r, boss, alice, bob };
@@ -691,7 +723,7 @@ describe('the rug pull', () => {
     expect(res.json.error.code).toBe('not_a_launch');
     expect((await post(r, '/api/launch/rug', alice, { ticker: 12 })).status).toBe(404);
     expect((await post(r, '/api/launch/rug', alice, { ticker: 'MPEP', requestId: 'x' })).status).toBe(400);
-    expect((await account(r, alice)).positions[0].shares).toBe(2500); // none of that sold anything
+    expect((await account(r, alice)).positions[0].shares).toBe(MOON_TOKENS); // none of that sold anything
     expect(rowsOf(r, 'SELECT * FROM launch_rugs')).toHaveLength(0);
     expect(rowsOf(r, "SELECT * FROM news_items WHERE key LIKE 'rug:%'")).toHaveLength(0);
   }, LONG);
@@ -805,10 +837,11 @@ describe('the rug pull', () => {
   }, LONG);
 
   it('LAUNCH-20: more than the order book can take: the part that fits is sold, the rest stays his, and pressing again later sells more', async () => {
-    const { r, boss, alice } = await twoPlayers();
-    expect((await fund(r, boss, 'alice', 3_000_000)).status).toBe(200);
-    expect((await launchCoin(r, alice)).status).toBe(200);
-    noPool(r);
+    const setup = await twoPlayers();
+    expect((await fund(setup.r, setup.boss, 'alice', 3_000_000)).status).toBe(200);
+    expect((await launchCoin(setup.r, setup.alice)).status).toBe(200);
+    const r = await asOldCoin(setup.r); // (a coin from before the tiny prices: a plain market sale)
+    const alice = await logIn(r, 'alice');
     advance(r, 45);
     // Buy a lot more (own cash, no leverage, so nothing can liquidate it) so he holds more than the whole book.
     const bought1 = await trade(r, alice, { qty: 4000 });
@@ -818,8 +851,7 @@ describe('the rug pull', () => {
     expect(bought2.status).toBe(201);
     const held = (await account(r, alice)).positions[0].shares as number;
     expect(held).toBeGreaterThan(8000);
-    const depth = previewCoin(500_000).bookDepthShares;
-    expect(held).toBeGreaterThan(depth * 1.2);
+    // (He now holds well over everything the book can take at once, which is what makes the first sale partial below.)
 
     const first = (await rug(r, alice)).json;
     expect(first.requested).toBe(held);
@@ -867,7 +899,7 @@ describe('the launched company is a real company', () => {
     const [a, b, c] = ['SMAL', 'MIDC', 'BLUE'].map((t) => w.companyByTicker(t)) as [Company, Company, Company];
     // The same number of coins, whatever the money: more money is a higher price, not more coins.
     expect([a.sharesOutstanding, b.sharesOutstanding, c.sharesOutstanding]).toEqual([COIN_SUPPLY, COIN_SUPPLY, COIN_SUPPLY]);
-    expect([small.json.priceCents, mid.json.priceCents, blue.json.priceCents]).toEqual([priceFor(500_000), priceFor(50_000_000), priceFor(1_000_000_000)]);
+    expect([small.json.priceCents, mid.json.priceCents, blue.json.priceCents]).toEqual([previewCoin(500_000).priceCents, previewCoin(50_000_000).priceCents, previewCoin(1_000_000_000).priceCents]);
     expect(small.json.priceCents).toBeLessThan(mid.json.priceCents);
     expect(mid.json.priceCents).toBeLessThan(blue.json.priceCents);
     expect(a.liquidity).toBeLessThan(b.liquidity);
@@ -886,98 +918,92 @@ describe('the launched company is a real company', () => {
     expect(capOf('BLUE')).toBeGreaterThan(100_000_000_00); // over $100M
   }, LONG);
 
-  it('LAUNCH-28: the dearest coin ($10 million makes $5,500 a coin) trades in whole coins like any other, and its whole stake can still be dumped in one order', async () => {
+  it('LAUNCH-28: the dearest coin ($10 million makes $0.00044 a token) trades in whole tokens like any other, and its creator\'s rug pull drains the pool', async () => {
     const { r, boss, alice } = await twoPlayers();
     expect((await fund(r, boss, 'alice', 1_000_000_000)).status).toBe(200);
     const bob = await signUp(r, 'bob');
     expect((await fund(r, boss, 'bob', 5_000_000)).status).toBe(200);
     const made = await launchCoin(r, alice, { seedCents: 1_000_000_000 });
     expect(made.status).toBe(200);
-    expect(made.json).toMatchObject({ priceCents: 550_000, stakeShares: 1818, spentCents: 1818 * 550_000, size: 'blue' });
-    noPool(r);
+    // $440 million over a trillion tokens: 0.044 cents a token. The $10 million buys 22.7 billion of them (rounded down, the cost rounded up to the cent).
+    expect(made.json).toMatchObject({ priceCents: 0.044, stakeShares: 22_727_272_727, spentCents: 1_000_000_000, size: 'blue' });
     advance(r, 45);
     const live = await priceOf(r, 'MPEP');
-    expect(live).toBeGreaterThan(450_000);
-    expect(live).toBeLessThan(650_000);
-    // Another player buys two whole coins (about $11,000) and sells one back.
-    const bought = await trade(r, bob, { qty: 2 });
+    expect(live).toBeGreaterThan(0.03);
+    expect(live).toBeLessThan(0.06);
+    expect(live).toBeLessThan(10); // under a tenth of a dollar, like every memecoin
+    // Another player buys ten million tokens (about $44) and sells half of them back.
+    const bought = await trade(r, bob, { qty: 10_000_000 });
     expect(bought.status).toBe(201);
-    expect(bought.json.trade).toMatchObject({ side: 'buy', requested: 2, filled: 2 });
-    const sold = await trade(r, bob, { side: 'sell', qty: 1 });
+    expect(bought.json.trade).toMatchObject({ side: 'buy', requested: 10_000_000, filled: 10_000_000 });
+    const sold = await trade(r, bob, { side: 'sell', qty: 5_000_000 });
     expect(sold.status).toBe(201);
-    expect((await account(r, bob)).positions[0].shares).toBe(1);
-    // The creator dumps the whole stake in one order and gets most of the money back.
+    expect((await account(r, bob)).positions[0].shares).toBe(5_000_000);
+    // The creator's rug pull takes the money pool and leaves the coin worth next to nothing.
     const out = (await rug(r, alice)).json;
-    expect(out).toMatchObject({ ok: true, requested: 1818, filled: 1818, partial: false, remaining: 0 });
-    expect(out.receivedCents).toBeGreaterThan(1818 * 550_000 * 0.7);
-    expect(out.receivedCents).toBeLessThan(1818 * 550_000);
-    expect((await account(r, alice)).positions).toEqual([]);
+    expect(out).toMatchObject({ ok: true, kind: 'drain', ownCoins: 22_727_272_727, otherCoins: 5_000_000 });
+    advance(r, 60);
+    expect(await priceOf(r, 'MPEP')).toBeLessThan(1e-10); // (in cents: the dust floor is a trillionth of a cent)
   }, LONG);
 
-  it('LAUNCH-29: a launch can start from $2: below $5,000 the coin keeps the $2.00 minimum price and has fewer coins; from $5,000 up it has 80,000', () => {
-    expect(MIN_COIN_PRICE_CENTS).toBe(200);
-    // $2 is the least: one whole coin at the cheapest price. The market cap is 32 times the money (a straight line down from the $5,000 coin).
-    expect(previewCoin(200)).toMatchObject({ priceCents: 200, stakeShares: 1, spentCents: 200, supply: 32, marketCapCents: 6400, size: 'micro', dumpFilledPct: 100 });
-    // $3.99 still buys one coin; the change stays in the player's cash.
-    expect(previewCoin(399)).toMatchObject({ priceCents: 200, stakeShares: 1, spentCents: 200 });
-    expect(previewCoin(10_000)).toMatchObject({ priceCents: 200, stakeShares: 50, spentCents: 10_000, supply: 1600, marketCapCents: 320_000 }); // $100 → 50 of 1,600 coins
-    expect(previewCoin(100_000)).toMatchObject({ priceCents: 200, stakeShares: 500, supply: 16_000 }); // $1,000
-    expect(previewCoin(300_000)).toMatchObject({ priceCents: 200, stakeShares: 1500, supply: 48_000 }); // $3,000
-    expect(previewCoin(500_000)).toMatchObject({ priceCents: 200, stakeShares: 2500, supply: 80_000 }); // $5,000: everything as before
-    expect(supplyFor(200)).toBe(32);
-    expect(supplyFor(500_000)).toBe(COIN_SUPPLY);
-    expect(supplyFor(MAX_SEED_CENTS)).toBe(COIN_SUPPLY);
-    // Walking up from $2 to $10 million: the price never falls, the number of coins never shrinks, and nothing is ever under $2.00 or free.
-    let lastPrice = 0;
-    let lastSupply = 0;
+  it('LAUNCH-29: a launch can start from $2: every coin has a trillion tokens, the least money makes the lowest price, and every price stays far under ten cents', () => {
+    // $2 is the least: 31.25 billion tokens at 0.0000000064 cents each (a $64 market cap, a price of $0.000000000064).
+    expect(previewCoin(200)).toMatchObject({ priceUnits: 6400, priceCents: 6.4e-9, stakeShares: 31_250_000_000, spentCents: 200, supply: COIN_SUPPLY, marketCapCents: 6400, size: 'micro', dumpFilledPct: 100 });
+    // $3.99 buys almost the same: the market cap follows the money (rounded to three figures), the tokens are whole, and the cost is the whole $3.99.
+    expect(previewCoin(399)).toMatchObject({ priceUnits: 12_800, stakeShares: 31_171_875_000, spentCents: 399 });
+    expect(previewCoin(10_000)).toMatchObject({ priceUnits: 320_000, priceCents: 3.2e-7, stakeShares: 31_250_000_000, spentCents: 10_000, supply: COIN_SUPPLY, marketCapCents: 320_000 }); // $100
+    expect(previewCoin(100_000)).toMatchObject({ priceUnits: 3_200_000, stakeShares: 31_250_000_000, supply: COIN_SUPPLY }); // $1,000
+    expect(previewCoin(300_000)).toMatchObject({ priceUnits: 9_600_000, stakeShares: 31_250_000_000, supply: COIN_SUPPLY }); // $3,000
+    expect(previewCoin(500_000)).toMatchObject({ priceUnits: MOON_UNITS, priceCents: MOON_PRICE, stakeShares: MOON_TOKENS, supply: COIN_SUPPLY }); // $5,000
+    expect(priceUnitsFor(200)).toBe(6400);
+    expect(COIN_SUPPLY).toBe(1_000_000_000_000);
+    // Walking up from $2 to $10 million: the price never falls, always has a trillion tokens, never reaches ten cents, and the whole first buy is spent.
+    let lastUnits = 0;
     for (let i = 0; i <= 240; i += 1) {
       const seed = Math.round(MIN_SEED_CENTS * Math.pow(MAX_SEED_CENTS / MIN_SEED_CENTS, i / 240));
       const v = previewCoin(seed);
-      expect(v.priceCents).toBe(priceFor(seed));
-      expect(v.supply).toBe(supplyFor(seed));
-      expect(v.priceCents).toBeGreaterThanOrEqual(Math.max(lastPrice, 200));
-      expect(v.supply).toBeGreaterThanOrEqual(lastSupply);
-      expect(v.supply).toBeLessThanOrEqual(COIN_SUPPLY);
+      expect(v.priceUnits).toBe(priceUnitsFor(seed));
+      expect(v.supply).toBe(COIN_SUPPLY);
+      expect(v.priceUnits).toBeGreaterThanOrEqual(Math.max(lastUnits, 6400));
+      expect(v.priceCents).toBeLessThan(10); // under ten cents, the way real memecoins are (the dearest, $10 million, is under a twentieth of a cent)
       expect(v.stakeShares).toBeGreaterThanOrEqual(1);
-      expect(v.spentCents).toBeLessThanOrEqual(seed);
-      expect(v.spentCents).toBe(v.stakeShares * v.priceCents);
+      expect(v.spentCents).toBe(seed); // a token costs a tiny fraction of a cent, so the whole first buy is spent, to the cent
       expect(v.dumpFilledPct).toBe(100); // a stake is always small enough for one sale
       expect(v.dumpReceiveCents).toBeLessThan(v.spentCents);
-      lastPrice = v.priceCents;
-      lastSupply = v.supply;
+      lastUnits = v.priceUnits;
     }
-    // A small coin is as thin and wild as the $5,000 one (it keeps that coin's character) and costs little to dump, because its stake is a small part of the book.
+    // A small coin is as thin and wild as the $5,000 one (it keeps that coin's character) and costs no more to dump.
     const taken = { names: new Set<string>(), tickers: new Set<string>() };
     const tiny = makeCoinEntry({ ...MOON, seedCents: 10_000 }, taken).entry;
     const five = makeCoinEntry({ ...MOON, name: 'Five Pepe', ticker: 'FPEP' }, taken).entry;
-    expect(tiny.price).toBe(200);
-    expect(tiny.meme?.supply).toBe(1600);
+    expect(tiny.price).toBe(320_000);
+    expect(tiny.meme?.supply).toBe(COIN_SUPPLY);
+    expect(tiny.meme?.priceScale).toBe(1e12);
     expect(tiny.meme?.vol3m).toBe(five.meme?.vol3m);
     expect(tiny.meme?.liquidity).toBe(five.meme?.liquidity);
-    expect(previewCoin(10_000).dumpCostPct).toBeLessThan(previewCoin(500_000).dumpCostPct);
+    expect(previewCoin(10_000).dumpCostPct).toBeLessThanOrEqual(previewCoin(500_000).dumpCostPct);
   });
 
   it('LAUNCH-30: a new player with only the $1,000 he started with can launch a small coin and a small stock, others trade them, and he can dump them', async () => {
     const { r, alice } = await twoPlayers();
     const bob = await signUp(r, 'bob');
     expect((await account(r, bob)).cashCents).toBe(100_000);
-    // $100 for a coin: 50 coins at $2.00 (a coin of 1,600). $100 for a stock (the least): 20 shares at $5.00, and the $10.00 stock launch fee on top.
+    // $100 for a coin: 31.25 billion tokens at $0.0000000032. $100 for a stock (the least): 20 shares at $5.00, and the $10.00 stock launch fee on top.
     const coin = await launchCoin(r, bob, { seedCents: 10_000 });
     expect(coin.status).toBe(200);
-    expect(coin.json).toMatchObject({ ok: true, kind: 'coin', ticker: 'MPEP', priceCents: 200, stakeShares: 50, spentCents: 10_000 });
+    expect(coin.json).toMatchObject({ ok: true, kind: 'coin', ticker: 'MPEP', priceCents: 3.2e-7, stakeShares: 31_250_000_000, spentCents: 10_000 });
     const stock = await launchStock(r, bob, { seedCents: 10_000 });
     expect(stock.status).toBe(200);
     expect(stock.json).toMatchObject({ ok: true, kind: 'stock', ticker: 'ACMR', priceCents: 500, stakeShares: 20, spentCents: 10_000, feeCents: 1_000 });
     let acc = await account(r, bob);
     expect(acc.cashCents).toBe(100_000 - 10_200 - 11_000); // $100 and the $2.00 fee for the coin, $100 and the $10.00 fee for the stock
     expect(acc.netWorthCents).toBe(100_000 - 200 - 1_000); // the money put in turns into holdings; only the fees are gone
-    expect(acc.positions.map((x: any) => `${x.ticker}:${x.shares}`).sort()).toEqual(['ACMR:20', 'MPEP:50']);
-    // The smallest launches the form allows: $2 for a one-coin coin, and $100 for a 20-share stock at $5.00.
+    expect(acc.positions.map((x: any) => `${x.ticker}:${x.shares}`).sort()).toEqual(['ACMR:20', 'MPEP:31250000000']);
+    // The smallest launches the form allows: $2 for the cheapest coin, and $100 for a 20-share stock at $5.00.
     const dust = await launchCoin(r, bob, { name: 'Dust Coin', ticker: 'DUST', seedCents: 200 });
-    expect(dust.json).toMatchObject({ ok: true, priceCents: 200, stakeShares: 1, spentCents: 200, feeCents: 200 });
+    expect(dust.json).toMatchObject({ ok: true, priceCents: 6.4e-9, stakeShares: 31_250_000_000, spentCents: 200, feeCents: 200 });
     const dustStock = await launchStock(r, bob, { name: 'Dust Corp', ticker: 'DSTC', seedCents: 10_000 });
     expect(dustStock.json).toMatchObject({ ok: true, priceCents: 500, stakeShares: 20, spentCents: 10_000, feeCents: 1_000 });
-    noPool(r, 'MPEP', 'DUST');
     // Less than $2 for a coin, or less than $100 for a stock, is refused and takes nothing.
     expect((await launchCoin(r, bob, { name: 'Too Cheap', ticker: 'CHEP', seedCents: 199 })).status).toBe(400);
     expect((await launchStock(r, bob, { name: 'Too Few', ticker: 'FEWW', seedCents: 9_999 })).status).toBe(400);
@@ -985,25 +1011,27 @@ describe('the launched company is a real company', () => {
 
     advance(r, 45);
     // Another player trades the little coin and the little stock like any other company, and the creator can dump his own stake.
-    const bought = await trade(r, alice, { ticker: 'MPEP', qty: 10 });
+    const bought = await trade(r, alice, { ticker: 'MPEP', qty: BILLION });
     expect(bought.status).toBe(201);
-    expect(bought.json.trade).toMatchObject({ side: 'buy', filled: 10 });
+    expect(bought.json.trade).toMatchObject({ side: 'buy', filled: BILLION });
     expect((await trade(r, alice, { ticker: 'ACMR', qty: 1 })).status).toBe(201);
+    // The coin has a money pool, so the creator's rug pull takes the pool (the coin is then dead); the stock's is the ordinary sale.
     const outCoin = (await rug(r, bob)).json;
-    expect(outCoin).toMatchObject({ ok: true, requested: 50, filled: 50, partial: false, remaining: 0 });
-    expect(outCoin.receivedCents).toBeGreaterThan(0);
+    expect(outCoin).toMatchObject({ ok: true, kind: 'drain', ownCoins: 31_250_000_000, otherCoins: BILLION });
+    expect(outCoin.takenCents).toBeGreaterThan(0);
     const outStock = (await rug(r, bob, 'ACMR')).json;
     expect(outStock).toMatchObject({ ok: true, requested: 20, filled: 20, partial: false });
     acc = await account(r, bob);
-    expect(acc.positions.map((x: any) => x.ticker).sort()).toEqual(['DSTC', 'DUST']);
+    expect(acc.positions.map((x: any) => x.ticker).sort()).toEqual(['DSTC', 'DUST', 'MPEP']); // (the dead coin stays in the account, worth nothing)
     const state = await launchState(r, bob);
     expect(state.counts).toMatchObject({ coinActive: 1, coinEver: 2, stockActive: 1, stockEver: 2 });
   }, LONG);
 
-  it('LAUNCH-31: making a coin is free but for the launch fee: a first buy of $0 is allowed, anything between $0 and $2 is not, and the coin is then the smallest one', () => {
+  it('LAUNCH-31: making a coin is free but for the launch fee: a first buy of $0 is allowed, anything between $0 and $2 is not, and the coin then starts at the lowest price', () => {
     expect(LAUNCH_FEE_CENTS).toBe(200);
     const free = previewCoin(0);
-    expect(free).toMatchObject({ seedCents: 0, priceCents: 200, stakeShares: 0, spentCents: 0, feeCents: 200, totalCents: 200, supply: 32, marketCapCents: 6400, size: 'micro', stakePct: 0, stakeOfBookPct: 0 });
+    // A free launch starts at $0.000000000064: 6.4e-9 cents, a $64 market cap over a trillion tokens.
+    expect(free).toMatchObject({ seedCents: 0, priceCents: 6.4e-9, priceUnits: 6400, stakeShares: 0, spentCents: 0, feeCents: 200, totalCents: 200, supply: COIN_SUPPLY, marketCapCents: 6400, size: 'micro', stakePct: 0, stakeOfBookPct: 0 });
     // Nothing held, so nothing to sell: the preview of the dump is empty, not a division by zero.
     expect(free).toMatchObject({ dumpFilledPct: 0, dumpReceiveCents: 0, dumpCostPct: 0, dumpPriceDropPct: 0, breakEvenRisePct: 0 });
     // It is the same coin a $2.00 first buy makes (the smallest and wildest), only the player holds none of it.
@@ -1017,12 +1045,12 @@ describe('the launched company is a real company', () => {
     expect(() => previewCoin(-1)).toThrow(/money you put in/);
     // The first row of the form's table is "no first buy".
     const form = coinOptions(30);
-    expect(form.ladder[0]).toMatchObject({ seedCents: 0, priceCents: 200, supply: 32 });
+    expect(form.ladder[0]).toMatchObject({ seedCents: 0, priceCents: 6.4e-9, supply: COIN_SUPPLY });
     // A coin made with no first buy is a real catalogue entry with the same numbers as the $2.00 one.
     const taken = { names: new Set<string>(), tickers: new Set<string>() };
     const none = makeCoinEntry({ ...MOON, seedCents: 0 }, taken);
-    expect(none.entry.price).toBe(200);
-    expect(none.entry.meme?.supply).toBe(32);
+    expect(none.entry.price).toBe(6400);
+    expect(none.entry.meme?.supply).toBe(COIN_SUPPLY);
     expect(none.preview.stakeShares).toBe(0);
     const tiny = makeCoinEntry({ ...MOON, name: 'Tiny Pepe', ticker: 'TPEP', seedCents: 200 }, taken).entry;
     expect(none.entry.meme?.vol3m).toBe(tiny.meme?.vol3m);
@@ -1044,59 +1072,60 @@ describe('the launched company is a real company', () => {
 
     const made = await launchCoin(r, alice, { seedCents: 0 });
     expect(made.status).toBe(200);
-    expect(made.json).toMatchObject({ ok: true, kind: 'coin', ticker: 'MPEP', priceCents: 200, stakeShares: 0, spentCents: 0, feeCents: 200, size: 'micro' });
-    noPool(r);
+    expect(made.json).toMatchObject({ ok: true, kind: 'coin', ticker: 'MPEP', priceCents: 6.4e-9, stakeShares: 0, spentCents: 0, feeCents: 200, size: 'micro' });
     let acc = await account(r, alice);
     expect(acc.cashCents).toBe(1_099_800);
     expect(acc.positions).toEqual([]); // he holds none of it
     expect(acc.profitCents).toBe(-200);
-    expect(rowsOf(r, 'SELECT seed_cents, spent_cents, stake_shares, price_cents, fee_cents FROM launches')).toEqual([{ seed_cents: 0, spent_cents: 0, stake_shares: 0, price_cents: 200, fee_cents: 200 }]);
+    expect(rowsOf(r, 'SELECT seed_cents, spent_cents, stake_shares, price_cents, fee_cents FROM launches')).toEqual([{ seed_cents: 0, spent_cents: 0, stake_shares: 0, price_cents: 6400, fee_cents: 200 }]);
     let state = await launchState(r, alice);
     expect(state.counts).toMatchObject({ coinActive: 0, coinEver: 1 }); // holding none, so it does not use one of his three places
     expect(state.mine[0]).toMatchObject({ ticker: 'MPEP', stakeShares: 0, spentCents: 0, feeCents: 200, sharesNow: 0, canRug: false, profitCents: -200, rugs: 0 });
     expect(state.mine[0].blocked).toMatch(/not trading yet/);
     expect((await market(r)).find((c) => c.ticker === 'MPEP')).toMatchObject({ trading: false });
 
-    // It lists, with 32 coins at $2.00, and the owner sees it with nothing held.
+    // It lists, with a trillion tokens at $0.000000000064, and the owner sees it with nothing held.
     advance(r, 45);
     expect((await market(r)).find((c) => c.ticker === 'MPEP')).toMatchObject({ trading: true });
-    expect(r.app.services.world.companyByTicker('MPEP')?.sharesOutstanding).toBe(32);
+    expect(r.app.services.world.companyByTicker('MPEP')?.sharesOutstanding).toBe(COIN_SUPPLY);
     state = await launchState(r, alice);
     expect(state.mine[0]).toMatchObject({ listed: true, sharesNow: 0, canRug: false });
-    expect(state.mine[0].blocked).toMatch(/hold none/);
+    expect(state.mine[0].blocked).toMatch(/no money in the MPEP pool/); // (a coin's rug pull takes its money pool, which is empty until somebody buys)
     const nothing = await rug(r, alice);
     expect(nothing.status).toBe(400);
-    expect(nothing.json.error.code).toBe('nothing_to_dump');
+    expect(nothing.json.error.code).toBe('pool_empty');
     const admin = (await call(r, '/api/admin/state', { cookie: boss })).json;
     expect(admin.launches[0]).toMatchObject({ ticker: 'MPEP', username: 'alice', spentCents: 0, stakeShares: 0, sharesNow: 0, trading: true });
 
-    // The maker buys 5 of his own coin on the market like anybody: he pays the gap and the 0.5 % fee, and it is an ordinary holding now.
-    const bought = await trade(r, alice, { qty: 5 });
+    // The maker buys 40 billion of his own tokens (about $2.56) on the market like anybody: he pays the gap and the fee, and it is an ordinary holding now.
+    const HELD = 40_000_000_000; // (a market order fills only what the order book holds at once, about 90 billion tokens for a coin this size)
+    const bought = await trade(r, alice, { qty: HELD });
     expect(bought.status).toBe(201);
-    expect(bought.json.trade.filled).toBe(5);
+    expect(bought.json.trade.filled).toBe(HELD);
     expect(bought.json.trade.feeCents).toBeGreaterThan(0);
-    expect((await trade(r, bob, { qty: 3 })).status).toBe(201); // and others can too
+    expect((await trade(r, bob, { qty: 20_000_000_000 })).status).toBe(201); // and others can too
     state = await launchState(r, alice);
     expect(state.counts).toMatchObject({ coinActive: 1, coinEver: 1 }); // now he holds some
-    expect(state.mine[0]).toMatchObject({ sharesNow: 5, canRug: true, blocked: null, stakeShares: 0 });
+    expect(state.mine[0]).toMatchObject({ sharesNow: HELD, canRug: true, blocked: null, stakeShares: 0 });
 
     // A restart keeps the launch and the company.
     const r2 = await restart(r);
     advance(r2, 5);
     const again = await launchState(r2, alice);
-    expect(again.mine[0]).toMatchObject({ ticker: 'MPEP', stakeShares: 0, feeCents: 200, sharesNow: 5, listed: true });
+    expect(again.mine[0]).toMatchObject({ ticker: 'MPEP', stakeShares: 0, feeCents: 200, sharesNow: HELD, listed: true });
     expect(rowsOf(r2, 'SELECT fee_cents FROM launches')).toEqual([{ fee_cents: 200 }]);
 
-    // Rug pull = sell everything he holds, an ordinary order; the launch's result counts the fee and what the buy and the sale cost.
+    // Rug pull = he takes the money pool (what he and Bob paid in); the launch's result counts the fee, what the buy cost, and what he took.
     const out = (await rug(r2, alice)).json;
-    expect(out).toMatchObject({ ok: true, requested: 5, filled: 5, partial: false, remaining: 0 });
+    expect(out).toMatchObject({ ok: true, kind: 'drain', ownCoins: HELD, otherCoins: 20_000_000_000 });
+    expect(out.takenCents).toBeGreaterThan(0);
     acc = await account(r2, alice);
-    expect(acc.positions).toEqual([]);
+    expect(acc.positions.map((x: any) => x.ticker)).toEqual(['MPEP']); // (the dead coin stays in the account, worth nothing)
     const after = await launchState(r2, alice);
-    expect(after.mine[0]).toMatchObject({ sharesNow: 0, rugs: 1, ruggedShares: 5, ruggedCents: out.receivedCents });
+    expect(after.mine[0]).toMatchObject({ sharesNow: HELD, ruggedCents: out.takenCents, canRug: false, valueNowCents: 0 });
     const spentOnBuy = bought.json.trade.totalCents + bought.json.trade.feeCents;
-    expect(after.mine[0].profitCents).toBe(out.receivedCents - spentOnBuy - 200);
-    expect(acc.cashCents).toBe(1_100_000 - 200 - spentOnBuy + out.receivedCents);
+    expect(after.mine[0].profitCents).toBe(out.takenCents - spentOnBuy - 200);
+    expect(acc.cashCents).toBe(1_100_000 - 200 - spentOnBuy + out.takenCents);
   }, LONG);
 
   it('LAUNCH-33: the cash has to cover the fee and the first buy together; a refusal makes nothing and takes nothing', async () => {
@@ -1112,10 +1141,10 @@ describe('the launched company is a real company', () => {
     expect(pv).toMatchObject({ spentCents: 100_000, feeCents: 200, totalCents: 100_200, cashCents: 100_000, enough: false });
     expect(rowsOf(r, 'SELECT * FROM launches')).toHaveLength(0);
     expect((await account(r, bob)).cashCents).toBe(100_000);
-    // $999 buys 499 coins ($998) and with the fee takes every cent he has.
-    const all = await launchCoin(r, bob, { seedCents: 99_900 });
+    // $998 of tokens and the $2.00 fee take every cent he has (a token costs a tiny fraction of a cent, so the whole $998 is spent).
+    const all = await launchCoin(r, bob, { seedCents: 99_800 });
     expect(all.status).toBe(200);
-    expect(all.json).toMatchObject({ stakeShares: 499, spentCents: 99_800, feeCents: 200 });
+    expect(all.json).toMatchObject({ stakeShares: 31_250_000_000, spentCents: 99_800, feeCents: 200 });
     expect((await account(r, bob)).cashCents).toBe(0);
     // With nothing left, even a free launch (the fee alone) is refused.
     const broke = await launchCoin(r, bob, { name: 'Broke Coin', ticker: 'BRKE', seedCents: 0 });
@@ -1196,9 +1225,9 @@ describe('the launched company is a real company', () => {
     expect((await launchCoin(r, alice)).status).toBe(200);
     expect((await launchStock(r, alice)).status).toBe(200);
     advance(r, 60);
-    expect((await trade(r, bob, { qty: 40 })).status).toBe(201);
+    expect((await trade(r, bob, { qty: BILLION })).status).toBe(201);
     const out = (await rug(r, alice)).json;
-    expect(out).toMatchObject({ kind: 'drain', ownCoins: 2500, otherCoins: 40 }); // (the coin has a money pool: the rug pull took it)
+    expect(out).toMatchObject({ kind: 'drain', ownCoins: MOON_TOKENS, otherCoins: BILLION }); // (the coin has a money pool: the rug pull took it)
     advance(r, 2 * 3600);
     const companies = JSON.stringify(r.app.services.world.companies);
     const poolBefore = rowsOf(r, 'SELECT * FROM coin_pools ORDER BY company_id');
@@ -1217,7 +1246,7 @@ describe('the launched company is a real company', () => {
     expect(rowsOf(r, 'SELECT * FROM coin_pools ORDER BY company_id')).toEqual(poolBefore);
     expect(rowsOf(r, 'SELECT key, headline, realized, publish_tick, start_tick, end_tick FROM news_items ORDER BY key')).toEqual(newsBefore);
     const state = await launchState(r, alice);
-    expect(state.mine.map((m: any) => [m.ticker, m.sharesNow, m.rugs])).toEqual([['ACMR', ACME_SHARES, 0], ['MPEP', 2500, 1]]); // (his own coins are still there, worth nothing)
+    expect(state.mine.map((m: any) => [m.ticker, m.sharesNow, m.rugs])).toEqual([['ACMR', ACME_SHARES, 0], ['MPEP', MOON_TOKENS, 1]]); // (his own coins are still there, worth nothing)
     expect(state.counts).toMatchObject({ coinEver: 1, coinActive: 0, stockEver: 1, stockActive: 1 });
     // The next launch after the restart gets the next id.
     expect((await launchCoin(r, alice, { name: 'Second Pepe', ticker: 'SPEP' })).json.companyId).toBe(BASE + COINS + 2);
@@ -1253,7 +1282,7 @@ describe('the launched company is a real company', () => {
       const acc = b.app.services.trading.careerAccountOf(aliceB);
       const id = wb.recordOwnCoin(entry, made.json.listingTick);
       b.app.services.db.run('UPDATE accounts SET cash_cents = cash_cents - ? WHERE id = ?', 500_000, acc.id);
-      b.app.services.db.run('INSERT INTO positions(account_id, company_id, shares, cost_cents) VALUES (?, ?, ?, ?)', acc.id, id, 2500, 500_000);
+      b.app.services.db.run('INSERT INTO positions(account_id, company_id, shares, cost_cents) VALUES (?, ?, ?, ?)', acc.id, id, MOON_TOKENS, 500_000);
     });
     b = await restart(b);
 
@@ -1288,7 +1317,7 @@ describe('the launched company is a real company', () => {
       const bob = await signUp(r, 'bob');
       expect((await launchCoin(r, alice)).status).toBe(200);
       advance(r, 45);
-      expect((await trade(r, bob, { qty: 60 })).status).toBe(201);
+      expect((await trade(r, bob, { qty: 2 * BILLION })).status).toBe(201);
       advance(r, 30);
       expect((await rug(r, alice, 'MPEP', { requestId: 'req-rug-det-000001' })).status).toBe(200);
       advance(r, 20);

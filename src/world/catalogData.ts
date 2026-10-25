@@ -31,6 +31,11 @@ export interface MemeProfile {
   readonly driftDay: number;
   /** The anonymous developer's handle (the "chief executive" of the coin in news). */
   readonly dev: string;
+  /**
+   * Price units in one cent, for a coin with fine prices (src/world/units.ts). Left out for a coin that counts in cents. When it is set,
+   * the entry's `price` is in these units too.
+   */
+  readonly priceScale?: number;
 }
 
 export interface CatalogEntry {

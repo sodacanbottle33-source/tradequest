@@ -11,6 +11,7 @@ import * as params from './params';
 import { SECTOR_IDS, sectorIndex } from './params';
 import type { EffectBook } from './effects';
 import type { Company, StockState, WorldSnapshot } from './types';
+import { COIN_MIN_UNITS } from './units';
 
 // The loop in step() runs hundreds of millions of times when a stopped server catches up. Reading module-level constants
 // through an import namespace is slow in some loaders, so the numbers it needs are copied into plain locals once.
@@ -63,10 +64,17 @@ export class WorldSim {
   readonly V: Float64Array;
   readonly Q: Float64Array;
   readonly A: Float64Array;
-  /** Last traded (mid) price in cents; 0 while the company is not listed yet. */
+  /** Last traded (mid) price in the company's price units (cents unless it has a `priceScale`); 0 while the company is not listed yet. */
   readonly P: Float64Array;
   readonly regime: Int8Array;
+  /** 0 = not listed yet, 1 = trading, 2 = dead (a coin whose developer took its pool: the price is frozen, see {@link setDeadFrom}). */
   readonly listed: Uint8Array;
+  /** The lowest and highest price each company can have, in its price units: $1.00 … $1,000,000.00 in cents, or 1 unit … $1.00 for a fine-priced coin. */
+  private readonly minP: Float64Array;
+  private readonly maxP: Float64Array;
+  /** Tick from which each coin that was rug pulled is dead (its price no longer moves), and the ones that have not died yet. */
+  private readonly deadAt = new Map<number, number>();
+  private awaiting: number[] = [];
   /** Shares traded during the most recent tick. */
   readonly volume: Float64Array;
   /** Size of the most recent tick's move, |P_t / P_(t−1) − 1| (feeds the volatility regime). */
@@ -106,6 +114,8 @@ export class WorldSim {
     this.R = new Float64Array(n);
     this.regime = new Int8Array(n);
     this.listed = new Uint8Array(n);
+    this.minP = new Float64Array(n).fill(MIN_PRICE);
+    this.maxP = new Float64Array(n).fill(MAX_PRICE);
     this.volume = new Float64Array(n);
     this.transient = new Float64Array(n);
     this.permanent = new Float64Array(n);
@@ -121,6 +131,11 @@ export class WorldSim {
       if (c.id !== i) throw new Error(`Company ${c.ticker} has id ${c.id} at position ${i}`);
       this.stockSeed[i] = deriveSeed(worldSeed, i);
       this.sectorOf[i] = sectorIndex(c.sector);
+      const scale = c.priceScale ?? 1;
+      if (scale !== 1) {
+        this.minP[i] = COIN_MIN_UNITS;
+        this.maxP[i] = 100 * scale; // $1.00
+      }
     });
     // Everything listed at genesis starts at tick 0.
     for (const c of companies) if (c.listingTick === 0) this.list(c.id, 0);
@@ -181,6 +196,8 @@ export class WorldSim {
     for (let i = 0; i < this.n; i += 1) {
       if (this.listed[i] === 0 && (this.companies[i] as Company).listingTick === t) this.list(i, t);
     }
+    // Coins whose developer took the pool die now: their price stops moving for good.
+    if (this.awaiting.length > 0) this.killDue(t);
 
     // Market-wide and sector-wide factors.
     const mBase = 1 + idx * MARKET_DRAWS_PER_TICK;
@@ -201,7 +218,7 @@ export class WorldSim {
 
     const base = 1 + idx * DRAWS_PER_TICK;
     for (let i = 0; i < this.n; i += 1) {
-      if (this.listed[i] === 0) continue;
+      if (this.listed[i] !== 1) continue; // not listed yet, or dead (frozen)
       const c = this.companies[i] as Company;
       if (c.listingTick === t) continue; // first trading tick: the price is the listing price
       const seed = this.daySeed[i] as number;
@@ -228,7 +245,7 @@ export class WorldSim {
       const drift = ((this.regime[i] as number) * c.driftDay) / TICKS_PER_DAY;
       const pull = clamp(ANCHOR_PULL * (A / F - 1), -0.0005, 0.0005);
       F *= 1 + drift + c.sigmaF * zF + pull + c.beta * this.S + c.sectorBeta * (this.sectorS[sec] as number) + perm;
-      F = clamp(F, MIN_PRICE, MAX_PRICE);
+      F = clamp(F, this.minP[i] as number, this.maxP[i] as number);
 
       // Volatility regime: big moves make the next ones bigger; it relaxes toward 1.
       const prevP = this.P[i] as number;
@@ -242,7 +259,7 @@ export class WorldSim {
       D += c.beta * mkFast + c.sectorBeta * (secFast[sec] as number) + trans;
       D = clamp(D, -DEVIATION_CAP, DEVIATION_CAP);
 
-      const price = clamp(Math.floor(F * (1 + D) + 0.5), MIN_PRICE, MAX_PRICE);
+      const price = clamp(Math.floor(F * (1 + D) + 0.5), this.minP[i] as number, this.maxP[i] as number);
 
       // Volume: the usual daily rhythm, busier when volatile or when news is moving the price.
       const activity = 0.5 + 0.5 * V;
@@ -270,8 +287,61 @@ export class WorldSim {
     return this.P[i] as number;
   }
 
+  /** True once the company trades (a dead coin is still listed: its frozen price stays on the screen). */
   isListed(i: number): boolean {
-    return this.listed[i] === 1;
+    return this.listed[i] !== 0;
+  }
+
+  /** True for a coin whose developer took its pool and whose price therefore no longer moves. */
+  isDead(i: number): boolean {
+    return this.listed[i] === 2;
+  }
+
+  /**
+   * The coin's price stops from this tick on (a rug pull: server/launch.ts). It is a fact stored with the rug pull's news story, so the
+   * same tick is given again after every restart; calling it again with the same tick changes nothing. A fine-priced coin drops to its
+   * lowest price (1 unit, $0.00000000000001) at that tick; an older coin simply keeps the price it has.
+   */
+  setDeadFrom(i: number, tick: number): void {
+    if (!Number.isInteger(i) || i < 0 || i >= this.n) throw new Error(`Unknown company ${i}`);
+    if (!Number.isInteger(tick) || tick < 1) throw new Error(`Bad tick ${tick}`);
+    const was = this.deadAt.get(i);
+    if (was !== undefined) {
+      if (was !== tick) throw new Error(`Company ${i} is already set to die at tick ${was}, not ${tick}`);
+      if (this.listed[i] === 2 || this.awaiting.includes(i)) return;
+    }
+    this.deadAt.set(i, tick);
+    if (this.listed[i] !== 2) this.awaiting.push(i);
+  }
+
+  /** The ticks at which coins die (company id → tick), to hand to a rebuilt simulation. */
+  deadFrom(): ReadonlyMap<number, number> {
+    return this.deadAt;
+  }
+
+  private killDue(t: number): void {
+    const still: number[] = [];
+    for (const i of this.awaiting) {
+      if (this.listed[i] === 0 || (this.deadAt.get(i) as number) > t) {
+        still.push(i);
+        continue;
+      }
+      const c = this.companies[i] as Company;
+      if ((c.priceScale ?? 1) !== 1) {
+        const low = this.minP[i] as number;
+        this.F[i] = low;
+        this.A[i] = low;
+        this.P[i] = low;
+        this.D[i] = 0;
+        this.M[i] = 0;
+        this.Q[i] = 0;
+        this.V[i] = 1;
+      }
+      this.R[i] = 0;
+      this.volume[i] = 0;
+      this.listed[i] = 2;
+    }
+    this.awaiting = still;
   }
 
   /** Volatility-regime multiplier of company i (1 = normal). */
@@ -285,7 +355,7 @@ export class WorldSim {
     const stocks: (StockState | null)[] = [];
     for (let i = 0; i < this.n; i += 1) {
       stocks.push(
-        this.listed[i] === 1
+        this.listed[i] !== 0
           ? {
               F: this.F[i] as number,
               D: this.D[i] as number,

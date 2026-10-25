@@ -3,7 +3,7 @@
 // "buy 10 of QLRX" and an order id; it never sends a price, a balance or a fill (docs/world.md §6).
 
 import { formatCents } from '../src/engine';
-import { MAX_ORDER_SHARES, MIN_PRICE, executeMarket, maxAffordable, recoverConsumed, type Company, type Execution, type FillPart, type Level, type Side, type WorldEvent } from '../src/world';
+import { MAX_ORDER_SHARES, MIN_PRICE, executeMarket, maxAffordable, recoverConsumed, scaleOf, unitsToCents, valueOf, type Company, type Execution, type FillPart, type Level, type Side, type WorldEvent } from '../src/world';
 import { MEME_FEE_BPS, feeOf } from './fees';
 import { NO_FLOW, applyMarkup, type FlowPreview, type FlowService } from './flow';
 import type { Halts } from './halts';
@@ -86,7 +86,10 @@ export interface PositionView {
   readonly short: boolean;
   /** The cash of his own the player put into the position (cents): the margin of a leveraged or short position, all of the price of a plain long. */
   readonly costCents: number;
-  /** The average price per share: what the shares cost (long, own cash plus borrowed part) or what they were sold for (short). */
+  /**
+   * The average price per share: what the shares cost (long, own cash plus borrowed part) or what they were sold for (short).
+   * Every price below (this one, bid, ask, mark) is in cents; for a coin that costs a tiny fraction of a cent it is a decimal number of cents.
+   */
   readonly avgCostCents: number;
   readonly bid: number;
   readonly ask: number;
@@ -365,26 +368,32 @@ export class Trading {
       // started at (a Career position in a company that is not trading yet), so the owner's net worth does not dip while it waits to list.
       const dead = acc.kind === 'career' && deadIds.has(p.company_id);
       const mark = dead ? 0 : acc.kind === 'match' ? (listed ? this.world.sim.price(p.company_id) : 0) : !listed ? (company?.basePriceCents ?? 0) : short ? ask : bid;
-      const value = mark * p.shares;
+      // A coin that costs a tiny fraction of a cent counts its price in smaller units (`mark`, `bid` and `ask` are in them); the VALUE is
+      // always whole cents, worked out exactly and rounded down (the most the shares could be sold for).
+      const scale = scaleOf(company);
+      const fine = scale !== 1;
+      const value = fine ? valueOf(p.shares, mark, scale, 'down') : mark * p.shares;
       // What counts is what is left after the debt is repaid / the shares are bought back (never below 0: a player can lose his margin, not more).
-      const equity = equityOf({ shares: p.shares, costCents: p.cost_cents, debtCents: p.debt_cents, short, creditCents: p.credit_cents }, mark);
+      // A fine-priced coin takes plain buys and sells only (no loan, no short), so what it is worth is its value less any debt.
+      const equity = fine ? Math.max(0, value - p.debt_cents) : equityOf({ shares: p.shares, costCents: p.cost_cents, debtCents: p.debt_cents, short, creditCents: p.credit_cents }, mark);
       holdings += equity;
+      const basis = short ? p.credit_cents : p.cost_cents + p.debt_cents; // a long: all it cost (own cash plus borrowed part); a short: what it was sold for
       return {
         companyId: p.company_id,
         ticker: company?.ticker ?? '?',
         shares: p.shares,
         short,
         costCents: p.cost_cents,
-        avgCostCents: Math.round((short ? p.credit_cents : p.cost_cents + p.debt_cents) / p.shares), // a long: all it cost (own cash plus borrowed part); a short: what it was sold for
-        bid,
-        ask,
-        markCents: mark,
+        avgCostCents: fine ? basis / p.shares : Math.round(basis / p.shares),
+        bid: unitsToCents(bid, scale),
+        ask: unitsToCents(ask, scale),
+        markCents: unitsToCents(mark, scale),
         valueCents: value,
         debtCents: p.debt_cents,
         creditCents: p.credit_cents,
         equityCents: equity,
-        leverage: p.cost_cents > 0 ? Math.round((((short ? p.credit_cents : p.cost_cents + p.debt_cents)) / p.cost_cents) * 10) / 10 : 1,
-        liqPrice: short ? shortLiquidationPrice(p.shares, collateralOf(p.credit_cents, p.cost_cents)) : liquidationPrice(p.shares, p.debt_cents),
+        leverage: p.cost_cents > 0 ? Math.round((basis / p.cost_cents) * 10) / 10 : 1,
+        liqPrice: fine ? 0 : short ? shortLiquidationPrice(p.shares, collateralOf(p.credit_cents, p.cost_cents)) : liquidationPrice(p.shares, p.debt_cents),
         stopCents: p.stop_cents,
         takeCents: p.take_cents,
         unrealizedCents: equity - p.cost_cents,
@@ -440,6 +449,14 @@ export class Trading {
 
   private tradeView(r: StoredTrade): TradeView {
     const stored = JSON.parse(r.result_json) as { note: '' | 'depth' | 'limit'; parts: FillPart[]; poolLimited?: boolean };
+    // A trade in a fine-priced coin is stored in that coin's small price units; people get cents (a decimal number of cents).
+    const scale = scaleOf(this.world.companies[r.company_id]);
+    let avgPrice = r.filled > 0 ? r.total_cents / r.filled : 0;
+    if (scale !== 1 && r.filled > 0) {
+      let sum = 0;
+      for (const p of stored.parts) sum += p.price * p.qty;
+      avgPrice = sum / r.filled / scale;
+    }
     return {
       id: r.id,
       clientOrderId: r.client_order_id,
@@ -448,15 +465,15 @@ export class Trading {
       requested: r.requested,
       filled: r.filled,
       totalCents: r.total_cents,
-      avgPrice: r.filled > 0 ? r.total_cents / r.filled : 0,
-      midCents: r.mid_cents,
+      avgPrice,
+      midCents: unitsToCents(r.mid_cents, scale),
       spreadCostCents: r.spread_cents,
       impactCostCents: r.impact_cents,
       realizedCents: r.realized_cents,
       tick: r.tick,
       createdMs: r.created_ms,
       note: stored.note,
-      parts: stored.parts,
+      parts: scale === 1 ? stored.parts : stored.parts.map((p) => ({ price: p.price / scale, qty: p.qty })),
       leverage: r.leverage,
       debtCents: r.debt_cents,
       liquidated: r.forced === 1,
@@ -489,10 +506,13 @@ export class Trading {
     limitPrice?: number,
     leverage = 1,
     short = false,
+    budgetCents?: number,
   ): Estimate {
     this.checkMarket(companyId);
-    this.checkQty(qty);
+    this.checkQty(qty, companyId);
     this.checkOrderSize(qty, companyId);
+    const scale = this.scaleFor(companyId);
+    if (budgetCents !== undefined && (!Number.isSafeInteger(budgetCents) || budgetCents < 0)) throw new OrderError('bad_request', 'The amount to spend must be a whole number of cents, 0 or more.');
     // A buy opens a long position and a sell opens a short one (with `short`); the other side of each closes it.
     const opening = side === (short ? 'sell' : 'buy');
     const lev = opening ? this.checkLeverage(leverage) : 1;
@@ -505,11 +525,12 @@ export class Trading {
     const ticker = this.world.companies[companyId]?.ticker ?? '?';
     const pool = this.poolFor(companyId, acc?.kind);
     this.checkPool(pool, ticker, { short, leverage: lev, exits: false });
+    this.checkFineHasPool(scale, pool, ticker);
     // Visitors who are not signed in see what a Career order would do. A 1v1 match order never moves the price.
     const moves = acc === undefined || acc.kind === 'career';
     const feeBps = this.feeBpsFor(companyId, acc?.kind);
     const consumed = accountId === null ? 0 : this.consumedNow(accountId, companyId, side, tick);
-    const raw = executeMarket(levels, side, qty, consumed, { limitPrice, mid: quote.mid });
+    const raw = this.fill(companyId, levels, side, qty, consumed, { limitPrice, mid: quote.mid });
     const priced0 = this.priced(companyId, levels, side, raw, quote.mid, tick, moves);
     // A sale of a pool coin is paid from the pool: it fills only as far as the pool can pay.
     const capped = pool && !opening ? this.capToPool(pool, ticker, companyId, levels, qty, consumed, quote.mid, tick, moves, limitPrice, priced0) : { ...priced0, limited: false };
@@ -520,11 +541,13 @@ export class Trading {
     const mine = held && (held.short === 1) === short ? held : null;
     let maxQty = 0;
     if (acc) {
+      // `budgetCents` (the "spend this much" box) can only lower the cash an order may use, never raise it.
+      const cash = budgetCents === undefined ? acc.cash_cents : Math.min(acc.cash_cents, budgetCents);
       if (!opening) {
         maxQty = mine?.shares ?? 0;
         if (pool) maxQty = this.poolSellLimit(companyId, levels, maxQty, consumed, quote.mid, tick, moves, limitPrice, pool.pool_cents);
-      } else if (short) maxQty = this.affordableShortQty(companyId, levels, consumed, acc.cash_cents, quote.mid, tick, moves, lev, feeBps);
-      else maxQty = this.affordableQty(companyId, levels, consumed, acc.cash_cents, quote.mid, tick, moves, lev, feeBps);
+      } else if (short) maxQty = this.affordableShortQty(companyId, levels, consumed, cash, quote.mid, tick, moves, lev, feeBps);
+      else maxQty = this.affordableQty(companyId, levels, consumed, cash, quote.mid, tick, moves, lev, feeBps);
     }
     // What really moves in cash: opening pays only the margin (the value divided by the leverage); closing a long pays back the debt that
     // goes with the shares and keeps the rest; covering a short gets back what is left of the collateral that goes with those shares.
@@ -541,8 +564,9 @@ export class Trading {
       netCents = margin + orderFee;
       debtCents = exec.totalCents - margin;
       const heldNow = mine ? { shares: mine.shares, debtCents: mine.debt_cents } : null;
-      liqPrice = liquidationPrice((heldNow?.shares ?? 0) + exec.filledQty, (heldNow?.debtCents ?? 0) + debtCents);
-      maxLeverage = exec.filledQty > 0 ? maxLeverageFor(exec.totalCents, exec.filledQty, quote.mid, heldNow) : 1;
+      // A fine-priced coin takes no leverage (pools.ts), so it has no liquidation price and a maximum leverage of 1.
+      liqPrice = scale === 1 ? liquidationPrice((heldNow?.shares ?? 0) + exec.filledQty, (heldNow?.debtCents ?? 0) + debtCents) : 0;
+      maxLeverage = exec.filledQty > 0 && scale === 1 ? maxLeverageFor(exec.totalCents, exec.filledQty, quote.mid, heldNow) : 1;
     } else if (opening) {
       const margin = marginOf(exec.totalCents, lev);
       netCents = margin + orderFee;
@@ -574,7 +598,22 @@ export class Trading {
         costDayCents = costPerDay((mine?.credit_cents ?? 0) + creditCents, rateBps);
       }
     }
-    return { ...exec, mid: quote.mid, tick, bid: quote.bid, ask: quote.ask, maxQty, flow, leverage: lev, debtCents, creditCents, netCents, feeCents, feeBps, liqPrice, maxLeverage, short, rateBps, costDayCents, poolCents: pool ? pool.pool_cents : null, poolLimited: capped.limited };
+    const out: Estimate = { ...exec, mid: quote.mid, tick, bid: quote.bid, ask: quote.ask, maxQty, flow, leverage: lev, debtCents, creditCents, netCents, feeCents, feeBps, liqPrice, maxLeverage, short, rateBps, costDayCents, poolCents: pool ? pool.pool_cents : null, poolLimited: capped.limited };
+    return scale === 1 ? out : this.inCents(out, scale);
+  }
+
+  /** An estimate worked out in a fine-priced coin's small price units, with every price turned into cents (a decimal number of cents) for people. Money was whole cents all along. */
+  private inCents(e: Estimate, scale: number): Estimate {
+    return {
+      ...e,
+      mid: unitsToCents(e.mid, scale),
+      bid: unitsToCents(e.bid, scale),
+      ask: unitsToCents(e.ask, scale),
+      avgPrice: unitsToCents(e.avgPrice, scale),
+      firstPrice: unitsToCents(e.firstPrice, scale),
+      lastPrice: unitsToCents(e.lastPrice, scale),
+      parts: e.parts.map((p) => ({ price: unitsToCents(p.price, scale), qty: p.qty })),
+    };
   }
 
   /** A leverage that is not a whole number from 1 to 50 is a mistake in the request, not something to round. */
@@ -588,17 +627,49 @@ export class Trading {
   private priced(companyId: number, levels: readonly Level[], side: Side, raw: Execution, mid: number, tick: number, moves: boolean): { exec: Execution; flow: FlowPreview } {
     const company = this.world.companies[companyId] as Company;
     const flow = moves && this.flow ? this.flow.preview(company, side, raw.filledQty, tick) : NO_FLOW;
-    return { exec: applyMarkup(raw, side, mid, levels[0]?.price ?? 0, flow.paid), flow };
+    return { exec: applyMarkup(raw, side, mid, levels[0]?.price ?? 0, flow.paid, this.scaleFor(companyId)), flow };
+  }
+
+  // ---- coins with a price finer than a cent (src/world/units.ts) ----------------------------------------------------------
+
+  /** How many price units make one cent for this company: 1 for every company that counts in cents. */
+  private scaleFor(companyId: number): number {
+    return scaleOf(this.world.companies[companyId]);
+  }
+
+  /** The most shares one order may ask for in this company: a coin with a trillion tokens takes far bigger orders than the usual cap. */
+  private qtyCap(companyId: number): number {
+    const c = this.world.companies[companyId];
+    return c === undefined || scaleOf(c) === 1 ? MAX_ORDER_SHARES : c.sharesOutstanding;
+  }
+
+  /** The most shares an order may ask for at this price (price in the company's own units). */
+  private maxSharesAt(companyId: number, price: number): number {
+    return this.scaleFor(companyId) === 1 ? maxOrderShares(price) : this.qtyCap(companyId);
+  }
+
+  /** executeMarket for this company: its ladder counts in its own price units, the totals come out in exact whole cents. A price limit is in cents. */
+  private fill(companyId: number, levels: readonly Level[], side: Side, qty: number, consumed: number, options: { limitPrice?: number; mid: number }): Execution {
+    const scale = this.scaleFor(companyId);
+    if (scale === 1) return executeMarket(levels, side, qty, consumed, options);
+    const limitPrice = options.limitPrice === undefined ? undefined : Math.min(options.limitPrice * scale, Number.MAX_SAFE_INTEGER);
+    return executeMarket(levels, side, qty, consumed, { limitPrice, mid: options.mid, scale, maxQty: this.qtyCap(companyId) });
+  }
+
+  /** A fine-priced coin is always a launched coin with a money pool, and launched coins are traded in Career only: refuse anything else. */
+  private checkFineHasPool(scale: number, pool: PoolRow | null, ticker: string): void {
+    if (scale !== 1 && !pool) throw new OrderError('not_allowed', `${ticker} can only be traded in Career.`, {}, 403);
   }
 
   /** The most shares this cash buys at this leverage (own cash needed = the order's value divided by it), counting the trader's share of the price push. */
   private affordableQty(companyId: number, levels: readonly Level[], consumed: number, cash: number, mid: number, tick: number, moves: boolean, leverage = 1, feeBps = 0): number {
     // The book's prices alone: the real answer can only be lower. With leverage the cash covers `leverage` times as much value.
-    let hi = maxAffordable(levels, consumed, Math.min(cash * leverage, Number.MAX_SAFE_INTEGER)).qty;
+    const scale = this.scaleFor(companyId);
+    let hi = maxAffordable(levels, consumed, Math.min(cash * leverage, Number.MAX_SAFE_INTEGER), scale === 1 ? {} : { scale, maxQty: this.qtyCap(companyId) }).qty;
     if (hi === 0 || (leverage === 1 && feeBps === 0 && (!moves || !this.flow))) return hi;
     // What leaves the cash: the margin, plus the trading fee when the coin has one.
     const costOf = (q: number): number => {
-      const total = this.priced(companyId, levels, 'buy', executeMarket(levels, 'buy', q, consumed, { mid }), mid, tick, moves).exec.totalCents;
+      const total = this.priced(companyId, levels, 'buy', this.fill(companyId, levels, 'buy', q, consumed, { mid }), mid, tick, moves).exec.totalCents;
       return marginOf(total, leverage) + feeOf(total, feeBps);
     };
     let lo = 0;
@@ -612,10 +683,11 @@ export class Trading {
 
   /** The most shares this cash lets the player short at this leverage (own cash needed = the sale's value divided by it), counting the trader's share of the price push. */
   private affordableShortQty(companyId: number, levels: readonly Level[], consumed: number, cash: number, mid: number, tick: number, moves: boolean, leverage = 1, feeBps = 0): number {
-    const most = Math.min(maxOrderShares(mid), executeMarket(levels, 'sell', MAX_ORDER_SHARES, consumed, { mid }).filledQty);
+    const cap = this.maxSharesAt(companyId, mid);
+    const most = Math.min(cap, this.fill(companyId, levels, 'sell', cap, consumed, { mid }).filledQty);
     if (most === 0) return 0;
     const marginOfQty = (q: number): number => {
-      const total = this.priced(companyId, levels, 'sell', executeMarket(levels, 'sell', q, consumed, { mid }), mid, tick, moves).exec.totalCents;
+      const total = this.priced(companyId, levels, 'sell', this.fill(companyId, levels, 'sell', q, consumed, { mid }), mid, tick, moves).exec.totalCents;
       return marginOf(total, leverage) + feeOf(total, feeBps);
     };
     let lo = 0;
@@ -650,7 +722,9 @@ export class Trading {
   /** The most shares (up to `qtyMax`) that a sale can fill with what the pool holds: the biggest quantity whose proceeds are not more than the pool has. */
   private poolSellLimit(companyId: number, levels: readonly Level[], qtyMax: number, consumed: number, mid: number, tick: number, moves: boolean, limitPrice: number | undefined, room: number): number {
     if (qtyMax < 1) return 0;
-    const total = (q: number): number => this.priced(companyId, levels, 'sell', executeMarket(levels, 'sell', q, consumed, { limitPrice, mid }), mid, tick, moves).exec.totalCents;
+    // A coin whose tokens cost a tiny fraction of a cent: with no whole cent left in the pool, the biggest sale it "can pay" would pay nothing at all. Nothing is sold.
+    if (room < 1) return 0;
+    const total = (q: number): number => this.priced(companyId, levels, 'sell', this.fill(companyId, levels, 'sell', q, consumed, { limitPrice, mid }), mid, tick, moves).exec.totalCents;
     if (total(qtyMax) <= room) return qtyMax;
     let lo = 0;
     let hi = qtyMax - 1;
@@ -684,11 +758,11 @@ export class Trading {
     if (fit < 1) {
       throw new OrderError(
         'no_liquidity',
-        `The money pool behind ${ticker} holds only ${formatCents(pool.pool_cents)}, which is less than one ${ticker} is worth right now, so nothing could be sold. Sales are paid from the pool; it fills up when other players buy. Nothing was sold.`,
+        `The money pool behind ${ticker} holds only ${formatCents(pool.pool_cents)}, which cannot pay for a sale right now, so nothing could be sold. Sales are paid from the pool; it fills up when other players buy. Nothing was sold.`,
         { poolCents: pool.pool_cents },
       );
     }
-    const raw = executeMarket(levels, 'sell', fit, consumed, { limitPrice, mid });
+    const raw = this.fill(companyId, levels, 'sell', fit, consumed, { limitPrice, mid });
     const cut = this.priced(companyId, levels, 'sell', raw, mid, tick, moves);
     // It is still an order for `qty` shares: the part the pool cannot pay for is what is left unfilled.
     return { exec: { ...cut.exec, requestedQty: qty, unfilledQty: qty - cut.exec.filledQty }, flow: cut.flow, limited: true };
@@ -696,13 +770,17 @@ export class Trading {
 
   // ---- orders ------------------------------------------------------------------------------------------------------
 
-  private checkQty(qty: number): void {
+  private checkQty(qty: number, companyId?: number): void {
     if (!Number.isSafeInteger(qty) || qty < 1) throw new OrderError('bad_request', 'The quantity must be a whole number of shares, at least 1.');
-    if (qty > MAX_ORDER_SHARES) throw new OrderError('bad_request', `The most you can order at once is ${MAX_ORDER_SHARES.toLocaleString('en-US')} shares.`);
+    const cap = companyId === undefined ? MAX_ORDER_SHARES : this.qtyCap(companyId);
+    if (qty > cap) throw new OrderError('bad_request', `The most you can order at once is ${cap.toLocaleString('en-US')} shares.`);
   }
 
   /** For a company that is open for trading: is the order small enough for its price? */
   private checkOrderSize(qty: number, companyId: number): void {
+    // A fine-priced coin's price never goes above $1.00 and it has at most a trillion tokens, so no order of it can be worth more than a
+    // safe whole number of cents; its limit is the number of tokens (checkQty).
+    if (this.scaleFor(companyId) !== 1) return;
     // At a very high price the value of a big order would not fit in a safe whole number of cents; say so instead of failing.
     const most = maxOrderShares(this.world.sim.price(companyId));
     if (qty > most) throw new OrderError('too_large', `At this price the most you can order at once is ${most.toLocaleString('en-US')} shares.`, { maxQty: most });
@@ -777,7 +855,7 @@ export class Trading {
     if (req.side !== 'buy' && req.side !== 'sell') throw new OrderError('bad_request', 'The side must be buy or sell.');
     if (req.short !== undefined && typeof req.short !== 'boolean') throw new OrderError('bad_request', 'short must be true or false.');
     const short = req.short === true;
-    this.checkQty(req.qty);
+    this.checkQty(req.qty, req.companyId);
     if (req.limitPrice !== undefined && (!Number.isSafeInteger(req.limitPrice) || req.limitPrice < 1)) throw new OrderError('bad_request', 'The price limit must be a positive whole number of cents.');
     // A buy opens (or adds to) a long position and a sell closes one; with `short` it is the other way round: a sell opens a short and a
     // buy covers it. Only an order that OPENS can be levered or carry a stop-loss / take-profit.
@@ -856,6 +934,7 @@ export class Trading {
       // A coin with a money pool takes plain market buys and sells only, and nothing once its pool was taken (pools.ts).
       const pool = this.poolFor(req.companyId, acc.kind);
       this.checkPool(pool, company.ticker, { short, leverage, exits: exits.stop !== undefined || exits.take !== undefined });
+      this.checkFineHasPool(scaleOf(company), pool, company.ticker);
       // A position that borrows is charged up to this moment before the order changes it (margin.ts).
       if (acc.kind === 'career') this.costs?.settle(acc.id, req.companyId, tick);
       const quote = this.world.quote(req.companyId);
@@ -870,15 +949,17 @@ export class Trading {
       if (!opening && (mine?.shares ?? 0) < req.qty) {
         const have = mine?.shares ?? 0;
         const hint = !mine && position ? (position.short === 1 ? ' You are short it: use Cover to buy the shares back.' : ' You hold shares of it: use Sell to sell them.') : '';
-        throw new OrderError('insufficient_shares', `${short ? `You are short ${have} shares of ${company.ticker}` : `You hold ${have} shares of ${company.ticker}`}, not ${req.qty}.${hint}`, { held: have });
+        const n = (v: number): string => (scaleOf(company) === 1 ? String(v) : v.toLocaleString('en-US')); // a coin with a trillion tokens has long numbers
+        throw new OrderError('insufficient_shares', `${short ? `You are short ${n(have)} shares of ${company.ticker}` : `You hold ${n(have)} shares of ${company.ticker}`}, not ${n(req.qty)}.${hint}`, { held: have });
       }
 
-      const raw = executeMarket(levels, req.side, req.qty, consumed, { limitPrice: req.limitPrice, mid: quote.mid });
+      const raw = this.fill(req.companyId, levels, req.side, req.qty, consumed, { limitPrice: req.limitPrice, mid: quote.mid });
       const priced0 = this.priced(req.companyId, levels, req.side, raw, quote.mid, tick, acc.kind === 'career');
       // A sale of a pool coin is paid from the pool: it fills only as far as the pool can pay (the rest of the order is not filled, like a thin book).
       const capped = pool && !opening ? this.capToPool(pool, company.ticker, req.companyId, levels, req.qty, consumed, quote.mid, tick, acc.kind === 'career', req.limitPrice, priced0) : { ...priced0, limited: false };
       const { exec, flow } = capped;
-      if (exec.filledQty > 0 && req.limitPrice !== undefined && flow.paid > 0 && exec.parts.some((p) => (req.side === 'buy' ? p.price > (req.limitPrice as number) : p.price < (req.limitPrice as number)))) {
+      const limitUnits = req.limitPrice === undefined ? undefined : req.limitPrice * scaleOf(company); // the price limit in the coin's own price units
+      if (exec.filledQty > 0 && limitUnits !== undefined && flow.paid > 0 && exec.parts.some((p) => (req.side === 'buy' ? p.price > limitUnits : p.price < limitUnits))) {
         throw new OrderError('limit_not_met', 'After the price impact of this order, the price would be beyond your price limit, so nothing was traded.', { bid: quote.bid, ask: quote.ask });
       }
       if (exec.filledQty === 0) {
@@ -1086,7 +1167,7 @@ export class Trading {
     const pos = this.positionOf(accountId, companyId);
     if (!pos) return null;
     const short = pos.short === 1;
-    const qty = Math.min(pos.shares, maxOrderShares(this.world.sim.price(companyId)));
+    const qty = Math.min(pos.shares, this.maxSharesAt(companyId, this.world.sim.price(companyId)));
     try {
       return this.placeOrder({ accountId, clientOrderId: `auto-${kind}-${companyId}-${tick}`, companyId, side: short ? 'buy' : 'sell', qty, short, auto: kind }).trade;
     } catch (error) {

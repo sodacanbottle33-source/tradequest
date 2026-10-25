@@ -149,7 +149,7 @@ export function CompanyPrice({ ticker, live, price, baseCents, changeText, chang
   return (
     <div className="price-big" data-testid="company-price">
       <span className={`mono big price-roll ${pulseClass(pulse, 'flash')} ${level >= 2 ? 'hot' : ''}`.trim()} data-testid="company-price-value">
-        {live ? formatCents(Math.round(shown)) : '—'}
+        {live ? formatCents(price >= 100 ? Math.round(shown) : shown) : '—'}
       </span>
       <span className={`mono ${changeClass}`}>{changeText}</span>
       {live && <HypeBadge multiple={multiple} />}

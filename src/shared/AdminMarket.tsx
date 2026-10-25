@@ -66,7 +66,8 @@ export function AdminMarket({ state, reload }: { state: AdminState | null; reloa
               : style === 'custom' && headline.trim() === ''
                 ? 'Write a headline for your custom event.'
                 : null;
-  const target = percent !== null && price > 0 ? Math.max(100, Math.round(price * (1 + percent / 100))) : 0;
+  // (A stock or an older coin is never below $1.00 and is counted in whole cents; a launched coin costs a tiny fraction of a cent.)
+  const target = percent !== null && price > 0 ? (price < 100 ? price * (1 + percent / 100) : Math.max(100, Math.round(price * (1 + percent / 100)))) : 0;
   const speedNote = PACES.find((s) => s.id === speed)?.note ?? '';
   const canReview = company !== null && percentError === null && !busy;
 

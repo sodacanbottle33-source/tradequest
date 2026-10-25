@@ -7,6 +7,8 @@
 // The list is added to the world once (server/world/runtime.ts seeds it) and the numbers are then saved WITH each coin in the
 // database, so editing this file never changes a coin that already exists. Prices are whole dollars-and-cents from $3.60 to
 // $118.50: the market's lowest possible price is $1.00 (MIN_PRICE), so a coin that "rugs" ends up sitting at $1.00.
+// That holds for these thirty built-in coins only. A coin a player launches is priced in finer units (src/world/units.ts, a
+// trillion coins and a price far below a cent), and when it is rug pulled it falls to $0.00000000000001 and is frozen.
 
 import type { CatalogEntry, MemeProfile } from './catalogData';
 import { tierOfCap } from './params';

@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
-import { formatBps, formatCents, toneOf } from './format';
+import { formatBps, formatCents, formatShares, toneOf } from './format';
 import { OpenOrders } from './OpenOrders';
 import { sharedStore, useShared } from './store';
 import type { Trade } from './types';
@@ -133,7 +133,7 @@ export function AccountScreen({ onOpen }: { onOpen: (ticker: string) => void }) 
                         )}{' '}
                         <span className="muted">{c?.name ?? ''}</span>
                       </td>
-                      <td className="num mono">{p.short ? `−${p.shares}` : p.shares}</td>
+                      <td className="num mono">{p.short ? `−${formatShares(p.shares)}` : formatShares(p.shares)}</td>
                       <td className="num mono">{formatCents(p.avgCostCents)}</td>
                       <td className="num mono">{live > 0 ? formatCents(live) : formatCents(p.short ? p.ask : p.bid)}</td>
                       <td className="num mono">

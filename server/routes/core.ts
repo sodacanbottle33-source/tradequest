@@ -1,5 +1,6 @@
 // Market, account, order and stream routes.
 
+import { scaleOf } from '../../src/world';
 import { OrderError } from '../trading';
 import { EVENT_LOOKAHEAD_TICKS } from '../world/runtime';
 import { SESSION_COOKIE, SESSION_DAYS, type User } from '../auth';
@@ -94,15 +95,18 @@ export function registerCoreRoutes(router: Router, s: Services): void {
     if (!c) throw new HttpError(404, 'unknown_company', 'No such company.');
     const side = ctx.url.searchParams.get('side');
     if (side !== 'buy' && side !== 'sell') throw new HttpError(400, 'bad_parameter', 'side must be buy or sell.');
-    const qty = intParam(ctx.url, 'qty', 1, 1, 100_000_000);
+    // A coin that costs a tiny fraction of a cent has a trillion tokens, so its orders can be far bigger than the usual 100 million.
+    const qty = intParam(ctx.url, 'qty', 1, 1, scaleOf(c) === 1 ? 100_000_000 : c.sharesOutstanding);
     const leverage = intParam(ctx.url, 'leverage', 1, 1, 50);
+    // "Spend this much" (cents): the answer's maxQty is then the most tokens that much money buys (never more than the cash you have).
+    const budget = ctx.url.searchParams.get('budget') === null ? undefined : intParam(ctx.url, 'budget', 0, 0, Number.MAX_SAFE_INTEGER);
     const shortParam = ctx.url.searchParams.get('short');
     if (shortParam !== null && shortParam !== '0' && shortParam !== '1') throw new HttpError(400, 'bad_parameter', 'short must be 0 or 1.');
     const short = shortParam === '1';
     const which = ctx.url.searchParams.get('account') ?? 'career';
     const accountId = ctx.user ? s.resolveAccount(ctx.user, which).id : null;
     try {
-      const e = trading.estimate(accountId, c.id, side, qty, undefined, leverage, short);
+      const e = trading.estimate(accountId, c.id, side, qty, undefined, leverage, short, budget);
       return {
         ticker: c.ticker, side, short, tick: e.tick, mid: e.mid, bid: e.bid, ask: e.ask,
         requestedQty: e.requestedQty, filledQty: e.filledQty, unfilledQty: e.unfilledQty, totalCents: e.totalCents, avgPrice: e.avgPrice,

@@ -13,7 +13,9 @@ import {
   effectiveDuration,
   eventOf,
   marketCycleDrafts,
+  scaleOf,
   sectorInfo,
+  unitsToCents,
   type Category,
   type Company,
   type NewsDraft,
@@ -276,6 +278,11 @@ export class NewsService implements NewsHooks {
     return this.db.all<Row>(`SELECT ${COLUMNS} FROM news_items WHERE start_tick >= ? AND start_tick <= ? ORDER BY start_tick, id`, from, through).map((r) => this.toEvent(r));
   }
 
+  /** Every rug pull story (finished ones too): the world reads them to know which coins are dead (src/world/effects.ts `deathTickOf`). */
+  deadEvents(): WorldEvent[] {
+    return this.db.all<Row>(`SELECT ${COLUMNS} FROM news_items WHERE key LIKE 'rug:%:drain' ORDER BY start_tick, id`).map((r) => this.toEvent(r));
+  }
+
   recordMarks(rows: readonly MarkRow[]): void {
     for (const r of rows) {
       if (r.kind === 'publish') this.db.run('UPDATE news_items SET price_at_publish = ? WHERE key = ?', r.price, r.key);
@@ -290,7 +297,7 @@ export class NewsService implements NewsHooks {
     const partner = r.partner_id === null ? null : this.companies[r.partner_id];
     const outcome =
       r.price_at_publish !== null && r.price_at_end !== null && r.price_at_publish > 0
-        ? { priceAtPublish: r.price_at_publish, priceAtEnd: r.price_at_end, changeBps: Math.round(((r.price_at_end - r.price_at_publish) / r.price_at_publish) * 10_000) }
+        ? { priceAtPublish: unitsToCents(r.price_at_publish, scaleOf(company)), priceAtEnd: unitsToCents(r.price_at_end, scaleOf(company)), changeBps: Math.round(((r.price_at_end - r.price_at_publish) / r.price_at_publish) * 10_000) }
         : null;
     return {
       id: r.id,

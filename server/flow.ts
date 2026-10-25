@@ -13,7 +13,7 @@
 //   • 1v1 match accounts are left out on purpose: a match is scored on the one published price, and a player must not be able to
 //     lift that price with his own order.
 
-import { BOOK_LEVELS, IMPACT_RECOVERY_TICKS, LEVEL_GROWTH, effectiveDuration, touchShares, type Company, type Execution, type Side, type WorldEvent } from '../src/world';
+import { BOOK_LEVELS, IMPACT_RECOVERY_TICKS, LEVEL_GROWTH, effectiveDuration, touchShares, unitsToMoney, type Company, type Execution, type Side, type WorldEvent } from '../src/world';
 import type { Db } from './sqlite';
 
 /**
@@ -214,8 +214,9 @@ export class FlowService {
  * Charges the trader his share of the push: every fill price is moved against him by `paid` (a fraction), rounded to whole cents.
  * `touch` is the best price on his side of the book and `mid` the market price, used to split the cost like executeMarket does.
  */
-export function applyMarkup(exec: Execution, side: Side, mid: number, touch: number, paid: number): Execution {
+export function applyMarkup(exec: Execution, side: Side, mid: number, touch: number, paid: number, scale = 1): Execution {
   if (!(paid > 0) || exec.filledQty === 0) return exec;
+  if (scale !== 1) return applyMarkupScaled(exec, side, mid, touch, paid, scale);
   const parts = exec.parts.map((p) => ({ qty: p.qty, price: side === 'buy' ? Math.max(1, Math.round(p.price * (1 + paid))) : Math.max(1, Math.round(p.price * (1 - paid))) }));
   let total = 0;
   for (const p of parts) total += p.price * p.qty;
@@ -232,5 +233,27 @@ export function applyMarkup(exec: Execution, side: Side, mid: number, touch: num
     lastPrice: parts[parts.length - 1]?.price ?? 0,
     impactCostCents: Math.max(0, impact),
     slippageBps: midValue > 0 ? Math.round((slip / midValue) * 100_000) / 10 : 0,
+  };
+}
+
+/** {@link applyMarkup} for a coin whose prices are in units finer than a cent: the same markup on every fill price, with the sums exact (BigInt) and the money rounded against the trader. */
+function applyMarkupScaled(exec: Execution, side: Side, mid: number, touch: number, paid: number, scale: number): Execution {
+  const parts = exec.parts.map((p) => ({ qty: p.qty, price: side === 'buy' ? Math.max(1, Math.round(p.price * (1 + paid))) : Math.max(1, Math.round(p.price * (1 - paid))) }));
+  let totalUnits = 0n;
+  for (const p of parts) totalUnits += BigInt(p.price) * BigInt(p.qty);
+  const filled = BigInt(exec.filledQty);
+  const touchValue = filled * BigInt(touch);
+  const impact = side === 'buy' ? totalUnits - touchValue : touchValue - totalUnits;
+  const midValue = filled * BigInt(Math.round(mid));
+  const slip = side === 'buy' ? totalUnits - midValue : midValue - totalUnits;
+  return {
+    ...exec,
+    totalCents: unitsToMoney(totalUnits, scale, side === 'buy' ? 'up' : 'down'),
+    avgPrice: Number(totalUnits) / exec.filledQty,
+    parts,
+    firstPrice: parts[0]?.price ?? 0,
+    lastPrice: parts[parts.length - 1]?.price ?? 0,
+    impactCostCents: impact > 0n ? unitsToMoney(impact, scale, 'nearest') : 0,
+    slippageBps: midValue > 0n ? Math.round((Number(slip) / Number(midValue)) * 100_000) / 10 : 0,
   };
 }

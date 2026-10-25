@@ -15,7 +15,15 @@ export interface Company {
   readonly tier: Tier;
   /** First tick at which the company trades. 0 for the original listings; later listings (IPOs) start later. */
   readonly listingTick: number;
+  /**
+   * The price it listed at, in price units: cents for every company except a fine-priced coin (see `priceScale`).
+   */
   readonly basePriceCents: number;
+  /**
+   * Price units in one cent. Left out (= 1) for every company that counts in cents; a memecoin launched with fine prices states it
+   * (src/world/units.ts). Every price of such a coin in the simulation, the order book and the stored candles is in these units.
+   */
+  readonly priceScale?: number;
   readonly sharesOutstanding: number;
   /** Shares available to trade freely (an estimate; ≤ sharesOutstanding). */
   readonly floatShares: number;

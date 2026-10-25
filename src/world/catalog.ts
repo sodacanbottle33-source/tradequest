@@ -214,6 +214,7 @@ function deriveMemeCompany(id: number, entry: CatalogEntry, m: MemeProfile, list
     tier: entry.tier,
     listingTick,
     basePriceCents: entry.price,
+    ...(m.priceScale !== undefined && m.priceScale !== 1 ? { priceScale: m.priceScale } : {}),
     sharesOutstanding: shares,
     floatShares,
     avgDailyVolume: adv,
@@ -359,7 +360,9 @@ export function buildCatalog(count: number, listingTickOf: (id: number) => numbe
  * of the true value, up to quintillions of dollars for a 30-billion-share giant), which is plenty for a size on a screen. It must never throw: one company with a huge
  * price would otherwise break the whole market list for every player.
  */
-export function marketCapCents(priceCents: number, company: Pick<Company, 'sharesOutstanding'>): number {
+export function marketCapCents(priceCents: number, company: Pick<Company, 'sharesOutstanding'> & { readonly priceScale?: number }): number {
   if (!Number.isFinite(priceCents) || priceCents < 0) throw new Error(`Bad price ${priceCents}`);
-  return priceCents * company.sharesOutstanding;
+  // A fine-priced coin's price is in units of 1/priceScale cent: divide first so the product stays a sensible size (the result is approximate then, which is plenty for a size on a screen).
+  const scale = company.priceScale ?? 1;
+  return scale === 1 ? priceCents * company.sharesOutstanding : Math.round((priceCents / scale) * company.sharesOutstanding);
 }

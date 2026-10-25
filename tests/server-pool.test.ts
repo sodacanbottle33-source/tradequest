@@ -88,6 +88,34 @@ async function call(r: Running, path: string, init: { method?: string; body?: un
   return { status: res.status, json, text };
 }
 
+async function logIn(r: Running, name: string): Promise<string> {
+  const res = await fetch(r.base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: name, password: 'a-good-password' }) });
+  expect(res.status).toBe(200);
+  return (res.headers.get('set-cookie') ?? '').split(';')[0] as string;
+}
+
+/**
+ * Turns a coin that was just launched (and has not listed yet) into one from before the tiny prices and before money pools: counted in cents,
+ * 80,000 coins at $2.00 each (2,500 of them for the $5,000), no pool row. The server is restarted so that it loads the coin that way, so the
+ * players have to log in again (the cookies come back in `names` order).
+ */
+async function asOldCoin(r: Running, ...names: string[]): Promise<{ r: Running; cookies: string[] }> {
+  const db = r.app.services.db;
+  const row = db.get('SELECT company_id, entry_json FROM meme_companies WHERE ticker = ?', 'MPEP') as { company_id: number; entry_json: string };
+  const entry = JSON.parse(row.entry_json);
+  entry.price = 200;
+  entry.meme.supply = 80_000;
+  delete entry.meme.priceScale;
+  db.run('UPDATE meme_companies SET entry_json = ? WHERE company_id = ?', JSON.stringify(entry), row.company_id);
+  db.run('UPDATE launches SET price_cents = 200, stake_shares = 2500, spent_cents = 500000 WHERE company_id = ?', row.company_id);
+  db.run('UPDATE positions SET shares = 2500 WHERE company_id = ?', row.company_id);
+  db.run('DELETE FROM coin_pools WHERE company_id = ?', row.company_id);
+  const again = await restart(r);
+  const cookies: string[] = [];
+  for (const n of names) cookies.push(await logIn(again, n));
+  return { r: again, cookies };
+}
+
 async function signUp(r: Running, name: string): Promise<string> {
   const res = await fetch(r.base + '/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: name, password: 'a-good-password' }) });
   expect(res.status).toBe(201);
@@ -98,8 +126,10 @@ let counter = 0;
 const rid = (): string => `req-${(counter += 1).toString().padStart(8, '0')}`;
 const post = (r: Running, path: string, cookie: string | undefined, body: Record<string, unknown>) => call(r, path, { method: 'POST', cookie, body: { requestId: rid(), ...body } });
 
-/** $5,000 first buy: 2,500 coins at $2.00. */
+/** $5,000 first buy: 31.25 billion tokens at $0.00000016 each (a trillion tokens in all). A billion tokens cost about $160. */
 const MOON = { name: 'Moon Pepe', ticker: 'MPEP', seedCents: 500_000 };
+const MOON_TOKENS = 31_250_000_000;
+const BILLION = 1_000_000_000;
 const launchCoin = (r: Running, cookie: string | undefined, over: Record<string, unknown> = {}) => post(r, '/api/launch/coin', cookie, { ...MOON, ...over });
 const launchStock = (r: Running, cookie: string | undefined) => post(r, '/api/launch/stock', cookie, { name: 'Acme Robotics', ticker: 'ACMR', sector: 'robotics', seedCents: 500_000 });
 const rug = (r: Running, cookie: string | undefined, ticker = 'MPEP', over: Record<string, unknown> = {}) => post(r, '/api/launch/rug', cookie, { ticker, ...over });
@@ -194,7 +224,7 @@ describe('what buyers pay goes in, what sellers get comes out', () => {
     const { r, bob } = await trading();
     const cash = (await account(r, bob)).cashCents;
     const before = poolOf(r)?.pool_cents as number;
-    const bought = await trade(r, bob, { qty: 50 });
+    const bought = await trade(r, bob, { qty: BILLION });
     expect(bought.status).toBe(201);
     const t = bought.json.trade;
     expect(t.totalCents).toBeGreaterThan(9_000);
@@ -207,62 +237,62 @@ describe('what buyers pay goes in, what sellers get comes out', () => {
 
   it('POOL-4: a sale is paid from the pool: the pool loses what the shares sold for, the seller gets that minus the fee', async () => {
     const { r, bob } = await trading();
-    expect((await trade(r, bob, { qty: 50 })).status).toBe(201);
+    expect((await trade(r, bob, { qty: BILLION })).status).toBe(201);
     advance(r, 20);
     const cash = (await account(r, bob)).cashCents;
     const before = poolOf(r) as { pool_cents: number };
-    const sold = await trade(r, bob, { side: 'sell', qty: 30 });
+    const sold = await trade(r, bob, { side: 'sell', qty: 600_000_000 });
     expect(sold.status).toBe(201);
     const t = sold.json.trade;
-    expect(t).toMatchObject({ filled: 30, poolLimited: false });
+    expect(t).toMatchObject({ filled: 600_000_000, poolLimited: false });
     expect(poolOf(r)).toMatchObject({ pool_cents: before.pool_cents - t.totalCents, out_cents: t.totalCents });
     expect((await account(r, bob)).cashCents).toBe(cash + t.totalCents - t.feeCents);
   }, LONG);
 
   it('POOL-5: a sale bigger than the pool is filled only as far as the pool can pay: estimate and order agree, the pool is never overdrawn', async () => {
     const { r, bob } = await trading();
-    expect((await trade(r, bob, { qty: 50 })).status).toBe(201);
+    expect((await trade(r, bob, { qty: BILLION })).status).toBe(201);
     advance(r, 20);
-    setPool(r, 'MPEP', 3_000); // $30.00 is left: not enough for 50 coins worth about $100
-    const e = (await estimate(r, bob, 'sell', 50)).json;
+    setPool(r, 'MPEP', 3_000); // $30.00 is left: not enough for a billion tokens worth about $160
+    const e = (await estimate(r, bob, 'sell', BILLION)).json;
     expect(e.poolLimited).toBe(true);
     expect(e.poolCents).toBe(3_000);
-    expect(e.filledQty).toBeGreaterThan(5);
-    expect(e.filledQty).toBeLessThan(50);
-    expect(e.unfilledQty).toBe(50 - e.filledQty);
+    expect(e.filledQty).toBeGreaterThan(BILLION / 20);
+    expect(e.filledQty).toBeLessThan(BILLION);
+    expect(e.unfilledQty).toBe(BILLION - e.filledQty);
     expect(e.totalCents).toBeLessThanOrEqual(3_000);
     expect(e.maxQty).toBe(e.filledQty); // the most he can sell right now
     const cash = (await account(r, bob)).cashCents;
-    const sold = await trade(r, bob, { side: 'sell', qty: 50 });
+    const sold = await trade(r, bob, { side: 'sell', qty: BILLION });
     expect(sold.status).toBe(201);
-    expect(sold.json.trade).toMatchObject({ requested: 50, filled: e.filledQty, poolLimited: true });
+    expect(sold.json.trade).toMatchObject({ requested: BILLION, filled: e.filledQty, poolLimited: true });
     expect(sold.json.trade.totalCents).toBeLessThanOrEqual(3_000);
     const pool = poolOf(r) as { pool_cents: number; out_cents: number };
     expect(pool.pool_cents).toBe(3_000 - sold.json.trade.totalCents);
     expect(pool.pool_cents).toBeGreaterThanOrEqual(0);
     expect((await account(r, bob)).cashCents).toBe(cash + sold.json.trade.totalCents - sold.json.trade.feeCents);
-    expect((await account(r, bob)).positions[0].shares).toBe(50 - e.filledQty); // what the pool could not pay for is still his
+    expect((await account(r, bob)).positions[0].shares).toBe(BILLION - e.filledQty); // what the pool could not pay for is still his
   }, LONG);
 
-  it('POOL-6: with less in the pool than one coin is worth, nothing can be sold: a sentence says so, and nothing changes', async () => {
+  it('POOL-6: with nothing in the pool, nothing can be sold: a sentence says so, and nothing changes; it fills up again when somebody buys', async () => {
     const { r, bob } = await trading();
-    expect((await trade(r, bob, { qty: 50 })).status).toBe(201);
+    expect((await trade(r, bob, { qty: BILLION })).status).toBe(201);
     advance(r, 20);
-    setPool(r, 'MPEP', 100);
+    setPool(r, 'MPEP', 0);
     const cash = (await account(r, bob)).cashCents;
     const trades0 = rowsOf(r, 'SELECT COUNT(*) AS n FROM trades')[0];
-    const e = await estimate(r, bob, 'sell', 5);
+    const e = await estimate(r, bob, 'sell', 5_000_000);
     expect(e.status).toBe(400);
     expect(e.json.error.code).toBe('no_liquidity');
-    const sold = await trade(r, bob, { side: 'sell', qty: 5 });
+    const sold = await trade(r, bob, { side: 'sell', qty: 5_000_000 });
     expect(sold.status).toBe(400);
     expect(sold.json.error.code).toBe('no_liquidity');
-    expect(sold.json.error.message).toMatch(/money pool behind MPEP holds only \$1\.00/);
+    expect(sold.json.error.message).toMatch(/money pool behind MPEP holds only \$0\.00/);
     expect((await account(r, bob)).cashCents).toBe(cash);
     expect(rowsOf(r, 'SELECT COUNT(*) AS n FROM trades')[0]).toEqual(trades0);
-    expect(poolOf(r)?.pool_cents).toBe(100);
+    expect(poolOf(r)?.pool_cents).toBe(0);
     // It fills up again when somebody buys.
-    expect((await trade(r, bob, { qty: 20 })).status).toBe(201);
+    expect((await trade(r, bob, { qty: BILLION })).status).toBe(201);
     expect(poolOf(r)?.pool_cents).toBeGreaterThan(3_000);
   }, LONG);
 
@@ -270,12 +300,12 @@ describe('what buyers pay goes in, what sellers get comes out', () => {
     const { r, alice, bob, carol } = await trading();
     const total = money(r);
     const steps: Array<() => Promise<unknown>> = [
-      () => trade(r, bob, { qty: 80 }),
-      () => trade(r, carol, { qty: 120 }),
-      () => trade(r, bob, { side: 'sell', qty: 30 }),
-      () => trade(r, alice, { side: 'sell', qty: 500 }),
-      () => trade(r, carol, { side: 'sell', qty: 60 }),
-      () => trade(r, alice, { qty: 40 }),
+      () => trade(r, bob, { qty: BILLION }),
+      () => trade(r, carol, { qty: 2 * BILLION }),
+      () => trade(r, bob, { side: 'sell', qty: 400_000_000 }),
+      () => trade(r, alice, { side: 'sell', qty: 5 * BILLION }),
+      () => trade(r, carol, { side: 'sell', qty: 600_000_000 }),
+      () => trade(r, alice, { qty: 400_000_000 }),
     ];
     for (const step of steps) {
       advance(r, 15);
@@ -324,9 +354,11 @@ describe('a coin with a pool takes plain buying and selling only', () => {
   }, LONG);
 
   it('POOL-9: a stock and a coin from before pools (no pool row) keep every one of those tools', async () => {
-    const { r, bob, alice } = await trading();
-    expect((await launchStock(r, alice)).status).toBe(200);
-    r.app.services.db.run('DELETE FROM coin_pools'); // MPEP now looks like a coin launched before pools existed
+    const first = await players();
+    expect((await launchCoin(first.r, first.alice)).status).toBe(200);
+    expect((await launchStock(first.r, first.alice)).status).toBe(200);
+    const { r, cookies } = await asOldCoin(first.r, 'bob'); // MPEP now is a coin launched before pools (and the tiny prices) existed
+    const bob = cookies[0] as string;
     advance(r, 45);
     expect((await trade(r, bob, { qty: 10, leverage: 2 })).status).toBe(201);
     expect((await trade(r, bob, { side: 'sell', qty: 4, short: true, ticker: 'ACMR' })).status).toBe(201);
@@ -343,7 +375,7 @@ describe('a coin with a pool takes plain buying and selling only', () => {
 describe('the rug pull takes the pool', () => {
   it('POOL-10: all of it becomes the developer\'s cash; the pool is empty; the coin is dead for everybody: worth nothing, no buying, no selling, no estimates', async () => {
     const { r, alice, bob } = await trading();
-    expect((await trade(r, bob, { qty: 50 })).status).toBe(201);
+    expect((await trade(r, bob, { qty: BILLION })).status).toBe(201);
     advance(r, 20);
     const poolBefore = poolOf(r)?.pool_cents as number;
     const aliceCash = (await account(r, alice)).cashCents;
@@ -352,17 +384,17 @@ describe('the rug pull takes the pool', () => {
 
     const done = await rug(r, alice);
     expect(done.status).toBe(200);
-    expect(done.json).toMatchObject({ ok: true, kind: 'drain', duplicate: false, ticker: 'MPEP', takenCents: poolBefore, paidInCents: poolBefore, otherHolders: 1, otherCoins: 50, ownCoins: 2500 });
+    expect(done.json).toMatchObject({ ok: true, kind: 'drain', duplicate: false, ticker: 'MPEP', takenCents: poolBefore, paidInCents: poolBefore, otherHolders: 1, otherCoins: BILLION, ownCoins: MOON_TOKENS });
     expect((await account(r, alice)).cashCents).toBe(aliceCash + poolBefore);
     expect(poolOf(r)).toMatchObject({ pool_cents: 0, in_cents: poolBefore, drained_cents: poolBefore });
     expect(poolOf(r)?.drained_ms).not.toBeNull();
 
     // Worth nothing: Bob's coins and Alice's own, in the account and in net worth.
     const bobAfter = await account(r, bob);
-    expect(bobAfter.positions[0]).toMatchObject({ ticker: 'MPEP', shares: 50, dead: true, valueCents: 0, equityCents: 0 });
+    expect(bobAfter.positions[0]).toMatchObject({ ticker: 'MPEP', shares: BILLION, dead: true, valueCents: 0, equityCents: 0 });
     expect(bobAfter.netWorthCents).toBe(bobAfter.cashCents);
     const aliceAfter = await account(r, alice);
-    expect(aliceAfter.positions[0]).toMatchObject({ shares: 2500, dead: true, equityCents: 0 });
+    expect(aliceAfter.positions[0]).toMatchObject({ shares: MOON_TOKENS, dead: true, equityCents: 0 });
     expect(aliceAfter.netWorthCents).toBe(aliceAfter.cashCents);
 
     // Nothing can be traded any more, for anybody.
@@ -454,22 +486,27 @@ describe('the rug pull takes the pool', () => {
     expect((await launchCoin(r, alice, { name: 'Big Pepe', ticker: 'BPEP', seedCents: 50_000_000 })).status).toBe(200); // $500,000 in: a pricey coin
     advance(r, 45);
     const priceBefore = await priceOf(r, 'BPEP');
-    expect(priceBefore).toBeGreaterThan(1_500);
-    expect((await trade(r, bob, { ticker: 'BPEP', qty: 5 })).status).toBe(201);
+    expect(priceBefore).toBeGreaterThan(0.0005); // (cents: $0.000005 a token, a $17 million coin)
+    expect(priceBefore).toBeLessThan(10); // under ten cents, like every memecoin
+    expect((await trade(r, bob, { ticker: 'BPEP', qty: 100_000_000 })).status).toBe(201); // (about $1,600 of a coin that costs $0.0000165)
     advance(r, 20);
     const done = await rug(r, alice, 'BPEP');
     expect(done.status).toBe(200);
     const news = rowsOf(r, "SELECT key, source, direction, realized, headline, body, company_id FROM news_items WHERE key LIKE 'rug:%'") as any[];
     expect(news).toHaveLength(1);
     expect(news[0]).toMatchObject({ key: `rug:${BASE}:drain`, source: 'admin', direction: 'negative', company_id: BASE });
-    expect(news[0].realized).toBeLessThan(-0.5);
+    expect(news[0].realized).toBe(0); // (a launched coin does not fall by a share of its price: the story ends it, and from the next tick it sits at the lowest price there is)
     expect(news[0].headline).toBe('Big Pepe is a rug pull: its developer drained the pool');
     expect(news[0].body).toMatch(/took all \$[\d,]+\.\d\d out of the money pool behind BPEP/);
     expect(JSON.stringify(news)).not.toMatch(/alice/);
     advance(r, 60);
     const priceAfter = await priceOf(r, 'BPEP');
-    expect(priceAfter).toBeLessThan(priceBefore * 0.2); // down 99 %, but never below the $1.00 floor
-    expect(priceAfter).toBeGreaterThanOrEqual(100);
+    expect(priceAfter).toBe(1e-12); // the lowest price there is: $0.00000000000001 (a trillionth of a cent)
+    // And it never moves again.
+    advance(r, 3 * 3600);
+    expect(await priceOf(r, 'BPEP')).toBe(1e-12);
+    advance(r, 6 * 3600);
+    expect(await priceOf(r, 'BPEP')).toBe(1e-12);
 
     // A restart: the pool is still empty, the coin still dead, and the price after the crash is the very same.
     const priceThen = await priceOf(r, 'BPEP');
@@ -505,8 +542,11 @@ describe('the rug pull takes the pool', () => {
   }, LONG * 2);
 
   it('POOL-16: a coin from before pools keeps the old rug pull (one market sale of everything he holds); a stock too', async () => {
-    const { r, alice } = await trading();
-    r.app.services.db.run('DELETE FROM coin_pools');
+    const first = await players();
+    expect((await launchCoin(first.r, first.alice)).status).toBe(200);
+    const { r, cookies } = await asOldCoin(first.r, 'alice');
+    const alice = cookies[0] as string;
+    advance(r, 45);
     const done = await rug(r, alice);
     expect(done.status).toBe(200);
     expect(done.json).toMatchObject({ kind: 'sale', ticker: 'MPEP', requested: 2500, filled: 2500 });

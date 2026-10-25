@@ -1285,6 +1285,11 @@ code {
 .book th {
   padding: 3px 6px;
 }
+/* A coin that costs a tiny fraction of a cent has a long price: the table scrolls sideways inside its box instead of sticking out of it. */
+.book-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
 .quote-line {
   display: flex;
   flex-wrap: wrap;

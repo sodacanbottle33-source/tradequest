@@ -130,8 +130,9 @@ export const api = {
   company: (ticker: string) => request<CompanyDetail>('GET', `/api/market/${enc(ticker)}`),
   candles: (ticker: string, res: Resolution, limit: number) => request<{ ticker: string; res: Resolution; tick: number; candles: ServerCandle[] }>('GET', `/api/market/${enc(ticker)}/candles?res=${res}&limit=${limit}`),
   book: (ticker: string) => request<Book>('GET', `/api/market/${enc(ticker)}/book`),
-  estimate: (ticker: string, side: 'buy' | 'sell', qty: number, account: 'career' | 'match', leverage = 1, short = false) =>
-    request<Estimate>('GET', `/api/market/${enc(ticker)}/estimate?side=${side}&qty=${qty}&account=${account}${leverage > 1 ? `&leverage=${leverage}` : ''}${short ? '&short=1' : ''}`),
+  /** `budgetCents`: only spend this much (the answer's maxQty is then the most coins that much money buys). */
+  estimate: (ticker: string, side: 'buy' | 'sell', qty: number, account: 'career' | 'match', leverage = 1, short = false, budgetCents?: number) =>
+    request<Estimate>('GET', `/api/market/${enc(ticker)}/estimate?side=${side}&qty=${qty}&account=${account}${leverage > 1 ? `&leverage=${leverage}` : ''}${short ? '&short=1' : ''}${budgetCents !== undefined ? `&budget=${budgetCents}` : ''}`),
 
   account: (account: 'career' | 'match') => request<Account>('GET', `/api/account?account=${account}`),
   trades: (account: 'career' | 'match', limit = 50) => request<{ trades: Trade[] }>('GET', `/api/account/trades?account=${account}&limit=${limit}`),

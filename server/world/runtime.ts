@@ -22,6 +22,7 @@ import {
   CURATED,
   bookScale,
   buildCatalog,
+  deathTickOf,
   effectiveDuration,
   effectsOf,
   fold,
@@ -29,6 +30,7 @@ import {
   marketCapCents,
   memeEntries,
   quoteOf,
+  scaleOf,
   tickAtMs,
   type Candle,
   type CatalogEntry,
@@ -84,6 +86,8 @@ export interface NewsHooks {
   eventsActiveAt(tick: number): WorldEvent[];
   /** Events whose effect starts in [from, through]. */
   eventsStartingIn(from: number, through: number): WorldEvent[];
+  /** Every rug pull story ever stored (finished ones too): they say which coins are dead and from when (src/world/effects.ts `deathTickOf`). */
+  deadEvents?(): WorldEvent[];
   /** Stores prices noted by the world. Called inside the same database transaction that saves the world state. */
   recordMarks?(rows: readonly MarkRow[]): void;
 }
@@ -277,6 +281,8 @@ export class WorldRuntime {
     }
     this.reloadStats();
     this.beginCandles(this.savedTick / TICKS_PER_CANDLE + 1);
+    // Coins whose developer took the pool are dead from the tick their rug pull story names, whether it finished long ago or not.
+    this.applyDeaths(this.options.news?.deadEvents?.() ?? []);
 
     // News: events that are running at the saved tick or start soon.
     this.loadedThrough = this.options.news ? this.savedTick : Number.MAX_SAFE_INTEGER;
@@ -410,6 +416,7 @@ export class WorldRuntime {
     const before = this.sim.snapshot();
     const sim = WorldSim.restore(this.worldSeed, catalog, before);
     sim.volume.set(this.sim.volume);
+    for (const [coinId, tick] of this.sim.deadFrom()) sim.setDeadFrom(coinId, tick);
     const after = sim.snapshot();
     if (JSON.stringify(after.stocks.slice(0, n)) !== JSON.stringify(before.stocks) || after.stocks[id] !== null || after.tick !== before.tick || after.market.S !== before.market.S || JSON.stringify(after.market.sector) !== JSON.stringify(before.market.sector)) {
       throw new Error('Rebuilding the simulation with one more company did not reproduce its state');
@@ -496,8 +503,17 @@ export class WorldRuntime {
     news.ensureThrough(through);
     const events = initial ? [...news.eventsActiveAt(from), ...news.eventsStartingIn(from + 1, through)] : news.eventsStartingIn(from, through);
     this.effects.add(events.flatMap((e) => effectsOf(e, this.companies)));
+    this.applyDeaths(events);
     this.addMarks(events);
     this.loadedThrough = through;
+  }
+
+  /** A rug pull's story makes its coin dead from a fixed tick: its price stops there for good (src/world/sim.ts `setDeadFrom`). */
+  private applyDeaths(events: readonly WorldEvent[]): void {
+    for (const e of events) {
+      const tick = deathTickOf(e);
+      if (tick !== null && e.companyId !== null && this.companies[e.companyId]) this.sim.setDeadFrom(e.companyId, tick);
+    }
   }
 
   /** Remembers at which ticks to note the price of each company event: just before it is published and when its effect is over. */
@@ -537,6 +553,7 @@ export class WorldRuntime {
    */
   scheduleEvent(event: WorldEvent): void {
     if (event.startTick <= this.sim.tick) throw new Error(`Event ${event.key} starts at tick ${event.startTick}, but the world is already at tick ${this.sim.tick}`);
+    this.applyDeaths([event]);
     if (!this.options.news) return;
     if (event.startTick > this.loadedThrough) {
       // The loaded window ends just before this event. Load the next window now: it reads the event from the table, exactly as
@@ -769,8 +786,11 @@ export class WorldRuntime {
     const halves: number[] = new Array<number>(n);
     for (let i = 0; i < n; i += 1) {
       const p = this.sim.P[i] as number;
-      prices[i] = p;
-      halves[i] = p > 0 ? quoteOf(this.companies[i] as Company, p, this.sim.V[i] as number).half : 0;
+      const half = p > 0 ? quoteOf(this.companies[i] as Company, p, this.sim.V[i] as number).half : 0;
+      // Browsers get cents. A fine-priced coin's price is in smaller units: it goes out as a (tiny) number of cents.
+      const scale = scaleOf(this.companies[i]);
+      prices[i] = scale === 1 ? p : p / scale;
+      halves[i] = scale === 1 ? half : half / scale;
     }
     return { tick: this.sim.tick, ms: this.msOfTick(this.sim.tick), prices, halves };
   }
@@ -871,7 +891,9 @@ export class WorldRuntime {
         }
       }
     }
-    return out;
+    // A fine-priced coin's candles are stored in its small price units; browsers get cents (a tiny number of cents).
+    const scale = scaleOf(this.companies[i]);
+    return scale === 1 ? out : out.map((c) => ({ ...c, open: c.open / scale, high: c.high / scale, low: c.low / scale, close: c.close / scale }));
   }
 }
 

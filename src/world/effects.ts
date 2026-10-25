@@ -79,6 +79,21 @@ export function effectsOf(event: WorldEvent, companies: readonly Company[]): Eff
   return out;
 }
 
+/**
+ * The key of the news story about a pool rug pull (server/launch.ts): "rug:<company id>:drain". The story is what makes a coin dead, so a
+ * restart finds the same fact in the same stored row.
+ */
+export const DRAIN_KEY = /^rug:(\d+):drain$/;
+
+/**
+ * The tick from which the company of a rug pull's story is dead (its price no longer moves): the story's last effect tick. Null for any other
+ * story. The stories of coins that were rug pulled before prices could freeze qualify as well: they freeze from the first tick this version runs.
+ */
+export function deathTickOf(event: Pick<WorldEvent, 'key' | 'companyId' | 'startTick' | 'shape' | 'durationTicks'>): number | null {
+  if (event.companyId === null || !DRAIN_KEY.test(event.key)) return null;
+  return event.startTick + effectiveDuration(event.shape, event.durationTicks);
+}
+
 /** A partner company feels this share of a partnership's effect. */
 export const PARTNER_SPILL = 0.35;
 

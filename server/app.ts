@@ -111,6 +111,8 @@ function combineHooks(news: NewsService, flow: FlowService): NewsHooks {
     eventsActiveAt: (tick) => [...news.eventsActiveAt(tick), ...flow.eventsActiveAt(tick)],
     eventsStartingIn: (from, through) => [...news.eventsStartingIn(from, through), ...flow.eventsStartingIn(from, through)],
     recordMarks: (rows) => news.recordMarks(rows),
+    // The rug pull stories say which coins are dead and from when; a restart must hear about them (tests/server-tinycoin.test.ts TINYS-01).
+    deadEvents: () => news.deadEvents(),
   };
 }
 

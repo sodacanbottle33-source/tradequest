@@ -25,7 +25,7 @@
 // a pool; a pool rug pull moves cash from the pool to the player and adds one crash story like the owner's price moves, the other kind of
 // rug pull is a normal order (Trading.placeOrder) plus one informational news story (realised 0: it moves no price by itself).
 
-import { CURATED, MAX_COMPANIES, MEME_SEEDS, TICK_MS, adminDraft, cycleOfTick, type CatalogEntry, type Company, type NewsDraft } from '../src/world';
+import { CURATED, MAX_COMPANIES, MEME_SEEDS, TICK_MS, adminDraft, cycleOfTick, scaleOf, unitsToCents, type CatalogEntry, type Company, type NewsDraft } from '../src/world';
 import { solveTotal } from './admin';
 import type { User } from './auth';
 import { coinOptions, makeCoinEntry, previewCoin, type CoinInput, type CoinOptions, type CoinPreview } from './customCoin';
@@ -55,7 +55,11 @@ const REQUEST_ID = /^[A-Za-z0-9_-]{8,60}$/;
 const RUG_NEWS_TICKS = 30;
 /** The news slot used for rug pull stories (the same one the owner's special events use, see admin.ts). */
 const RUG_SLOT = 900;
-/** How a pool rug pull crashes the price: down 99 % in a burst of 6 ticks (the owner's "instant" move, admin.ts). The price floor of $1 stops it there. */
+/**
+ * How the pool rug pull of an older coin (one that counts in cents) crashes the price: down 99 % in a burst of 6 ticks (the owner's "instant"
+ * move, admin.ts); the $1.00 price floor stops it there, and from then on its price stays where it is. A coin with fine prices has no crash like
+ * this: it dies on the spot and sits at the lowest price there is.
+ */
 const DRAIN_CRASH = { multiplier: 0.01, ticks: 6 } as const;
 
 export interface LaunchDeps {
@@ -251,13 +255,14 @@ export class Launches {
       spentCents: r.spent_cents,
       stakeShares: r.stake_shares,
       feeCents: r.fee_cents,
-      priceCents: r.price_cents,
+      // Prices go out in cents; a fine-priced coin keeps its launch row and its market in smaller units (a tiny number of cents here).
+      priceCents: unitsToCents(r.price_cents, scaleOf(c)),
       listed,
       listsInSeconds: listsIn,
       halted,
       sharesNow,
       valueNowCents: pos?.equityCents ?? 0,
-      priceNowCents: c && listed ? world.sim.price(c.id) : r.price_cents,
+      priceNowCents: unitsToCents(c && listed ? world.sim.price(c.id) : r.price_cents, scaleOf(c)),
       profitCents: realized + (any?.unrealizedCents ?? 0) - r.fee_cents + (poolRow?.drained_cents ?? 0),
       rugs: (rug?.n ?? 0) + (dead ? 1 : 0),
       ruggedShares: rug?.shares ?? 0,
@@ -409,7 +414,8 @@ export class Launches {
       if (kind === 'coin') createPool(db, newId, money_.spentCents);
       return newId;
     });
-    log.info('launch', `${user.username}: launched ${kind} ${entry.ticker} (${entry.name}) with ${money(money_.spentCents)} put in (and ${money(money_.feeCents)} fee) at ${money(money_.priceCents)}`);
+    const scale = scaleOf(entry.meme);
+    log.info('launch', `${user.username}: launched ${kind} ${entry.ticker} (${entry.name}) with ${money(money_.spentCents)} put in (and ${money(money_.feeCents)} fee) at ${scale === 1 ? money(money_.priceCents) : `$${(money_.priceCents / scale / 100).toFixed(16).replace(/0+$/, '')}`}`);
     // Only now, after the company is safely saved, does the running market learn about it. If that failed, the company still exists in
     // the database and the next start of the server loads it.
     let loaded = true;
@@ -436,7 +442,7 @@ export class Launches {
       stakeShares: money_.stakeShares,
       spentCents: money_.spentCents,
       feeCents: money_.feeCents,
-      priceCents: money_.priceCents,
+      priceCents: unitsToCents(money_.priceCents, scale),
       ...extra,
     };
   }
@@ -524,6 +530,10 @@ export class Launches {
     if (!news) return;
     try {
       const publishTick = world.earliestEventStart();
+      // A coin with fine prices does not crash by a share of its price: the story ends it. From the story's tick the coin is dead and its
+      // price sits at the lowest price there is (src/world/sim.ts `setDeadFrom`). An older coin still falls 99 % in a burst, and then stays where it is.
+      const fine = scaleOf(company) !== 1;
+      const ticks = fine ? 1 : DRAIN_CRASH.ticks;
       const base = adminDraft({
         key: `rug:${company.id}:drain`,
         company,
@@ -531,7 +541,7 @@ export class Launches {
         strength: 'extreme',
         publishTick,
         realized: 0,
-        durationTicks: DRAIN_CRASH.ticks,
+        durationTicks: ticks,
         cycle: cycleOfTick(publishTick),
         slot: RUG_SLOT,
       });
@@ -539,7 +549,7 @@ export class Launches {
         ...base,
         shape: 'burst',
         immediacy: 'immediate',
-        realized: solveTotal(DRAIN_CRASH.multiplier, 'burst', DRAIN_CRASH.ticks),
+        realized: fine ? 0 : solveTotal(DRAIN_CRASH.multiplier, 'burst', DRAIN_CRASH.ticks),
         permShare: 1,
         headline: `${company.name} is a rug pull: its developer drained the pool`,
         body: `The developer of ${company.name} (${company.ceo}) took all ${money(takenCents)} out of the money pool behind ${company.ticker} and left. The price collapsed and the coins that other players still hold cannot be sold.`,

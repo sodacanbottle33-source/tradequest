@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { CompanyChart } from './CompanyChart';
 import { EarningsPanel } from './EarningsPanel';
-import { formatBps, formatCap, formatCents, formatCount, SECTOR_NAMES, toneOf } from './format';
+import { bidFrom, formatBps, formatCap, formatCents, formatCount, SECTOR_NAMES, toneOf } from './format';
 import { NewsList } from './NewsList';
 import { CompanyPrice } from './PriceFx';
 import { sharedStore, useShared } from './store';
@@ -146,8 +146,10 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
   const live = detail.trading && (prices[id] ?? 0) > 0;
   const price = live ? (prices[id] as number) : 0;
   const half = live ? (halves[id] ?? 0) : 0;
-  const bid = live ? Math.max(1, price - half) : 0;
-  const ask = live ? price + half : 0;
+  // (A coin whose developer took the pool is dead: it has no bid or ask, only its frozen dust price.)
+  const quoted = live && !pool?.dead;
+  const bid = quoted ? bidFrom(price, half) : 0;
+  const ask = quoted ? price + half : 0;
   const changeBps = live && detail.open24h > 0 ? Math.round(((price - detail.open24h) / detail.open24h) * 10_000) : detail.changeBps;
   // Market cap = price × shares outstanding, recomputed with every tick.
   const cap = live ? price * detail.sharesOutstanding : 0;
@@ -212,11 +214,11 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
           </div>
           <div className="stat">
             <dt>Bid / Ask</dt>
-            <dd>{live ? `${formatCents(bid)} / ${formatCents(ask)}` : '—'}</dd>
+            <dd>{quoted ? `${formatCents(bid)} / ${formatCents(ask)}` : '—'}</dd>
           </div>
           <div className="stat">
             <dt>Spread</dt>
-            <dd>{live ? `${(spreadBps / 100).toFixed(2)}%` : '—'}</dd>
+            <dd>{quoted ? `${(spreadBps / 100).toFixed(2)}%` : '—'}</dd>
           </div>
           <div className="stat">
             <dt>24 h high / low</dt>
@@ -270,6 +272,7 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
           </h2>
           {!book && <p className="hint">Loading…</p>}
           {book && (
+            <div className="book-scroll">
             <table className="trades book" data-testid="book">
               <thead>
                 <tr>
@@ -302,6 +305,7 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
                 </tr>
               </tfoot>
             </table>
+            </div>
           )}
           {book && book.bids.levels.length > BOOK_ROWS && (
             <p className="hint">

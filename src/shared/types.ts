@@ -488,12 +488,11 @@ export interface CoinFormOptions {
   /** The first buy is $0 (none) or from this much (cents) up to `maxSeedCents`. */
   readonly minSeedCents: number;
   readonly maxSeedCents: number;
-  /** How many coins a launched coin has once the money is `fullSupplyFromSeedCents` or more: the money sets the market cap, so the starting price is that cap divided by this. */
+  /** How many coins every launched coin has (a trillion): the money sets the market cap, so the starting price is that cap divided by this. */
   readonly supply: number;
-  /** The least money that makes a coin with all of those coins; with less, the price stays at `minPriceCents` and there are fewer coins. */
-  readonly fullSupplyFromSeedCents: number;
-  /** The cheapest a coin can start (cents). */
-  readonly minPriceCents: number;
+  /** The lowest price a coin can have (where a rug pull leaves it) and the highest, in cents: tiny numbers of cents (1e-12 and 100). */
+  readonly lowestPriceCents: number;
+  readonly highestPriceCents: number;
   readonly nameMax: number;
   readonly descriptionMax: number;
   readonly devMax: number;
@@ -504,7 +503,7 @@ export interface CoinFormOptions {
 /** What a coin launch would make (the server works it out, so the screen never guesses). */
 export interface CoinPreview {
   readonly seedCents: number;
-  /** The starting price: the server works it out from the money (the player does not pick it). */
+  /** The starting price in cents: the server works it out from the money (the player does not pick it). A tiny decimal number of cents for a coin (0.0000000064). */
   readonly priceCents: number;
   readonly stakeShares: number;
   /** What the first buy costs (0 with no first buy), the launch fee, and what leaves the cash in all. */

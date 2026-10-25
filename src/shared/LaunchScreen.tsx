@@ -2,15 +2,15 @@
 // (sell everything he holds of it in one order). There is no size menu: the SIZE comes from the money put in. The money is not
 // lost; it buys the shares the player starts out holding, at the starting price. Making a MEMECOIN is like pump.fun: it costs only a small launch
 // fee, and the money put in is an optional first buy (it can be $0: then the player holds none and buys it on the market later). A coin's starting price is not typed either: every launched coin
-// has the same number of coins (80,000) from $5,000 up, so the money sets the market cap and the price follows; with less than $5,000 the price stays at
-// the $2.00 minimum and the coin has fewer coins. A STOCK needs a real stake (at least $100) and a launch fee, and its starting price is not typed
+// has the same number of coins (a trillion, like the real memecoins), so the money sets the market cap and the price follows: a free launch starts at
+// about $0.00000000006 and even the biggest launch starts far below ten cents. A STOCK needs a real stake (at least $100) and a launch fee, and its starting price is not typed
 // either: the money sets it. The server works out and
 // checks everything; this screen only asks it for a preview as the player types, and never decides a price, a size or what a sale returns.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, api } from './api';
 import { dollarsToCents, newRequestId } from './adminUtil';
 import { AuthPanel } from './AuthPanel';
-import { formatCap, formatCents, toneOf } from './format';
+import { formatCap, formatCents, formatCount, toneOf } from './format';
 import { sharedStore, useShared } from './store';
 import type { CoinPreview, Estimate, LaunchState, LaunchView, StockLaunchPreview } from './types';
 
@@ -120,10 +120,10 @@ export function LaunchScreen({ onOpen }: { onOpen: (ticker: string) => void }) {
         <p className="hint">
           Pick a name and a ticker. <strong>Making a memecoin costs only a {formatCents(fee)} launch fee</strong> (not refunded), like on pump.fun, and you can buy some of your own coin right away or wait and buy it on the market once it lists. A stock cannot be made for free: it needs <strong>at least {formatCents(stockMin)} put in</strong> and costs a <strong>{formatCents(stockFee)} launch fee</strong> (not refunded).
           You do not pick a size: the size comes from the money you put in (a coin with no first buy is the smallest). A little money makes a small, thin, wild company; a lot makes a big, deep, calmer one. For a memecoin the money also sets the starting price
-          (from {formatCents(state?.coinForm.fullSupplyFromSeedCents ?? 500_000)} up every launched coin has {(state?.coinForm.supply ?? 80_000).toLocaleString('en-US')} coins, so more money starts at a higher price; with less, the price stays at the {formatCents(state?.coinForm.minPriceCents ?? 200)} minimum and there are fewer coins); for a stock the money sets the starting price too (more money, a higher price per share). The money you put in is not lost: it buys the coins or shares you start out holding, at the starting price (only the launch fee is gone). Everybody can then trade your company.
+          (every launched coin has {formatCount(state?.coinForm.supply ?? 1_000_000_000_000)} coins, like the real memecoins, so the price is tiny, a fraction of a cent: a free launch starts at about $0.00000000006 and even the biggest launch starts below ten cents; more money makes a bigger market cap and so a higher price); for a stock the money sets the starting price too (more money, a higher price per share). The money you put in is not lost: it buys the coins or shares you start out holding, at the starting price (only the launch fee is gone). Everybody can then trade your company.
         </p>
         <p className="hint">
-          <strong>A memecoin has a money pool.</strong> Everything other players pay when they buy your coin goes into the pool, and everyone who sells is paid out of it (a sale can only be paid with what the pool holds). The <strong>Rug pull</strong> button takes <em>everything</em> that is in the pool for you, in cash, and kills the coin: its price crashes, and
+          <strong>A memecoin has a money pool.</strong> Everything other players pay when they buy your coin goes into the pool, and everyone who sells is paid out of it (a sale can only be paid with what the pool holds). The <strong>Rug pull</strong> button takes <em>everything</em> that is in the pool for you, in cash, and kills the coin: its price drops to almost nothing ($0.00000000000001) and stays there, and
           the players who still hold it are left with coins that are worth nothing and cannot be sold. You do not need to hold any of your own coin to do it. The price itself is still made by the market, not by the pool, and a coin takes plain buying and selling only (no leverage, shorting, stop-loss or limit orders). A <strong>stock</strong> has no pool: its rug pull sells everything you hold of it in one order, which pushes the price down like any big sell (a few percent for a steady stock).
         </p>
         <p className="hint" data-testid="launch-match-note">
@@ -304,12 +304,10 @@ function CoinForm({ state, cash, onDone }: { state: LaunchState; cash: number; o
             <ul>
               <li>
                 Starting price <strong data-testid="launch-coin-price">{formatCents(shown.priceCents)}</strong> a coin.{' '}
-                {shown.supply < form.supply
-                  ? `This is a small launch, so the price stays at the ${formatCents(form.minPriceCents)} minimum and the coin has fewer coins (${shown.supply.toLocaleString('en-US')}). From ${formatCents(form.fullSupplyFromSeedCents)} up, more money starts at a higher price.`
-                  : `Your money sets it: every launched coin of this size has ${shown.supply.toLocaleString('en-US')} coins, so the price is the market cap divided by that.`}
+                {`Your money sets the market cap, and every launched coin has ${shown.supply.toLocaleString('en-US')} coins, so the price is the market cap divided by that. Real memecoins cost a tiny fraction of a cent too.`}
               </li>
               <li>
-                Market cap about <strong data-testid="launch-coin-cap">{formatCap(shown.marketCapCents)}</strong> ({shown.supply.toLocaleString('en-US')} coins in circulation)
+                Market cap about <strong data-testid="launch-coin-cap">{formatCap(shown.marketCapCents)}</strong> ({formatCount(shown.supply)} coins in circulation)
               </li>
               <li>
                 Liquidity <strong data-testid="launch-coin-liquidity">{shown.liquidityPct}%</strong> (the buy–sell gap is about {(shown.spreadBps / 100).toFixed(2)}%). A typical move in 3 minutes: about <strong data-testid="launch-coin-move">{shown.typicalMovePct}%</strong> either way
@@ -399,7 +397,7 @@ function CoinForm({ state, cash, onDone }: { state: LaunchState; cash: number; o
                 <tr key={r.seedCents}>
                   <td className="num">{r.seedCents === 0 ? 'none' : formatCents(r.seedCents)}</td>
                   <td className="num">{formatCents(r.priceCents)}</td>
-                  <td className="num">{r.supply.toLocaleString('en-US')}</td>
+                  <td className="num">{formatCount(r.supply)}</td>
                   <td>{r.sizeLabel}</td>
                   <td className="num">{formatCap(r.marketCapCents)}</td>
                   <td className="num">{r.liquidityPct}%</td>
@@ -659,7 +657,7 @@ function LaunchCard({ launch: l, onOpen, onChanged }: { launch: LaunchView; onOp
           res.otherHolders > 0
             ? ` ${res.otherHolders.toLocaleString('en-US')} other ${res.otherHolders === 1 ? 'player is' : 'players are'} left holding ${res.otherCoins.toLocaleString('en-US')} worthless coins.`
             : ' Nobody else was holding it.';
-        await onChanged({ kind: 'ok', text: `You took ${formatCents(res.takenCents)} out of the ${l.ticker} pool. ${l.ticker} is dead now and its price is crashing.${left}` });
+        await onChanged({ kind: 'ok', text: `You took ${formatCents(res.takenCents)} out of the ${l.ticker} pool. ${l.ticker} is dead now: its price has dropped to almost nothing.${left}` });
         return;
       }
       const text = res.partial
@@ -755,7 +753,7 @@ function LaunchCard({ launch: l, onOpen, onChanged }: { launch: LaunchView; onOp
         <div className="admin-confirm" data-testid={`launch-rug-confirm-box-${l.ticker}`}>
           {l.pool ? (
             <p>
-              Take <strong data-testid={`launch-rug-take-${l.ticker}`}>{formatCents(l.pool.cents)}</strong>, everything in the {l.ticker} money pool, as your cash? {l.ticker} dies right away: its price crashes, and everybody who holds it (you too: {l.sharesNow.toLocaleString('en-US')} {unit}) is left with {unit} that are worth nothing and cannot be sold. The pool may hold a different amount by the time you press the button; you get what is in it then. You cannot undo it.
+              Take <strong data-testid={`launch-rug-take-${l.ticker}`}>{formatCents(l.pool.cents)}</strong>, everything in the {l.ticker} money pool, as your cash? {l.ticker} dies right away: its price drops to almost nothing and stays there, and everybody who holds it (you too: {l.sharesNow.toLocaleString('en-US')} {unit}) is left with {unit} that are worth nothing and cannot be sold. The pool may hold a different amount by the time you press the button; you get what is in it then. You cannot undo it.
             </p>
           ) : (
           <p>

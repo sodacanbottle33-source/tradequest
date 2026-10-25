@@ -4,6 +4,7 @@ export * from './types';
 export * from './catalog';
 export * from './effects';
 export * from './sim';
+export * from './units';
 export * from './liquidity';
 export * from './candles';
 export * from './newsText';

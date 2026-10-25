@@ -5,22 +5,23 @@
 //   - Less money makes a small, thin, wild coin: low liquidity, huge swings, news hits hard.
 //   - More money makes a bigger, deeper, calmer coin: more liquidity, smaller swings.
 //
-// The player does NOT pick a starting price either. Like a fixed-supply token launch, every launched coin has the same number of coins
-// (COIN_SUPPLY), so the money sets the market cap and the starting price is simply that cap divided by the coins: put in more money and
-// the coin starts at a higher price ($5,000 starts at $2.00; $10,000,000 at $5,500.00). The cheapest a coin can start is $2.00 (so it has
-// room to fall to the game's $1.00 floor), so with less than $5,000 the price stays at $2.00 and the coin simply has fewer coins: $100
-// makes a coin with 1,600 coins, and the least money, $2.00, buys the single coin it takes to launch.
+// The player does NOT pick a starting price either. Like a real token launch, every launched coin has the same huge number of tokens
+// (COIN_SUPPLY, a trillion), so the money sets the market cap and the starting price is simply that cap divided by the tokens: put in more
+// money and the coin starts at a higher price, but it is always a tiny one, like the real memecoins (SHIB, PEPE and BONK all cost a small
+// fraction of a cent). No first buy ($0, the same coin as a $2.00 one) starts at about $0.00000000006; $5,000 at $0.00000016; $10,000,000 at
+// $0.00044. Prices that small do not fit in whole cents, so the coin counts in units of $0.00000000000001 (COIN_PRICE_SCALE, src/world/units.ts):
+// its starting price in those units is simply its market cap in cents.
 //
-// The first buy is not lost. It is spent at the starting price and the player starts out holding that many whole coins (the launch stake),
-// so it can be sold later like any other holding (the 0.5 % coin fee applies to that later trade). It decides the size; it is NOT a real
-// pool that backs the price. The launch fee, on the other hand, is simply paid and gone. The coin is sized so that its stake is a real part of its order book (a few times
-// smaller than the book): that is what lets the player sell the whole stake in one go (the "rug pull", server/launch.ts) and what makes
-// doing so show in the price. Nothing here touches the market; server/launch.ts does that.
+// The first buy is not lost. It is spent at the starting price and the player starts out holding that many whole tokens (the launch stake),
+// so it can be sold later like any other holding (the 0.5 % coin fee applies to that later trade). It decides the size; the cash it puts in
+// is the coin's first deposit in its money pool (server/pools.ts). The launch fee, on the other hand, is simply paid and gone. The coin is sized
+// so that its stake is a real part of its order book (a few times smaller than the book): that is what lets the player sell the whole stake in
+// one go and what makes doing so show in the price. Nothing here touches the market; server/launch.ts does that.
 
 import { applyMarkup, bookDepth, pushPreview } from './flow';
 import { MEME_FEE_BPS, feeOf } from './fees';
 import { HttpError } from './http';
-import { executeMarket, ladder, memeAdv, quoteOf, tierOfCap, type CatalogEntry, type MemeProfile } from '../src/world';
+import { COIN_MIN_UNITS, COIN_PRICE_SCALE, COIN_TOKENS, executeMarket, ladder, memeAdv, quoteOf, tierOfCap, tokensFor, unitsToCents, valueOf, type CatalogEntry, type MemeProfile } from '../src/world';
 
 /**
  * The least and the most money a first buy can use ($2.00 and $10,000,000, in cents). A first buy has to buy at least one whole coin and
@@ -30,14 +31,11 @@ export const MIN_SEED_CENTS = 200;
 export const MAX_SEED_CENTS = 1_000_000_000;
 /** What making a coin costs, in cents ($2.00), paid from the player's Career cash whatever he buys; it is not refunded and buys nothing. */
 export const LAUNCH_FEE_CENTS = 200;
-/** The cheapest a launched coin can start ($2.00, in cents): the game's price floor is $1.00, so a coin always has room to fall. */
-export const MIN_COIN_PRICE_CENTS = 200;
 /**
- * A launched coin has exactly this many coins in circulation, whatever the money, once the money is $5,000 or more. The money sets the
- * market cap (the table below), so the starting price is the cap divided by this: $5,000 → $2.00, $25,000 → about $10, $100,000 → about
- * $40, $10 million → about $5,500. With less money the price stays at the $2.00 minimum and there are fewer coins ({@link supplyFor}).
+ * A launched coin has exactly this many tokens in circulation, whatever the money. The money sets the market cap (the table below), so the
+ * starting price is the cap divided by this: $5,000 → $0.00000016, $25,000 → $0.0000008, $100,000 → $0.0000032, $10 million → $0.00044.
  */
-export const COIN_SUPPLY = 80_000;
+export const COIN_SUPPLY = COIN_TOKENS;
 export const COIN_NAME_MIN = 3;
 export const COIN_NAME_MAX = 40;
 export const COIN_DESCRIPTION_MAX = 300;
@@ -139,11 +137,17 @@ function profileOf(seedCents: number): Profile {
 /** What the screen shows before the player presses Create (and what the coin will be like afterwards). */
 export interface CoinPreview {
   readonly seedCents: number;
-  /** The starting price (cents): the market cap the money makes, divided by {@link COIN_SUPPLY}. The player does not pick it. */
+  /**
+   * The starting price in cents, a tiny fraction of one (for example 0.0000000064 = $0.000000000064): the market cap the money makes,
+   * divided by {@link COIN_SUPPLY}. The player does not pick it. For display; the coin itself counts in {@link priceUnits}.
+   */
   readonly priceCents: number;
-  /** How many coins the player will hold at the start (the first buy divided by the price, rounded down; 0 with no first buy). */
+  /** The same price in the coin's own price units, a whole number (1 unit = 1 / {@link priceScale} cent; this equals the market cap in cents). */
+  readonly priceUnits: number;
+  readonly priceScale: number;
+  /** How many tokens the player will hold at the start (the first buy divided by the price, rounded down; 0 with no first buy). */
   readonly stakeShares: number;
-  /** What the first buy really costs: whole coins at the starting price (0 with no first buy). */
+  /** What the first buy really costs: whole tokens at the starting price (0 with no first buy), rounded up to a whole cent. */
   readonly spentCents: number;
   /** The launch fee (the same for every coin) and everything that leaves the player's cash: the fee plus the first buy. */
   readonly feeCents: number;
@@ -176,19 +180,18 @@ export interface CoinPreview {
   readonly breakEvenRisePct: number;
 }
 
-/**
- * How many coins the money makes: {@link COIN_SUPPLY} when the money is $5,000 or more, fewer below that (the price cannot go under the
- * $2.00 minimum, so a smaller cap means fewer coins, never more than the cap divided by the minimum price).
- */
-export function supplyFor(seedCents: number): number {
-  const capCents = profileOf(seedCents).capDollars * 100;
-  if (capCents / COIN_SUPPLY >= MIN_COIN_PRICE_CENTS) return COIN_SUPPLY;
-  return Math.max(1, Math.round(capCents / MIN_COIN_PRICE_CENTS));
+/** The market cap the money makes, in cents (a whole number of dollars). */
+export function capCentsFor(seedCents: number): number {
+  return profileOf(seedCents).capDollars * 100;
 }
 
-/** The starting price (cents) the money makes: its market cap divided by the coins, to the nearest cent, never under $2.00. */
-export function priceFor(seedCents: number): number {
-  return Math.max(MIN_COIN_PRICE_CENTS, Math.round((profileOf(seedCents).capDollars * 100) / COIN_SUPPLY));
+/**
+ * The starting price the money makes, in the coin's price units: its market cap divided by the tokens, with the cap in cents and the unit
+ * being 1 / {@link COIN_PRICE_SCALE} cent (so with a trillion tokens and a trillion units to the cent it is the cap in cents itself).
+ */
+export function priceUnitsFor(seedCents: number): number {
+  const units = (BigInt(capCentsFor(seedCents)) * BigInt(COIN_PRICE_SCALE) + BigInt(COIN_SUPPLY) / 2n) / BigInt(COIN_SUPPLY);
+  return Number(units);
 }
 
 /** The money of the first buy: nothing at all ($0), or a whole number of cents from $2.00 to $10,000,000. */
@@ -209,20 +212,20 @@ export function checkSeed(seed: unknown): number {
  */
 function dumpOf(
   c: { supply: number; turnover: number; liquidity: number; vol3m: number; spreadBps: number },
-  priceCents: number,
+  priceUnits: number,
   stake: number,
 ): Pick<CoinPreview, 'bookDepthShares' | 'stakeOfBookPct' | 'dumpFilledPct' | 'dumpReceiveCents' | 'dumpCostPct' | 'dumpPriceDropPct' | 'breakEvenRisePct'> {
   const co = { avgDailyVolume: memeAdv(c), liquidity: c.liquidity, vol3m: c.vol3m, spreadBps: c.spreadBps };
   const depth = bookDepth(co);
   // No first buy: nothing is held, so there is nothing to sell.
   if (stake === 0) return { bookDepthShares: depth, stakeOfBookPct: 0, dumpFilledPct: 0, dumpReceiveCents: 0, dumpCostPct: 0, dumpPriceDropPct: 0, breakEvenRisePct: 0 };
-  const quote = quoteOf(co, priceCents, 1);
+  const quote = quoteOf(co, priceUnits, 1);
   const levels = ladder(co, quote, 1, 'sell');
-  const raw = executeMarket(levels, 'sell', stake, 0, { mid: priceCents });
+  const raw = executeMarket(levels, 'sell', stake, 0, { mid: priceUnits, scale: COIN_PRICE_SCALE, maxQty: c.supply });
   const flow = pushPreview(co, 0, 'sell', raw.filledQty);
-  const exec = applyMarkup(raw, 'sell', priceCents, levels[0]?.price ?? 0, flow.paid);
+  const exec = applyMarkup(raw, 'sell', priceUnits, levels[0]?.price ?? 0, flow.paid, COIN_PRICE_SCALE);
   const receive = Math.max(0, exec.totalCents - feeOf(exec.totalCents, MEME_FEE_BPS));
-  const worth = exec.filledQty * priceCents;
+  const worth = valueOf(exec.filledQty, priceUnits, COIN_PRICE_SCALE, 'nearest');
   const cost = worth > 0 ? Math.min(1, Math.max(0, 1 - receive / worth)) : 1;
   const r1 = (x: number): number => Math.round(x * 10) / 10;
   return {
@@ -240,26 +243,30 @@ function dumpOf(
 export function previewCoin(seedCents: unknown): CoinPreview {
   const seed = checkSeed(seedCents);
   const p = profileOf(seed);
-  const priceCents = priceFor(seed);
-  const stakeShares = Math.floor(seed / priceCents);
-  if (seed > 0 && stakeShares < 1) throw new HttpError(400, 'bad_request', 'The money you put in is less than one coin costs. Put in more.');
-  const supply = supplyFor(seed);
+  const priceUnits = priceUnitsFor(seed);
+  const stakeShares = seed === 0 ? 0 : tokensFor(seed, priceUnits, COIN_PRICE_SCALE);
+  if (seed > 0 && stakeShares < 1) throw new HttpError(400, 'bad_request', 'The money you put in is less than one token costs. Put in more.');
+  // What the tokens cost, rounded up to a whole cent (never more than the money put in, because the tokens were rounded down).
+  const spentCents = stakeShares === 0 ? 0 : valueOf(stakeShares, priceUnits, COIN_PRICE_SCALE, 'up');
+  const supply = COIN_SUPPLY;
   const floatShares = Math.min(supply, Math.max(1, Math.round(supply * p.floatFrac)));
   const lowLiq = 1 - p.liquidity;
   const size = sizeOfCap(p.capDollars / 1e6);
   const spreadBps = Math.round((8 + 150 * lowLiq * lowLiq) * 10) / 10;
-  const dump = dumpOf({ supply, turnover: p.turnover, liquidity: p.liquidity, vol3m: p.vol3m, spreadBps }, priceCents, stakeShares);
+  const dump = dumpOf({ supply, turnover: p.turnover, liquidity: p.liquidity, vol3m: p.vol3m, spreadBps }, priceUnits, stakeShares);
   return {
     seedCents: seed,
-    priceCents,
+    priceCents: unitsToCents(priceUnits, COIN_PRICE_SCALE),
+    priceUnits,
+    priceScale: COIN_PRICE_SCALE,
     stakeShares,
-    spentCents: stakeShares * priceCents,
+    spentCents,
     feeCents: LAUNCH_FEE_CENTS,
-    totalCents: LAUNCH_FEE_CENTS + stakeShares * priceCents,
+    totalCents: LAUNCH_FEE_CENTS + spentCents,
     size,
     sizeLabel: SIZE_INFO[size].label,
     sizeNote: SIZE_INFO[size].note,
-    marketCapCents: supply * priceCents,
+    marketCapCents: capCentsFor(seed),
     supply,
     floatShares,
     liquidityPct: Math.round(p.liquidity * 100),
@@ -277,12 +284,11 @@ export interface CoinOptions {
   /** The first buy is $0 (none) or from this much (cents) up to {@link maxSeedCents}. */
   readonly minSeedCents: number;
   readonly maxSeedCents: number;
-  /** How many coins a launched coin has once the money is {@link fullSupplyFromSeedCents} or more (the price is the market cap the money makes divided by this). */
+  /** How many tokens every launched coin has (the starting price is the market cap the money makes divided by this). */
   readonly supply: number;
-  /** The least money that makes a coin with the full number of coins; below it the price stays at {@link minPriceCents} and there are fewer coins. */
-  readonly fullSupplyFromSeedCents: number;
-  /** The cheapest a coin can start (cents). */
-  readonly minPriceCents: number;
+  /** The lowest price a coin can have (where a rug pull leaves it) and the highest, in cents (tiny numbers of cents: 1e-12 and 100). */
+  readonly lowestPriceCents: number;
+  readonly highestPriceCents: number;
   readonly nameMax: number;
   readonly descriptionMax: number;
   readonly devMax: number;
@@ -303,8 +309,8 @@ export function coinOptions(listsInSeconds: number): CoinOptions {
     minSeedCents: MIN_SEED_CENTS,
     maxSeedCents: MAX_SEED_CENTS,
     supply: COIN_SUPPLY,
-    fullSupplyFromSeedCents: (ANCHORS[0] as Anchor).seed * 100,
-    minPriceCents: MIN_COIN_PRICE_CENTS,
+    lowestPriceCents: unitsToCents(COIN_MIN_UNITS, COIN_PRICE_SCALE),
+    highestPriceCents: unitsToCents(100 * COIN_PRICE_SCALE, COIN_PRICE_SCALE),
     nameMax: COIN_NAME_MAX,
     descriptionMax: COIN_DESCRIPTION_MAX,
     devMax: COIN_DEV_MAX,
@@ -377,14 +383,15 @@ export function makeCoinEntry(input: CoinInput, taken: Taken): { entry: CatalogE
     newsImpact: p.newsImpact,
     driftDay: p.driftDay,
     dev,
+    priceScale: COIN_PRICE_SCALE,
   };
   const entry: CatalogEntry = {
     ticker,
     name,
     sector: 'meme',
     industry: 'Memecoin',
-    tier: tierOfCap(preview.supply * (preview.priceCents / 100)),
-    price: preview.priceCents,
+    tier: tierOfCap(preview.marketCapCents / 100),
+    price: preview.priceUnits,
     personality: 'volatile',
     products,
     description,

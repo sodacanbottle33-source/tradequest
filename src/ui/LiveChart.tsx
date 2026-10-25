@@ -9,8 +9,8 @@
 //     a live dot at its tip sends out a ring, the price tag flashes and a "+0.8%" floats up from it. A move of 1% or more glows
 //     harder. All of it stops when the player's system asks for reduced motion.
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { formatCents, formatSignedPercent, LIVE_HISTORY_CANDLES, type LiveCandle, type LiveTrade } from '../engine';
-import { priceDomain } from './chartScale';
+import { formatAxisPrice, formatCents, formatSignedPercent, LIVE_HISTORY_CANDLES, type LiveCandle, type LiveTrade } from '../engine';
+import { gridPricesOf, priceDomain } from './chartScale';
 import { moveLabel } from './hype';
 import { PenLayer, PenToolbar } from './PenLayer';
 import { candleStateLabel, tone } from './labels';
@@ -88,8 +88,7 @@ export function LiveChart({ ticker, name, candles, price, ticksPerCandle, trades
   const visible = candles.filter((c) => c.index > start && c.index <= start + slots);
   const { lo, hi, step } = priceDomain(visible.length > 0 ? visible : candles.slice(-1));
   const y = (p: number) => PAD.top + ((hi - p) / (hi - lo)) * PLOT_H;
-  const gridPrices: number[] = [];
-  for (let p = lo; p <= hi + 0.001; p += step) gridPrices.push(p);
+  const gridPrices = gridPricesOf(lo, hi, step);
 
   const drawn = candles.filter((c) => c.index >= start && c.index <= start + slots + 1);
   const forming = candles[n - 1];
@@ -177,7 +176,7 @@ export function LiveChart({ ticker, name, candles, price, ticksPerCandle, trades
             <g key={p} className="grid-row" style={{ transform: `translateY(${y(p)}px)` }}>
               <line x1={PAD.left} x2={PAD.left + plotW} y1={0} y2={0} className="grid" />
               <text x={width - PAD.right + 6} y={4} className="axis-label">
-                {(p / 100).toFixed(2)}
+                {Number.isInteger(p) || p >= 100 ? (p / 100).toFixed(2) : formatAxisPrice(p)}
               </text>
             </g>
           ))}
@@ -253,7 +252,7 @@ export function LiveChart({ ticker, name, candles, price, ticksPerCandle, trades
             <line x1={PAD.left} x2={PAD.left + plotW} y1={0} y2={0} className="mark-line" />
             <rect x={width - PAD.right + 2} y={-10} width={PAD.right - 4} height={20} rx={3} className="mark-tag" />
             <text x={width - PAD.right + 6} y={4} className="mark-text">
-              {(price / 100).toFixed(2)}
+              {Number.isInteger(price) || price >= 100 ? (price / 100).toFixed(2) : formatAxisPrice(price)}
             </text>
             {floating && (
               <text key={pulse.n} x={width - PAD.right - 8} y={-12} textAnchor="end" className={`float-move ${pulse.dir ?? ''}${bigMove ? ' big-move' : ''}`} data-testid="float-move">

@@ -24,7 +24,7 @@ import {
 } from '../src/world';
 import { START_CASH_CENTS, type Auth, type BanInfo, type User } from './auth';
 import { autoPauseReason, type Halts, type PauseView } from './halts';
-import { MEME_SEEDS } from '../src/world';
+import { MEME_SEEDS, scaleOf, unitsToCents, valueOf } from '../src/world';
 import { MAX_OWN_COMPANIES, makeEntry, stockOptions, type StockInput, type StockOptions } from './customStock';
 import { HttpError } from './http';
 import { debtShare } from './leverage';
@@ -305,12 +305,12 @@ export class Admin {
           sector: r.sector,
           tier: r.tier,
           personality: r.personality,
-          startPriceCents: r.price_cents,
+          startPriceCents: unitsToCents(r.price_cents, scaleOf(c)),
           createdMs: r.created_ms,
           loaded: c !== undefined,
           trading,
           listsInTicks: c !== undefined && !trading ? Math.max(0, c.listingTick - world.sim.tick) : 0,
-          priceCents: trading && c ? world.sim.price(c.id) : 0,
+          priceCents: trading && c ? unitsToCents(world.sim.price(c.id), scaleOf(c)) : 0,
           halted: c !== undefined && halts.isHaltedItself(c.id),
         };
       });
@@ -336,10 +336,10 @@ export class Admin {
           createdMs: r.created_ms,
           spentCents: r.spent_cents,
           stakeShares: r.stake_shares,
-          startPriceCents: r.price_cents,
+          startPriceCents: unitsToCents(r.price_cents, scaleOf(c)),
           sharesNow: r.shares_now,
           trading,
-          priceCents: trading && c ? world.sim.price(c.id) : 0,
+          priceCents: trading && c ? unitsToCents(world.sim.price(c.id), scaleOf(c)) : 0,
           halted: c !== undefined && halts.isHaltedItself(c.id),
           rugs: r.rugs + (r.pool_dead ? 1 : 0),
           ruggedShares: r.rugged_shares,
@@ -464,7 +464,7 @@ export class Admin {
       breaking: input.breaking ?? true,
     };
 
-    const priceBefore = world.sim.price(company.id);
+    const priceBefore = unitsToCents(world.sim.price(company.id), scaleOf(company)); // cents (a decimal number for a coin that costs a tiny fraction of a cent)
     const newsId = db.tx(() => {
       const id = news.addSpecial(draft, this.d.now());
       if (id === null) throw new HttpError(409, 'request_id_reused', 'That requestId was already used.');
@@ -728,19 +728,30 @@ export class Admin {
     const requestId = this.requestId(input.requestId);
     const user = this.userOf(input.username);
     const company = this.companyOf(input.ticker);
-    if (typeof input.qty !== 'number' || !Number.isSafeInteger(input.qty) || input.qty === 0 || Math.abs(input.qty) > MAX_SHARES_PER_ACTION) {
-      throw new HttpError(400, 'bad_request', `The number of shares must be a whole number, not zero, and at most ${MAX_SHARES_PER_ACTION.toLocaleString('en-US')} either way.`);
+    // A coin that costs a tiny fraction of a cent has a trillion tokens: the owner may move up to all of them. Its price counts in smaller units.
+    const scale = scaleOf(company);
+    const maxShares = scale === 1 ? MAX_SHARES_PER_ACTION : company.sharesOutstanding;
+    if (typeof input.qty !== 'number' || !Number.isSafeInteger(input.qty) || input.qty === 0 || Math.abs(input.qty) > maxShares) {
+      throw new HttpError(400, 'bad_request', `The number of shares must be a whole number, not zero, and at most ${maxShares.toLocaleString('en-US')} either way.`);
     }
     const qty = input.qty;
     const note = cleanText(input.note, 120, 'The note');
     if (this.seen(requestId, 'shares', user.username)) return { ok: true, duplicate: true, username: user.username };
     if (!world.sim.isListed(company.id)) throw new HttpError(400, 'not_trading', `${company.ticker} is not trading yet, so it has no price.`);
-    const bid = world.quote(company.id).bid;
-    const value = bid * Math.abs(qty);
-    // A company can be pumped to $1,000,000,000 a share; a position worth more than the game can count would break the account page.
+    const bid = world.quote(company.id).bid; // in the company's own price units
     const countable = Number.MAX_SAFE_INTEGER / 8;
+    const worth = (shares: number): number => {
+      try {
+        return valueOf(shares, bid, scale, 'down');
+      } catch {
+        return Number.POSITIVE_INFINITY; // more than a safe whole number of cents
+      }
+    };
+    const value = worth(Math.abs(qty));
+    const priceShown = scale === 1 ? (bid / 100).toLocaleString('en-US', { minimumFractionDigits: 2 }) : (bid / scale / 100).toFixed(14);
+    // A company can be pumped to $1,000,000,000 a share; a position worth more than the game can count would break the account page.
     if (!Number.isSafeInteger(value) || value > countable) {
-      throw new HttpError(400, 'too_large', `At $${(bid / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })} a share, ${Math.abs(qty).toLocaleString('en-US')} shares are worth more than the game can count. Use fewer shares.`);
+      throw new HttpError(400, 'too_large', `At $${priceShown} a share, ${Math.abs(qty).toLocaleString('en-US')} shares are worth more than the game can count. Use fewer shares.`);
     }
     const after = db.tx(() => {
       const acc = trading.careerAccountOf(user.id);
@@ -752,7 +763,7 @@ export class Admin {
       if (qty > 0) {
         sharesAfter = before + qty;
         if (!Number.isSafeInteger(sharesAfter)) throw new HttpError(400, 'bad_request', 'That would be too many shares.');
-        if (sharesAfter * bid > countable) throw new HttpError(400, 'too_large', `That would leave the player with ${sharesAfter.toLocaleString('en-US')} shares worth more than the game can count at this price.`);
+        if (worth(sharesAfter) > countable) throw new HttpError(400, 'too_large', `That would leave the player with ${sharesAfter.toLocaleString('en-US')} shares worth more than the game can count at this price.`);
         if (held) db.run('UPDATE positions SET shares = ?, cost_cents = cost_cents + ? WHERE account_id = ? AND company_id = ?', sharesAfter, value, acc.id, company.id);
         else db.run('INSERT INTO positions(account_id, company_id, shares, cost_cents) VALUES (?, ?, ?, ?)', acc.id, company.id, qty, value);
         db.run('UPDATE accounts SET start_cash_cents = start_cash_cents + ? WHERE id = ?', value, acc.id);
@@ -768,7 +779,7 @@ export class Admin {
         }
         db.run('UPDATE accounts SET start_cash_cents = MAX(0, start_cash_cents - ?) WHERE id = ?', value, acc.id);
       }
-      this.record(requestId, admin, 'shares', user.username, { ticker: company.ticker, qty, priceCents: bid, valueCents: value, sharesBefore: before, sharesAfter, note });
+      this.record(requestId, admin, 'shares', user.username, { ticker: company.ticker, qty, priceCents: unitsToCents(bid, scale), valueCents: value, sharesBefore: before, sharesAfter, note });
       return sharesAfter;
     });
     trading.leverageChanged();

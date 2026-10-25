@@ -1,12 +1,31 @@
 // Display helpers for the shared market. Display values are never fed back into calculations.
-import { formatCents as formatWholeCents } from '../engine';
+import { formatCents as formatWholeCents, formatFineCents } from '../engine';
 
 /**
  * Dollars from cents. Average prices are fractions of a cent (a total divided by a number of shares), which the engine's
  * formatter does not accept, so they are rounded to the nearest cent for display first.
  */
 export function formatCents(cents: number): string {
+  // A price under a dollar that is not a whole number of cents is a coin that costs a tiny fraction of a cent: show it as it is.
+  if (!Number.isInteger(cents) && Math.abs(cents) < 100) return formatPrice(cents);
   return formatWholeCents(Number.isInteger(cents) ? cents : Math.round(cents));
+}
+
+/**
+ * The price of one coin from cents, however tiny: 0.0000000064 cents → "$0.000000000064" (4 significant digits at most, no trailing zeros).
+ * From a dollar up it is the usual dollars and cents. Display only.
+ */
+export function formatPrice(cents: number): string {
+  return formatFineCents(cents);
+}
+
+/**
+ * The price a seller gets for the first coin: the middle price less half the buy–sell gap. A stock (or an older coin) never costs less
+ * than one cent, so its bid is never below one cent; a coin a player launched costs a tiny fraction of a cent, so its bid only has to
+ * stay above 0 (and never below half of the price). Prices in cents; display only.
+ */
+export function bidFrom(price: number, half: number): number {
+  return price >= 1 ? Math.max(1, price - half) : Math.max(price / 2, price - half);
 }
 
 /** 123456789 cents → "$1.23M"; used for market capitalisation. */
@@ -23,10 +42,44 @@ export function formatCap(cents: number): string {
 /** Share counts and volumes: 1234567 → "1.23M". */
 export function formatCount(n: number): string {
   const abs = Math.abs(n);
+  if (abs >= 1e12) return `${(n / 1e12).toFixed(2)}T`;
   if (abs >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
   if (abs >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
   if (abs >= 1e4) return `${(n / 1e3).toFixed(1)}K`;
   return String(Math.round(n));
+}
+
+/**
+ * How many shares or coins: written out in full while it is a normal number (the way it always was), shortened ("150.00B") once it has more
+ * than nine digits, as the coins players launch have a trillion tokens.
+ */
+export function formatShares(n: number): string {
+  return Math.abs(n) >= 1e9 ? formatCount(n) : String(n);
+}
+
+/** The most coins an order can ask for: the trillion a launched coin has, and a little room. */
+export const MAX_QTY_TEXT_VALUE = 10_000_000_000_000;
+
+const QTY_SUFFIX: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 };
+
+/**
+ * A number of shares typed by the player → a whole number, or null if it is not one. Plain digits ("250", "1,000,000") and a letter after
+ * the number are fine: "5k" is 5,000, "1.5m" is 1,500,000, "2b" is two billion, "1t" a trillion. Anything that is not a whole number
+ * of shares (not a number, 1.5 shares, more than a trillion) is null.
+ */
+export function parseQty(text: string): number | null {
+  const t = text.trim().toLowerCase().replace(/,/g, '').replace(/\s+/g, '');
+  const m = /^(\d{1,13}(?:\.\d{1,9})?)([kmbt])?$/.exec(t);
+  if (!m) return null;
+  const [, digits = '', suffix] = m;
+  if (suffix === undefined) return /^\d+$/.test(digits) ? Number(digits) : null;
+  // Exact: "1.5m" is worked out on the digits, not with floating point (1.1 × 1e6 is not a whole number in floating point).
+  const [whole = '0', frac = ''] = digits.split('.');
+  const unit = QTY_SUFFIX[suffix] as number;
+  const zeros = String(unit).length - 1;
+  if (frac.length > zeros) return null;
+  const n = Number(whole + frac.padEnd(zeros, '0'));
+  return Number.isSafeInteger(n) && n <= MAX_QTY_TEXT_VALUE ? n : null;
 }
 
 /** 125 basis points → "+1.25%". */

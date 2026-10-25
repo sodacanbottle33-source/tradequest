@@ -1,7 +1,7 @@
 // What the API shows about the market: overview rows, company pages and order books. Rows are built from the live world
 // and cached per tick, so a hundred browsers asking at once cost one computation.
 
-import { BOOK_LEVELS, TICKS_PER_DAY, liquidityLabel, marketCapCents, totalDepth, type Company, type Level } from '../../src/world';
+import { BOOK_LEVELS, TICKS_PER_DAY, liquidityLabel, marketCapCents, scaleOf, totalDepth, unitsToCents, type Company, type Level } from '../../src/world';
 import type { Halts } from '../halts';
 import type { WorldRuntime } from './runtime';
 
@@ -110,6 +110,9 @@ export class MarketViews {
       };
     }
     const q = w.quote(i);
+    // Prices go out in cents; a fine-priced coin counts in smaller units inside, so its prices are converted (a tiny number of cents).
+    const scale = scaleOf(c);
+    const cents = (units: number): number => unitsToCents(units, scale);
     const open = w.stats.open24h(i) || c.basePriceCents;
     const range = w.stats.range24h(i);
     const high = Math.max(range.high, w.sim.price(i));
@@ -126,14 +129,14 @@ export class MarketViews {
       listsInTicks: 0,
       launched,
       pool,
-      price: q.mid,
-      bid: q.bid,
-      ask: q.ask,
+      price: cents(q.mid),
+      bid: cents(q.bid),
+      ask: cents(q.ask),
       spreadBps: q.spreadBps,
-      open24h: open,
+      open24h: cents(open),
       changeBps: Math.round(((q.mid - open) / open) * 10_000),
-      high24h: high,
-      low24h: low,
+      high24h: cents(high),
+      low24h: cents(low),
       volume24h: w.stats.volume24h(i),
       marketCapCents: marketCapCents(q.mid, c),
       liquidity: liquidityLabel(c.liquidity),
@@ -166,7 +169,7 @@ export class MarketViews {
       beta: c.beta,
       listingTick: c.listingTick,
       /** The price it started at (a launched company: its listing price). The page counts "2x, 10x since the start" from it. */
-      basePriceCents: c.basePriceCents,
+      basePriceCents: unitsToCents(c.basePriceCents, scaleOf(c)),
       listedMs: this.world.msOfTick(c.listingTick),
       turnover24h: row.trading && c.sharesOutstanding > 0 ? Math.round((row.volume24h / c.sharesOutstanding) * 100_000) / 1000 : 0,
       daysOfHistory: Math.floor(Math.max(0, this.world.sim.tick - c.listingTick) / TICKS_PER_DAY),
@@ -176,12 +179,13 @@ export class MarketViews {
   depth(ticker: string): { bids: DepthSide; asks: DepthSide; tick: number; pressure: number } | null {
     const c = this.world.companyByTicker(ticker);
     if (!c || !this.world.sim.isListed(c.id)) return null;
+    const scale = scaleOf(c);
     const side = (levels: Level[]): DepthSide => {
       let cum = 0;
       return {
         levels: levels.map((l) => {
           cum += l.size;
-          return { price: l.price, size: l.size, cumulative: cum };
+          return { price: unitsToCents(l.price, scale), size: l.size, cumulative: cum };
         }),
         total: totalDepth(levels),
       };
