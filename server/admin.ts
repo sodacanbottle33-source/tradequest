@@ -1,7 +1,8 @@
 // The owner's tools: move a company's price (rug pull, crash, pump), stop and resume trading (one company or everything), give or
 // take Career cash, coins and shares, ban and unban players, reset a Career account, post an announcement, set how strongly
 // player trades move prices, and make a company of your own. Only the owner may use any of it (the routes check the role on the server every time), and every
-// action is written once to the admin log.
+// action is written once to the admin log. The exceptions are the moderators the owner chose (docs/world.md §21): they may kick and ban
+// ordinary players (a ban up to 7 days), lift what the owner did not give, and use the chat tools; `setModerator` is the owner's alone.
 //
 // A price move is NOT a trick on the price engine. It is an ordinary news story (source "admin") that is written to the news
 // table first and handed to the world afterwards. The engine applies it exactly like any other story, so prices stay a pure
@@ -22,7 +23,7 @@ import {
   type Shape,
   type Strength,
 } from '../src/world';
-import { START_CASH_CENTS, type Auth, type BanInfo, type User } from './auth';
+import { START_CASH_CENTS, roleSql, type Auth, type BanInfo, type Role, type User } from './auth';
 import { autoPauseReason, type Halts, type PauseView } from './halts';
 import { MEME_SEEDS, scaleOf, unitsToCents, valueOf } from '../src/world';
 import { MAX_OWN_COMPANIES, makeEntry, stockOptions, type StockInput, type StockOptions } from './customStock';
@@ -49,11 +50,19 @@ export type Speed = (typeof SPEEDS)[number];
 export const MAX_SHARES_PER_ACTION = 1_000_000;
 /** The longest timed ban: one year (in hours). A longer one is a ban "until lifted". */
 export const MAX_BAN_HOURS = 24 * 365;
+/** A moderator can ban for at most this long (7 days); a longer or endless ban is for the owner (docs/world.md §21). */
+export const MOD_MAX_BAN_HOURS = 24 * 7;
+/** The lengths of a kick, in minutes: 10 minutes, 1 hour or 1 day. */
+export const KICK_MINUTES = [10, 60, 1440] as const;
+/** The most bans and kicks one moderator can give in an hour (the owner has no limit). */
+export const MOD_BANS_PER_HOUR = 20;
+/** The most moderators there can be at once. */
+export const MAX_MODERATORS = 20;
 export const ANNOUNCEMENT_MAX = 200;
 const ANNOUNCEMENT_KEY = 'announcement';
 
 /** Every kind of entry in the admin log. */
-export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin' | 'chat_delete' | 'chat_mute' | 'chat_ban' | 'chat_lift' | 'chat_dismiss' | 'pm_dismiss' | 'avatar_remove' | 'company_pic_set' | 'company_pic_remove';
+export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin' | 'chat_delete' | 'chat_mute' | 'chat_ban' | 'chat_lift' | 'chat_dismiss' | 'pm_dismiss' | 'avatar_remove' | 'company_pic_set' | 'company_pic_remove' | 'kick' | 'mod_appoint' | 'mod_remove';
 
 export interface Announcement {
   readonly text: string;
@@ -102,7 +111,7 @@ export interface ShockInput {
 export interface PlayerRow {
   readonly id: number;
   readonly username: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
   readonly createdMs: number;
   readonly cashCents: number;
   readonly netWorthCents: number;
@@ -254,8 +263,8 @@ export class Admin {
   state(query: string): AdminState {
     const { db, world, trading, halts } = this.d;
     const q = query.trim();
-    const rows = db.all<{ id: number; username: string; role: 'player' | 'owner'; created_ms: number; account_id: number; cash_cents: number; coins: number | null }>(
-      `SELECT u.id, u.username, u.role, u.created_ms, a.id AS account_id, a.cash_cents, w.balance_cents AS coins
+    const rows = db.all<{ id: number; username: string; role: Role; created_ms: number; account_id: number; cash_cents: number; coins: number | null }>(
+      `SELECT u.id, u.username, ${roleSql('u')} AS role, u.created_ms, a.id AS account_id, a.cash_cents, w.balance_cents AS coins
          FROM users u JOIN accounts a ON a.user_id = u.id AND a.kind = 'career' LEFT JOIN wallets w ON w.user_id = u.id
         WHERE ? = '' OR u.username LIKE ? ESCAPE '\\' ORDER BY u.id LIMIT 200`,
       q,
@@ -382,8 +391,8 @@ export class Admin {
     return c;
   }
 
-  private userOf(username: unknown): { id: number; username: string; role: 'player' | 'owner' } {
-    const row = typeof username === 'string' ? this.d.db.get<{ id: number; username: string; role: 'player' | 'owner' }>('SELECT id, username, role FROM users WHERE username = ?', username.trim()) : undefined;
+  private userOf(username: unknown): { id: number; username: string; role: Role } {
+    const row = typeof username === 'string' ? this.d.db.get<{ id: number; username: string; role: Role }>(`SELECT u.id, u.username, ${roleSql('u')} AS role FROM users u WHERE u.username = ?`, username.trim()) : undefined;
     if (!row) throw new HttpError(404, 'no_such_user', 'There is no player with that username.');
     return row;
   }
@@ -675,32 +684,94 @@ export class Admin {
   // ---- bans ----------------------------------------------------------------------------------------------------------
 
   /**
+   * Who may do this to whom (docs/world.md §21): a moderator can ban, kick or lift a ban only on an ordinary player. Never on the owner, on another
+   * moderator or on himself. The owner cannot be banned at all, and does not ban himself.
+   */
+  private checkTarget(admin: User, target: { id: number; username: string; role: Role }): void {
+    if (target.role === 'owner' || (target.id === admin.id && admin.role === 'owner')) throw new HttpError(400, 'cannot_ban_owner', 'The owner cannot be banned.');
+    if (target.id === admin.id) throw new HttpError(400, 'cannot_act_on_self', 'You cannot do that to yourself.');
+    if (admin.role !== 'owner' && target.role === 'moderator') throw new HttpError(403, 'cannot_act_on_staff', 'A moderator cannot ban, kick or unban another moderator. Ask the owner.');
+  }
+
+  /** A moderator may not touch a ban or a kick the owner gave; only the owner can change or lift that one. */
+  private checkNotOwners(admin: User, targetId: number): void {
+    if (admin.role === 'owner') return;
+    const by = this.d.auth.banPlacedBy(targetId);
+    if (by === null) return;
+    const placer = this.d.db.get<{ role: string }>('SELECT role FROM users WHERE id = ?', by);
+    if (placer?.role === 'owner') throw new HttpError(403, 'owner_ban', 'The owner gave this one. Only the owner can change or lift it.');
+  }
+
+  /** A moderator can give only so many bans and kicks in an hour. Call inside the transaction, before writing. */
+  private checkModLimit(admin: User): void {
+    if (admin.role === 'owner') return;
+    const since = this.d.now() - 3_600_000;
+    const n = this.d.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM admin_log WHERE admin_user_id = ? AND action IN ('ban', 'kick') AND created_ms > ?", admin.id, since)?.n ?? 0;
+    if (n >= MOD_BANS_PER_HOUR) throw new HttpError(429, 'rate_limited', `You gave ${MOD_BANS_PER_HOUR} bans and kicks in the last hour. That is the most a moderator can give; ask the owner if more is needed.`);
+  }
+
+  /** What follows a ban or a kick: he leaves a lobby or a live match (a live match counts as a forfeit), and his live streams close. */
+  private afterBan(user: { id: number; username: string }, what: string): void {
+    try {
+      this.d.matches.leave(user.id);
+    } catch (error) {
+      this.d.log.warn('admin', `Could not take ${user.username} out of the 1v1 lobby after the ${what}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    this.d.hub.dropUser(user.id);
+  }
+
+  /**
    * Bans a player: he cannot sign in, an old session is treated as signed out on the very next request, his live streams are closed,
    * and a lobby or live 1v1 match he is in is left (a live match counts as a forfeit). His Career account and coins stay as they
-   * are. `hours` is how long (1 – a year); leave it out to ban until the owner lifts it. The owner cannot be banned.
+   * are. `hours` is how long (1 – a year); leave it out to ban until the owner lifts it. The owner cannot be banned. A moderator can ban
+   * only ordinary players, for 1 – 168 hours, and cannot change a ban the owner gave.
    */
   banPlayer(admin: User, input: { requestId: string; username: string; reason?: string; hours?: number | null }): Record<string, unknown> {
-    const { db, auth, matches, hub } = this.d;
+    const { db, auth } = this.d;
     const requestId = this.requestId(input.requestId);
     const user = this.userOf(input.username);
-    if (user.role === 'owner' || user.id === admin.id) throw new HttpError(400, 'cannot_ban_owner', 'The owner cannot be banned.');
+    this.checkTarget(admin, user);
     const reason = cleanText(input.reason, 120, 'The reason');
     const hours = input.hours === undefined || input.hours === null ? null : input.hours;
     if (hours !== null && (typeof hours !== 'number' || !Number.isInteger(hours) || hours < 1 || hours > MAX_BAN_HOURS)) {
       throw new HttpError(400, 'bad_request', `A timed ban lasts a whole number of hours, from 1 to ${MAX_BAN_HOURS}. Leave it out to ban until you lift it.`);
     }
+    if (admin.role !== 'owner' && (hours === null || hours > MOD_MAX_BAN_HOURS)) {
+      throw new HttpError(403, 'ban_too_long', `A moderator can ban for 1 to ${MOD_MAX_BAN_HOURS} hours (7 days). Only the owner bans for longer or until it is lifted.`);
+    }
     if (this.seen(requestId, 'ban', user.username)) return { ok: true, duplicate: true, username: user.username };
+    this.checkNotOwners(admin, user.id);
     const untilMs = hours === null ? null : this.d.now() + hours * 3_600_000;
     db.tx(() => {
-      auth.setBan(user.id, reason, untilMs, admin.id);
+      this.checkModLimit(admin);
+      auth.setBan(user.id, reason, untilMs, admin.id, 'ban');
       this.record(requestId, admin, 'ban', user.username, { reason, hours, untilMs });
     });
-    try {
-      matches.leave(user.id); // leaves a lobby, or forfeits a live match
-    } catch (error) {
-      this.d.log.warn('admin', `Could not take ${user.username} out of the 1v1 lobby after the ban: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    hub.dropUser(user.id);
+    this.afterBan(user, 'ban');
+    return { ok: true, duplicate: false, username: user.username, untilMs };
+  }
+
+  /**
+   * Kicks a player out for a short time: 10 minutes, 1 hour or 1 day. He is signed out at once and cannot sign in until the time is over, and then
+   * he can come back by himself. It works like a short ban (the same things happen to his streams and his match), but he is told he was kicked.
+   */
+  kickPlayer(admin: User, input: { requestId: string; username: string; minutes: number; reason?: string }): Record<string, unknown> {
+    const { db, auth } = this.d;
+    const requestId = this.requestId(input.requestId);
+    const user = this.userOf(input.username);
+    this.checkTarget(admin, user);
+    const minutes = input.minutes;
+    if (!(KICK_MINUTES as readonly unknown[]).includes(minutes)) throw new HttpError(400, 'bad_request', 'A kick lasts 10 minutes, 1 hour or 1 day.');
+    const reason = cleanText(input.reason, 120, 'The reason');
+    if (this.seen(requestId, 'kick', user.username)) return { ok: true, duplicate: true, username: user.username };
+    if (auth.banOf(user.id)) throw new HttpError(409, 'already_banned', `${user.username} is already banned or kicked. Lift that first if you want to give a different one.`);
+    const untilMs = this.d.now() + minutes * 60_000;
+    db.tx(() => {
+      this.checkModLimit(admin);
+      auth.setBan(user.id, reason, untilMs, admin.id, 'kick');
+      this.record(requestId, admin, 'kick', user.username, { reason, minutes, untilMs });
+    });
+    this.afterBan(user, 'kick');
     return { ok: true, duplicate: false, username: user.username, untilMs };
   }
 
@@ -708,12 +779,55 @@ export class Admin {
     const { db, auth } = this.d;
     const requestId = this.requestId(input.requestId);
     const user = this.userOf(input.username);
+    if (admin.role !== 'owner') this.checkTarget(admin, user);
     if (this.seen(requestId, 'unban', user.username)) return { ok: true, duplicate: true, username: user.username };
+    this.checkNotOwners(admin, user.id);
     db.tx(() => {
       if (!auth.clearBan(user.id)) throw new HttpError(400, 'not_banned', `${user.username} is not banned.`);
       this.record(requestId, admin, 'unban', user.username, {});
     });
     return { ok: true, duplicate: false, username: user.username };
+  }
+
+  /** Makes a player a moderator, or takes that away again. Only the owner does this (the route and this method both check). */
+  setModerator(admin: User, input: { requestId: string; username: string; on: boolean }): Record<string, unknown> {
+    const { db, hub } = this.d;
+    if (admin.role !== 'owner') throw new HttpError(403, 'owner_only', 'Only the owner can choose moderators.');
+    const requestId = this.requestId(input.requestId);
+    if (typeof input.on !== 'boolean') throw new HttpError(400, 'bad_request', 'Say whether he becomes a moderator (on: true) or stops being one (on: false).');
+    const user = this.userOf(input.username);
+    const action = input.on ? 'mod_appoint' : 'mod_remove';
+    if (this.seen(requestId, action, user.username)) return { ok: true, duplicate: true, username: user.username, moderator: input.on };
+    if (user.role === 'owner') throw new HttpError(400, 'bad_request', 'The owner is already above a moderator.');
+    const real = db.get('SELECT 1 AS x FROM users u WHERE u.id = ? AND u.pw_hash <> \'bot\' AND NOT EXISTS (SELECT 1 FROM bots b WHERE b.user_id = u.id)', user.id) !== undefined;
+    if (!real) throw new HttpError(400, 'bad_request', 'A computer player cannot be a moderator.');
+    db.tx(() => {
+      if (input.on) {
+        if (user.role === 'moderator') throw new HttpError(409, 'already_moderator', `${user.username} is a moderator already.`);
+        const count = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM moderators')?.n ?? 0;
+        if (count >= MAX_MODERATORS) throw new HttpError(400, 'too_many_moderators', `There can be at most ${MAX_MODERATORS} moderators. Take the badge from one first.`);
+        db.run('INSERT INTO moderators(user_id, appointed_ms, appointed_by) VALUES (?, ?, ?)', user.id, this.d.now(), admin.id);
+      } else {
+        if (db.run('DELETE FROM moderators WHERE user_id = ?', user.id).changes === 0) throw new HttpError(409, 'not_moderator', `${user.username} is not a moderator.`);
+      }
+      this.record(requestId, admin, action, user.username, {});
+    });
+    hub.publishTo(user.id, 'role_changed', { role: input.on ? 'moderator' : 'player' });
+    return { ok: true, duplicate: false, username: user.username, moderator: input.on };
+  }
+
+  /** The list the moderators see to find a player (no money, only who he is and whether he is banned): up to 30 matches, newest account first. */
+  staffPlayers(query: string): { players: { username: string; displayName: string; role: Role; createdMs: number; banned: BanInfo | null }[] } {
+    const q = query.trim().replace(/^@+/, '');
+    const rows = this.d.db.all<{ username: string; display_name: string; role: Role; created_ms: number; id: number }>(
+      `SELECT u.id, u.username, u.display_name, ${roleSql('u')} AS role, u.created_ms
+         FROM users u
+        WHERE u.pw_hash <> 'bot' AND NOT EXISTS (SELECT 1 FROM bots b WHERE b.user_id = u.id) AND (? = '' OR u.username LIKE ? ESCAPE '\\')
+        ORDER BY u.id DESC LIMIT 30`,
+      q,
+      `%${likeEscape(q)}%`,
+    );
+    return { players: rows.map((r) => ({ username: r.username, displayName: r.display_name, role: r.role, createdMs: r.created_ms, banned: this.d.auth.banOf(r.id) })) };
   }
 
   // ---- shares and resets ---------------------------------------------------------------------------------------------

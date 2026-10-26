@@ -8,7 +8,7 @@
 //
 // "Online" means the player has a page open right now (the same thing the friend 1v1 challenges and the calls use).
 
-import type { User } from './auth';
+import { roleSql, type Role, type User } from './auth';
 import type { Db } from './sqlite';
 
 /** The most bytes a picture may have, and the most pixels on a side. The browser makes about 6 KB and 128 pixels. */
@@ -166,11 +166,12 @@ export class Profiles {
     return { ok: true };
   }
 
-  /** The owner takes anybody's picture away. */
+  /** The owner takes anybody's picture away; a moderator takes away the picture of an ordinary player (never the owner's or another moderator's). */
   removeBy(admin: User, input: { requestId: unknown; username: unknown }): { ok: true; duplicate: boolean; username: string } {
     const name = typeof input.username === 'string' ? input.username.trim().replace(/^@+/, '') : '';
-    const target = name === '' || name.length > 40 ? undefined : this.d.db.get<{ id: number; username: string }>('SELECT id, username FROM users WHERE username = ?', name);
+    const target = name === '' || name.length > 40 ? undefined : this.d.db.get<{ id: number; username: string; role: Role }>(`SELECT u.id, u.username, ${roleSql('u')} AS role FROM users u WHERE u.username = ?`, name);
     if (!target) throw new ProfileError('no_such_player', 'There is no player with that username.', 404);
+    if (admin.role !== 'owner' && target.role !== 'player' && target.id !== admin.id) throw new ProfileError('not_allowed', 'A moderator cannot remove the picture of the owner or of another moderator.', 403);
     let duplicate = false;
     let removed = false;
     this.d.db.tx(() => {

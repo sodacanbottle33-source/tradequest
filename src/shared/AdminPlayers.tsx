@@ -6,11 +6,13 @@ import { Avatar } from './Avatar';
 import { useProfiles } from './profileStore';
 import { dollarsToCents, newRequestId, whenText } from './adminUtil';
 import { formatCents } from './format';
+import { banLine } from './modUtil';
+import { RoleBadge } from './RoleBadge';
 import { useShared } from './store';
 import type { AdminPlayer, AdminState } from './types';
 
 type Kind = 'cash' | 'coins' | 'shares';
-type Confirm = { type: 'ban' | 'reset'; id: string } | null;
+type Confirm = { type: 'ban' | 'reset' | 'mod'; id: string } | null;
 const QUICK = ['100', '1,000', '10,000', '100,000', '1,000,000'];
 const QUICK_SHARES = ['10', '100', '1,000', '10,000'];
 const BAN_LENGTHS: { label: string; hours: number | null }[] = [
@@ -26,6 +28,7 @@ function problem(error: unknown): string {
 
 function banText(p: AdminPlayer): string {
   if (!p.banned) return '';
+  if (p.banned.kind === 'kick') return banLine(p.banned);
   return `${p.banned.untilMs === null ? 'Banned until you lift it' : `Banned until ${whenText(p.banned.untilMs)}`}${p.banned.reason ? `: ${p.banned.reason}` : '.'}`;
 }
 
@@ -53,6 +56,7 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
   const validQty = qty !== null && qty > 0 && qty <= 1_000_000;
   const amountOk = kind === 'shares' ? company !== null && validQty : cents !== null;
   const isOwnerRow = player?.role === 'owner';
+  const isModRow = player?.role === 'moderator';
 
   const run = async (fn: () => Promise<string>) => {
     if (busy) return;
@@ -113,6 +117,16 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
       return `${player.username} can sign in again.`;
     });
 
+  /** Makes the player a moderator (after "Yes") or takes the job away again. */
+  const appoint = (on: boolean) =>
+    run(async () => {
+      if (!player) throw new Error('Pick a player first.');
+      const requestId = on && confirm?.type === 'mod' ? confirm.id : newRequestId();
+      await api.adminModerator({ requestId, username: player.username, on });
+      setConfirm(null);
+      return on ? `${player.username} is a moderator now. They were told at once.` : `${player.username} is not a moderator any more.`;
+    });
+
   const reset = () =>
     run(async () => {
       if (!player || confirm?.type !== 'reset') throw new Error('Press "Reset" first.');
@@ -145,7 +159,7 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
                     <button type="button" className="link-btn" onClick={() => choose(p.username)}>
                       <strong>{p.username}</strong>
                     </button>
-                    {p.role === 'owner' && <span className="badge-owner">Owner</span>}
+                    <RoleBadge role={p.role} />
                     {p.banned && (
                       <span className="badge-banned" data-testid={`admin-banned-${p.username}`}>
                         Banned
@@ -245,6 +259,51 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
                 </button>
               </div>
             </fieldset>
+          )}
+        </section>
+
+        <section className="card" aria-label="Moderator" data-testid="admin-moderator">
+          <h2>
+            Moderator <span className="h2-note">{player ? player.username : 'pick a player'}</span>
+          </h2>
+          {!player && <p className="hint">Click a player in the list.</p>}
+          {player && isOwnerRow && <p className="hint">The owner is above a moderator.</p>}
+          {player && !isOwnerRow && isModRow && (
+            <>
+              <p className="hint">
+                {player.username} is a moderator. He can kick and ban ordinary players (a ban is at most 7 days), take away pictures and look after the public chat. He cannot act on you or on another moderator, and he cannot use this panel.
+              </p>
+              <button type="button" className="btn btn-sell" disabled={busy} onClick={() => void appoint(false)} data-testid="admin-mod-remove">
+                Take the moderator job from {player.username}
+              </button>
+            </>
+          )}
+          {player && !isOwnerRow && !isModRow && (
+            <>
+              <p className="hint">
+                A moderator gets a “Mod” tag next to his name and a Moderation page. He can kick and ban ordinary players (a ban is at most 7 days; only you ban for good), take away pictures and look after the public chat. He never sees money or private chats, and cannot
+                act on you or on another moderator. You can take the job away at any time.
+              </p>
+              {confirm?.type === 'mod' ? (
+                <div className="admin-confirm" data-testid="admin-mod-confirm-box">
+                  <p>
+                    Make <strong>{player.username}</strong> a moderator?
+                  </p>
+                  <div className="row-buttons">
+                    <button type="button" className="btn btn-buy" disabled={busy} onClick={() => void appoint(true)} data-testid="admin-mod-confirm">
+                      Yes, make a moderator
+                    </button>
+                    <button type="button" className="btn" disabled={busy} onClick={() => setConfirm(null)} data-testid="admin-mod-cancel">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="btn btn-buy" disabled={busy} onClick={() => setConfirm({ type: 'mod', id: newRequestId() })} data-testid="admin-mod-add">
+                  Make {player.username} a moderator…
+                </button>
+              )}
+            </>
           )}
         </section>
 

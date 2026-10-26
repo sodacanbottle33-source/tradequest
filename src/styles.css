@@ -1797,6 +1797,7 @@ code {
   margin: 6px 0;
 }
 .badge-owner,
+.badge-mod,
 .badge-banned,
 .badge-bankrupt,
 .badge-halted {
@@ -1814,6 +1815,11 @@ code {
 .badge-owner {
   background: var(--accent);
   color: #1a1200;
+}
+/* The tag a moderator wears next to his name: blue, so it is not mistaken for the owner's gold. */
+.badge-mod {
+  background: var(--primary);
+  color: #04132e;
 }
 .badge-halted,
 .badge-banned {
@@ -3628,4 +3634,107 @@ code {
   .tut-option {
     transition: border-color 0.15s ease, background-color 0.15s ease;
   }
+}
+
+/* ---------- Achievement badges (docs/world.md §22) ---------- */
+/* A round medal: the icon on a ring whose colour is its tier. Locked (not earned yet) medals are grey and faded. */
+.badge-icon {
+  --ring: #b7791f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--ring);
+  background: var(--panel-2);
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: help;
+}
+.badge-icon.tier-1 {
+  --ring: #b7791f;
+}
+.badge-icon.tier-2 {
+  --ring: #c0c8d4;
+}
+.badge-icon.tier-3 {
+  --ring: #f5b83d;
+}
+.badge-icon.tier-4 {
+  --ring: #5eead4;
+  box-shadow: 0 0 6px rgba(94, 234, 212, 0.55);
+}
+.badge-icon.large {
+  width: 46px;
+  height: 46px;
+  font-size: 22px;
+  border-width: 3px;
+  flex: none;
+}
+.badge-icon.locked {
+  --ring: #3a4658;
+  filter: grayscale(1);
+  opacity: 0.45;
+  box-shadow: none;
+}
+.badge-row {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.badges-have {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+.badges-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.badges-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.badge-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+.badge-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.badge-card.got {
+  border-color: var(--accent);
+}
+.badge-info {
+  min-width: 0;
+}
+.badge-how {
+  margin: 2px 0;
+}
+.badge-meta {
+  font-size: 12px;
+}
+.badge-tier {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
 }

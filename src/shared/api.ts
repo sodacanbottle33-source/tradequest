@@ -16,6 +16,7 @@ import type {
   AdminSpeed,
   AdminState,
   AdminStyle,
+  BadgesView,
   Book,
   CallSignal,
   CallsReply,
@@ -48,6 +49,7 @@ import type {
   PmThreadPage,
   Relation,
   Resolution,
+  StaffPlayers,
   DrainResult,
   RugResult,
   BoardScope,
@@ -227,7 +229,16 @@ export const api = {
   callsHangup: (callId: string, failed = false) => request<CallsReply>('POST', '/api/calls/hangup', failed ? { callId, failed: true } : { callId }),
   callsSignal: (callId: string, signal: CallSignal) => request<{ ok: boolean }>('POST', '/api/calls/signal', { callId, signal }),
 
-  // Owner only: the server answers 403 to anybody else.
+  // Achievement badges (any signed-in player): every badge, when you got it and how many players have it.
+  badges: () => request<BadgesView>('GET', '/api/badges'),
+
+  // Moderators and the owner (staff): the server answers 403 to an ordinary player, and refuses a moderator anything that touches the owner or another moderator.
+  modPlayers: (q = '') => request<StaffPlayers>('GET', `/api/mod/players${q.trim() === '' ? '' : `?q=${enc(q.trim())}`}`),
+  adminKick: (body: { requestId: string; username: string; minutes: number; reason?: string }) => request<{ ok: boolean; duplicate: boolean; username: string; untilMs: number }>('POST', '/api/admin/kick', body),
+  /** Owner only: choose a moderator (on = true) or take the job away (on = false). */
+  adminModerator: (body: { requestId: string; username: string; on: boolean }) => request<{ ok: boolean; duplicate: boolean; username: string; moderator: boolean }>('POST', '/api/admin/moderator', body),
+
+  // Owner only (the chat tools below are also open to moderators): the server answers 403 to anybody else.
   adminChat: () => request<AdminChatView>('GET', '/api/admin/chat'),
   adminChatDelete: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/chat/delete', body),
   adminChatDismiss: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/chat/dismiss', body),

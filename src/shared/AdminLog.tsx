@@ -25,6 +25,12 @@ function describe(e: Entry): string {
       return `banned ${e.target}${typeof d.hours === 'number' ? ` for ${d.hours} hour${d.hours === 1 ? '' : 's'}` : ' until lifted'}${d.reason ? ` (${String(d.reason)})` : ''}`;
     case 'unban':
       return `lifted the ban on ${e.target}`;
+    case 'kick':
+      return `kicked ${e.target} for ${num('minutes') >= 60 ? (num('minutes') >= 1440 ? `${Math.round(num('minutes') / 1440)} day${num('minutes') === 1440 ? '' : 's'}` : `${Math.round(num('minutes') / 60)} hour${num('minutes') === 60 ? '' : 's'}`) : `${num('minutes')} minutes`}${d.reason ? ` (${String(d.reason)})` : ''}`;
+    case 'mod_appoint':
+      return `made ${e.target} a moderator`;
+    case 'mod_remove':
+      return `took the moderator job from ${e.target}`;
     case 'shares':
       return `${num('qty') >= 0 ? 'gave' : 'took'} ${Math.abs(num('qty')).toLocaleString('en-US')} shares of ${String(d.ticker)} ${num('qty') >= 0 ? 'to' : 'from'} ${e.target}${d.note ? ` (${String(d.note)})` : ''}`;
     case 'reset':

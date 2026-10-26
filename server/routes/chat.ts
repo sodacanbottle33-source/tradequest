@@ -1,7 +1,7 @@
-// The chat room: reading, writing and reporting for every signed-in player; moderation for the owner only. The role is checked here, on
-// the server, for every owner request. What a message may contain, who may write and how fast are decided in server/chat.ts.
+// The chat room: reading, writing and reporting for every signed-in player; moderation for the owner and the moderators. The role is checked here,
+// on the server, for every staff request; what a moderator may do to whom is decided in server/chat.ts. What a message may contain, who may write and how fast are decided in server/chat.ts.
 
-import type { User } from '../auth';
+import { isStaff, type User } from '../auth';
 import { ChatError, CHAT_PAGE } from '../chat';
 import { HttpError, intParam } from '../http';
 import type { Ctx, Router } from '../router';
@@ -30,9 +30,10 @@ export function registerChatRoutes(router: Router, s: Services): void {
     }
   }
 
-  function owner(ctx: Ctx): User {
+  /** The owner or a moderator. */
+  function staff(ctx: Ctx): User {
     const user = ctx.requireUser();
-    if (user.role !== 'owner') throw new HttpError(403, 'owner_only', 'Only the owner can do that.');
+    if (!isStaff(user.role)) throw new HttpError(403, 'staff_only', 'Only the owner or a moderator can do that.');
     return user;
   }
 
@@ -65,39 +66,39 @@ export function registerChatRoutes(router: Router, s: Services): void {
     return guard(() => chat.removeOwn(user, b.messageId));
   });
 
-  // ---- the owner ---------------------------------------------------------------------------------------------------------
+  // ---- the owner and the moderators ---------------------------------------------------------------------------------------------------------
 
   router.get('/api/admin/chat', (ctx) => {
-    owner(ctx);
-    return chat.adminView();
+    const user = staff(ctx);
+    return chat.adminView(user);
   });
 
   router.post('/api/admin/chat/delete', async (ctx) => {
-    const user = owner(ctx);
+    const user = staff(ctx);
     const b = await ctx.body();
     return guard(() => chat.remove(user, { requestId: b.requestId, messageId: b.messageId }));
   });
 
   router.post('/api/admin/chat/dismiss', async (ctx) => {
-    const user = owner(ctx);
+    const user = staff(ctx);
     const b = await ctx.body();
     return guard(() => chat.dismiss(user, { requestId: b.requestId, messageId: b.messageId }));
   });
 
   router.post('/api/admin/chat/mute', async (ctx) => {
-    const user = owner(ctx);
+    const user = staff(ctx);
     const b = await ctx.body();
     return guard(() => chat.mute(user, { requestId: b.requestId, username: b.username, minutes: b.minutes, reason: b.reason }));
   });
 
   router.post('/api/admin/chat/ban', async (ctx) => {
-    const user = owner(ctx);
+    const user = staff(ctx);
     const b = await ctx.body();
     return guard(() => chat.ban(user, { requestId: b.requestId, username: b.username, reason: b.reason }));
   });
 
   router.post('/api/admin/chat/lift', async (ctx) => {
-    const user = owner(ctx);
+    const user = staff(ctx);
     const b = await ctx.body();
     return guard(() => chat.lift(user, { requestId: b.requestId, username: b.username }));
   });

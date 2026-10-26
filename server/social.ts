@@ -11,7 +11,7 @@
 // It is worked out for everybody at once and kept for BOARD_CACHE_MS, so a busy page costs the server one pass over the players every
 // half minute, not one per request. A new player or a new ban shows up at once (the cache notices that the player list changed).
 
-import { START_CASH_CENTS, type User } from './auth';
+import { START_CASH_CENTS, roleSql, type Role, type User } from './auth';
 import type { Db } from './sqlite';
 import type { Trading } from './trading';
 
@@ -58,10 +58,12 @@ export class SocialError extends Error {
 export interface PlayerEntry {
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
   readonly netWorthCents: number | null;
   readonly rank: number | null;
   readonly relation: Relation;
+  /** The player's best achievement badges (at most three, best first; server/badges.ts). */
+  readonly badges: readonly string[];
 }
 
 export interface PlayerPage {
@@ -129,7 +131,7 @@ export interface WeeklyBoard {
 export interface FriendEntry {
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
   readonly netWorthCents: number | null;
   readonly rank: number | null;
   /** When the request was sent (waiting) or accepted (friend). */
@@ -150,6 +152,8 @@ interface Person {
   readonly username: string;
   readonly displayName: string;
   readonly owner: boolean;
+  /** The role the screens show (a moderator is ranked like any player). */
+  readonly role: Role;
   readonly createdMs: number;
   /** Null for the owner. */
   readonly netWorthCents: number | null;
@@ -181,6 +185,8 @@ export interface SocialDeps {
   readonly now: () => number;
   /** Told when something changed for a player that his page should show at once (a request arrived, was accepted, a friend left). */
   readonly notify?: (userId: number) => void;
+  /** The best badges of some players (server/badges.ts); without it the list shows none. */
+  readonly badgesOf?: (userIds: readonly number[]) => Map<number, string[]>;
 }
 
 function pair(a: number, b: number): [number, number] {
@@ -219,7 +225,7 @@ export class Social {
     if (cached && cached.signature === signature && nowMs - cached.atMs < BOARD_CACHE_MS && nowMs >= cached.atMs) return cached;
     const rows = this.d.db.all<{ id: number; username: string; display_name: string; role: string; created_ms: number; account_id: number }>(
       // Real players only: no computer player (the "bots" table, and the hash they carry), nobody who is banned right now.
-      `SELECT u.id, u.username, u.display_name, u.role, u.created_ms, a.id AS account_id
+      `SELECT u.id, u.username, u.display_name, ${roleSql('u')} AS role, u.created_ms, a.id AS account_id
          FROM users u JOIN accounts a ON a.user_id = u.id AND a.kind = 'career'
         WHERE u.pw_hash <> 'bot'
           AND NOT EXISTS (SELECT 1 FROM bots b WHERE b.user_id = u.id)
@@ -236,6 +242,7 @@ export class Social {
         username: r.username,
         displayName: r.display_name,
         owner,
+        role: r.role as Role,
         createdMs: r.created_ms,
         netWorthCents: owner ? null : this.d.trading.view(r.account_id).netWorthCents,
         rank: null,
@@ -402,14 +409,17 @@ export class Social {
     const size = Math.min(Math.max(1, Math.floor(limit) || PLAYERS_PAGE), PLAYERS_PAGE_MAX);
     const start = Math.max(0, Math.floor(offset) || 0);
     const links = new Map(this.links(me.id).map((l) => [l.other, l]));
-    const players = matching.slice(start, start + size).map(
+    const page = matching.slice(start, start + size);
+    const badges = this.d.badgesOf?.(page.map((p) => p.id)) ?? new Map<number, string[]>();
+    const players = page.map(
       (p): PlayerEntry => ({
         username: p.username,
         displayName: p.displayName,
-        role: p.owner ? 'owner' : 'player',
+        role: p.role,
         netWorthCents: p.netWorthCents,
         rank: p.rank,
         relation: this.relationOf(me.id, p.id, links),
+        badges: badges.get(p.id) ?? [],
       }),
     );
     return { players, total: matching.length, offset: start, updatedMs: b.atMs };
@@ -444,7 +454,7 @@ export class Social {
     const make = (l: Link): FriendEntry | null => {
       const p = b.byId.get(l.other);
       if (!p) return null; // banned or gone: not shown (the link stays, so a ban that ends brings the friend back)
-      return { username: p.username, displayName: p.displayName, role: p.owner ? 'owner' : 'player', netWorthCents: p.netWorthCents, rank: p.rank, sinceMs: l.acceptedMs ?? l.createdMs };
+      return { username: p.username, displayName: p.displayName, role: p.role, netWorthCents: p.netWorthCents, rank: p.rank, sinceMs: l.acceptedMs ?? l.createdMs };
     };
     const friends: FriendEntry[] = [];
     const incoming: FriendEntry[] = [];

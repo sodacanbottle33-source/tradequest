@@ -1,7 +1,7 @@
 // Profile pictures and who is online. A picture is shown to every signed-in player; the rules for what is accepted are in server/profile.ts.
-// The role of the owner is checked here for his removal tool.
+// The role of the owner and of the moderators is checked here for the removal tool.
 
-import type { User } from '../auth';
+import { isStaff, type User } from '../auth';
 import { HANDLED } from '../router';
 import { HttpError, readJson } from '../http';
 import { AVATAR_MAX_BYTES, ProfileError } from '../profile';
@@ -23,9 +23,9 @@ export function registerProfileRoutes(router: Router, s: Services): void {
     }
   }
 
-  function owner(ctx: Ctx): User {
+  function staff(ctx: Ctx): User {
     const user = ctx.requireUser();
-    if (user.role !== 'owner') throw new HttpError(403, 'owner_only', 'Only the owner can do that.');
+    if (!isStaff(user.role)) throw new HttpError(403, 'staff_only', 'Only the owner or a moderator can do that.');
     return user;
   }
 
@@ -77,7 +77,7 @@ export function registerProfileRoutes(router: Router, s: Services): void {
   });
 
   router.post('/api/admin/avatar/remove', async (ctx) => {
-    const user = owner(ctx);
+    const user = staff(ctx);
     const b = await ctx.body();
     return guard(() => profiles.removeBy(user, { requestId: b.requestId, username: b.username }));
   });

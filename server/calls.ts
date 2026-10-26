@@ -12,7 +12,7 @@
 //   • only the two players can send signals, only while the call is answered, only the right kind from the right side, and only a few of them;
 //   • the owner cannot listen: there is nothing to listen to, and nothing about a call is stored for him to read.
 
-import type { User } from './auth';
+import { roleSql, type Role, type User } from './auth';
 import type { IceServer } from './config';
 import type { Logger } from './log';
 import { cleanName } from './social';
@@ -46,7 +46,7 @@ export class CallError extends Error {
 export interface PersonRef {
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
 }
 
 /** The call as one of its two players sees it. */
@@ -156,7 +156,7 @@ export class Calls {
 
   // ---- reading -----------------------------------------------------------------------------------------------------
 
-  private personRef(row: { username: string; display_name: string; role: 'player' | 'owner' }): PersonRef {
+  private personRef(row: { username: string; display_name: string; role: Role }): PersonRef {
     return { username: row.username, displayName: row.display_name, role: row.role };
   }
 
@@ -195,7 +195,7 @@ export class Calls {
   /** A real player (no computer player) who is not banned. */
   private find(username: unknown): Target {
     const name = cleanName(username);
-    const row = name === '' || name.length > 40 ? undefined : this.d.db.get<{ id: number; username: string; display_name: string; role: 'player' | 'owner' }>('SELECT id, username, display_name, role FROM users WHERE username = ?', name);
+    const row = name === '' || name.length > 40 ? undefined : this.d.db.get<{ id: number; username: string; display_name: string; role: Role }>(`SELECT u.id, u.username, u.display_name, ${roleSql('u')} AS role FROM users u WHERE u.username = ?`, name);
     if (!row || this.d.db.get('SELECT 1 AS x FROM bots WHERE user_id = ?', row.id) || this.d.isBanned(row.id)) {
       throw new CallError('no_such_player', name === '' ? 'Type the name of a friend.' : `There is no player called "${name}".`, 404);
     }

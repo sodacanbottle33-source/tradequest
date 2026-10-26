@@ -13,7 +13,13 @@ export function Notices() {
 
   return (
     <>
-      {s.banned && (
+      {s.banned && s.banned.kind === 'kick' && (
+        <p className="notice error" role="alert" data-testid="banned-notice">
+          You were kicked out for a short time{s.banned.untilMs !== null ? ` (until ${whenText(s.banned.untilMs)})` : ''}
+          {s.banned.reason ? `: ${s.banned.reason}.` : '.'} You can still look at the market. You can sign in and trade again after that.
+        </p>
+      )}
+      {s.banned && s.banned.kind !== 'kick' && (
         <p className="notice error" role="alert" data-testid="banned-notice">
           Your account is banned{s.banned.untilMs !== null ? ` until ${whenText(s.banned.untilMs)}` : ''}
           {s.banned.reason ? `: ${s.banned.reason}.` : '.'} You can still look at the market, but you cannot sign in or trade{s.banned.untilMs !== null ? ' until then' : ''}.

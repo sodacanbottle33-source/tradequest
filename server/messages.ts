@@ -14,7 +14,7 @@
 // Only the members of a conversation can read it. The owner cannot: he sees only what a player REPORTS (that message and the few before it,
 // copied at the time of the report), in the admin panel, and can close the report. Only the newest PM_KEEP messages of a conversation are kept.
 
-import type { User } from './auth';
+import { roleSql, type Role, type User } from './auth';
 import { CHAT_BURST, CHAT_BURST_MS, CHAT_MAX_LENGTH, MIN_GAP_MS, NEW_ACCOUNT_WAIT_MS, REPEAT_MS, cleanMessage, waitText } from './chat';
 import type { Logger } from './log';
 import { cleanName } from './social';
@@ -79,7 +79,7 @@ export class MessageError extends Error {
 export interface PersonRef {
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
 }
 
 export interface PrivateMessage {
@@ -87,7 +87,7 @@ export interface PrivateMessage {
   readonly conversationId: number;
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
   readonly text: string;
   readonly createdMs: number;
 }
@@ -234,7 +234,7 @@ interface MessageRow {
   conversation_id: number;
   username: string;
   display_name: string;
-  role: 'player' | 'owner';
+  role: Role;
   body: string;
   created_ms: number;
 }
@@ -248,7 +248,7 @@ interface UserLite {
   readonly id: number;
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
 }
 
 type Check = { readonly ok: true } | { readonly ok: false; readonly code: MessageErrorCode; readonly message: string };
@@ -260,7 +260,7 @@ const VISIBLE = `m.id > cm.since_id
   AND NOT EXISTS (SELECT 1 FROM user_bans ub WHERE ub.user_id = m.user_id AND (ub.until_ms IS NULL OR ub.until_ms > ?))`;
 
 const pair = (a: number, b: number): [number, number] => (a < b ? [a, b] : [b, a]);
-const ref = (u: { username: string; display_name: string; role: 'player' | 'owner' }): PersonRef => ({ username: u.username, displayName: u.display_name, role: u.role });
+const ref = (u: { username: string; display_name: string; role: Role }): PersonRef => ({ username: u.username, displayName: u.display_name, role: u.role });
 
 export class Messages {
   constructor(private readonly d: MessagesDeps) {}
@@ -297,7 +297,7 @@ export class Messages {
   private findUser(username: unknown): UserLite {
     if (typeof username !== 'string') throw new MessageError('bad_request', 'username must be the name of a player.', 400);
     const name = cleanName(username);
-    const row = name === '' || name.length > 40 ? undefined : this.d.db.get<{ id: number; username: string; display_name: string; role: 'player' | 'owner' }>('SELECT id, username, display_name, role FROM users WHERE username = ?', name);
+    const row = name === '' || name.length > 40 ? undefined : this.d.db.get<{ id: number; username: string; display_name: string; role: Role }>(`SELECT u.id, u.username, u.display_name, ${roleSql('u')} AS role FROM users u WHERE u.username = ?`, name);
     if (!row || this.d.db.get('SELECT 1 AS x FROM bots WHERE user_id = ?', row.id) || this.d.isBanned(row.id)) {
       throw new MessageError('no_such_player', name === '' ? 'Type the name of a player.' : `There is no player called "${name}".`, 404);
     }
@@ -305,7 +305,7 @@ export class Messages {
   }
 
   private userById(id: number): UserLite | undefined {
-    const row = this.d.db.get<{ id: number; username: string; display_name: string; role: 'player' | 'owner' }>('SELECT id, username, display_name, role FROM users WHERE id = ?', id);
+    const row = this.d.db.get<{ id: number; username: string; display_name: string; role: Role }>(`SELECT u.id, u.username, u.display_name, ${roleSql('u')} AS role FROM users u WHERE u.id = ?`, id);
     return row ? { id: row.id, username: row.username, displayName: row.display_name, role: row.role } : undefined;
   }
 
@@ -373,8 +373,8 @@ export class Messages {
     const now = this.d.now();
     const ids = rows.map((r) => r.id);
     const marks = ids.map(() => '?').join(',');
-    const people = this.d.db.all<{ conversation_id: number; state: 'member' | 'invited'; id: number; username: string; display_name: string; role: 'player' | 'owner'; banned: number }>(
-      `SELECT cm.conversation_id, cm.state, u.id, u.username, u.display_name, u.role,
+    const people = this.d.db.all<{ conversation_id: number; state: 'member' | 'invited'; id: number; username: string; display_name: string; role: Role; banned: number }>(
+      `SELECT cm.conversation_id, cm.state, u.id, u.username, u.display_name, ${roleSql('u')} AS role,
               EXISTS (SELECT 1 FROM user_bans ub WHERE ub.user_id = u.id AND (ub.until_ms IS NULL OR ub.until_ms > ?)) AS banned
          FROM conversation_members cm JOIN users u ON u.id = cm.user_id
         WHERE cm.conversation_id IN (${marks}) ORDER BY cm.joined_ms, u.id`,
@@ -395,7 +395,7 @@ export class Messages {
         .map((r) => [r.cid, r.n] as const),
     );
     const lastRows = this.d.db.all<MessageRow>(
-      `SELECT lm.id, lm.conversation_id, u.username, u.display_name, u.role, lm.body, lm.created_ms
+      `SELECT lm.id, lm.conversation_id, u.username, u.display_name, ${roleSql('u')} AS role, lm.body, lm.created_ms
          FROM private_messages lm JOIN users u ON u.id = lm.user_id
         WHERE lm.id IN (SELECT MAX(m.id) FROM private_messages m JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ?
                          WHERE m.conversation_id IN (${marks}) AND ${VISIBLE} GROUP BY m.conversation_id)`,
@@ -515,7 +515,7 @@ export class Messages {
     if (!conversation) throw new MessageError('no_such_conversation', 'That conversation is not there.', 404);
     const size = Math.min(Math.max(1, Math.floor(limit) || PM_PAGE), PM_PAGE_MAX);
     const rows = this.d.db.all<MessageRow>(
-      `SELECT m.id, m.conversation_id, u.username, u.display_name, u.role, m.body, m.created_ms
+      `SELECT m.id, m.conversation_id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms
          FROM private_messages m JOIN users u ON u.id = m.user_id JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ?
         WHERE m.conversation_id = ? ${beforeId === undefined ? '' : 'AND m.id < ?'} AND ${VISIBLE}
         ORDER BY m.id DESC LIMIT ?`,
@@ -868,7 +868,7 @@ export class Messages {
     const id = this.idOf(messageId, 'messageId');
     const now = this.d.now();
     const msg = this.d.db.get<MessageRow & { author_id: number }>(
-      `SELECT m.id, m.conversation_id, m.user_id AS author_id, u.username, u.display_name, u.role, m.body, m.created_ms
+      `SELECT m.id, m.conversation_id, m.user_id AS author_id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms
          FROM private_messages m JOIN users u ON u.id = m.user_id JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ? AND cm.state = 'member'
         WHERE m.id = ? AND ${VISIBLE}`,
       me.id,
@@ -881,7 +881,7 @@ export class Messages {
     const recent = this.d.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM private_reports WHERE reporter_id = ? AND created_ms > ?', me.id, now - 3_600_000)?.n ?? 0;
     if (recent >= PM_REPORTS_PER_HOUR) throw new MessageError('rate_limited', 'You have sent a lot of reports. Wait a while before sending more.', 429);
     const before = this.d.db.all<MessageRow>(
-      `SELECT m.id, m.conversation_id, u.username, u.display_name, u.role, m.body, m.created_ms
+      `SELECT m.id, m.conversation_id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms
          FROM private_messages m JOIN users u ON u.id = m.user_id JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ?
         WHERE m.conversation_id = ? AND m.id < ? AND ${VISIBLE} ORDER BY m.id DESC LIMIT ?`,
       me.id,

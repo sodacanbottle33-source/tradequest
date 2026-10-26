@@ -8,9 +8,11 @@
 //     just to spam;
 //   • players can report a message; the owner sees the open reports in the admin panel, and can delete a message, mute a player for a while,
 //     ban a player from the chat, or lift either. Each of those is written once to the admin log. Muting and banning never touch playing.
+//   • moderators (docs/world.md §21) share these tools for ordinary players only: they cannot act on the owner, on another moderator or on
+//     themselves, mute for at most 7 days, ban from the chat never (only the owner does, for good), and cannot lift what the owner decided.
 // Only the newest CHAT_KEEP messages are kept.
 
-import type { User } from './auth';
+import { roleSql, type Role, type User } from './auth';
 import { cleanName } from './social';
 import type { Logger } from './log';
 import type { Db } from './sqlite';
@@ -34,6 +36,8 @@ export const REPEAT_MS = 60_000;
 export const REPORTS_PER_HOUR = 20;
 /** The longest mute: 30 days. */
 export const MAX_MUTE_MINUTES = 60 * 24 * 30;
+/** The longest mute a moderator can give: 7 days (docs/world.md §21). Only the owner mutes for longer or bans from the chat for good. */
+export const MOD_MAX_MUTE_MINUTES = 60 * 24 * 7;
 
 export class ChatError extends Error {
   constructor(
@@ -50,6 +54,9 @@ export class ChatError extends Error {
       | 'no_such_player'
       | 'rate_limited'
       | 'cannot_moderate_owner'
+      | 'cannot_moderate_staff'
+      | 'owner_decision'
+      | 'ban_too_long'
       | 'already_banned'
       | 'not_restricted',
     message: string,
@@ -63,7 +70,7 @@ export interface ChatMessage {
   readonly id: number;
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
   readonly text: string;
   readonly createdMs: number;
 }
@@ -106,6 +113,8 @@ export interface ChatRestrictionEntry {
   readonly reason: string;
   readonly sinceMs: number;
   readonly by: string;
+  /** True when the owner gave it: a moderator cannot lift or change it. */
+  readonly byOwner: boolean;
 }
 
 export interface AdminChatView {
@@ -129,7 +138,7 @@ interface MessageRow {
   id: number;
   username: string;
   display_name: string;
-  role: 'player' | 'owner';
+  role: Role;
   body: string;
   created_ms: number;
 }
@@ -205,7 +214,7 @@ export class Chat {
     const size = Math.min(Math.max(1, Math.floor(limit) || CHAT_PAGE), CHAT_PAGE_MAX);
     const now = this.d.now();
     const rows = this.d.db.all<MessageRow>(
-      `SELECT m.id, u.username, u.display_name, u.role, m.body, m.created_ms
+      `SELECT m.id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms
          FROM chat_messages m JOIN users u ON u.id = m.user_id
         WHERE m.deleted_ms IS NULL ${beforeId === undefined ? '' : 'AND m.id < ?'}
           AND NOT EXISTS (SELECT 1 FROM user_bans b WHERE b.user_id = m.user_id AND (b.until_ms IS NULL OR b.until_ms > ?))
@@ -247,7 +256,7 @@ export class Chat {
   report(me: User, messageId: unknown): void {
     const id = this.messageId(messageId);
     const now = this.d.now();
-    const msg = this.d.db.get<{ user_id: number; role: 'player' | 'owner' }>('SELECT m.user_id, u.role FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.id = ? AND m.deleted_ms IS NULL', id);
+    const msg = this.d.db.get<{ user_id: number; role: Role }>(`SELECT m.user_id, ${roleSql('u')} AS role FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.id = ? AND m.deleted_ms IS NULL`, id);
     if (!msg) throw new ChatError('no_such_message', 'That message is gone.', 404);
     if (msg.user_id === me.id) throw new ChatError('bad_request', 'That is your own message.', 400);
     if (msg.role === 'owner') throw new ChatError('bad_request', 'Messages of the owner cannot be reported.', 400);
@@ -279,18 +288,33 @@ export class Chat {
 
   // ---- the owner's tools -------------------------------------------------------------------------------------------
 
-  private playerOf(username: unknown): { id: number; username: string; displayName: string; role: 'player' | 'owner' } {
+  private playerOf(username: unknown): { id: number; username: string; displayName: string; role: Role } {
     const name = cleanName(username);
-    const row = name === '' || name.length > 40 ? undefined : this.d.db.get<{ id: number; username: string; display_name: string; role: 'player' | 'owner' }>('SELECT id, username, display_name, role FROM users WHERE username = ?', name);
+    const row = name === '' || name.length > 40 ? undefined : this.d.db.get<{ id: number; username: string; display_name: string; role: Role }>(`SELECT u.id, u.username, u.display_name, ${roleSql('u')} AS role FROM users u WHERE u.username = ?`, name);
     if (!row) throw new ChatError('no_such_player', 'There is no player with that username.', 404);
     return { id: row.id, username: row.username, displayName: row.display_name, role: row.role };
+  }
+
+  /** A moderator works on ordinary players only: never on the owner's or another moderator's messages, mutes or bans (docs/world.md §21). */
+  private staffOnlyOwner(admin: User, target: { id: number; role: Role; displayName?: string }, what: string): void {
+    if (admin.role === 'owner') return;
+    if (target.id === admin.id) throw new ChatError('cannot_moderate_staff', `You cannot ${what} yourself.`, 400);
+    if (target.role !== 'player') throw new ChatError('cannot_moderate_staff', `A moderator cannot ${what} the owner or another moderator. Ask the owner.`, 403);
+  }
+
+  /** A moderator may not change or lift a mute or ban that the owner gave. */
+  private notOwners(admin: User, targetId: number): void {
+    if (admin.role === 'owner') return;
+    const by = this.d.db.get<{ role: string }>('SELECT b.role FROM chat_restrictions cr JOIN users b ON b.id = cr.by_user_id WHERE cr.user_id = ?', targetId);
+    if (by?.role === 'owner') throw new ChatError('owner_decision', 'The owner gave this one. Only the owner can change or lift it.', 403);
   }
 
   /** Removes a message for everybody and closes the reports about it. */
   remove(admin: User, input: { requestId: unknown; messageId: unknown }): { ok: true; duplicate: boolean } {
     const id = this.messageId(input.messageId);
-    const msg = this.d.db.get<{ deleted_ms: number | null; username: string }>('SELECT m.deleted_ms, u.username FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.id = ?', id);
+    const msg = this.d.db.get<{ deleted_ms: number | null; username: string; user_id: number; role: Role }>(`SELECT m.deleted_ms, u.username, m.user_id, ${roleSql('u')} AS role FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.id = ?`, id);
     if (!msg) throw new ChatError('no_such_message', 'That message is gone.', 404);
+    if (admin.role !== 'owner' && msg.user_id !== admin.id) this.staffOnlyOwner(admin, { id: msg.user_id, role: msg.role }, 'delete a message of');
     const now = this.d.now();
     let duplicate = false;
     this.d.db.tx(() => {
@@ -308,7 +332,9 @@ export class Chat {
   /** Closes the reports about a message without removing it. */
   dismiss(admin: User, input: { requestId: unknown; messageId: unknown }): { ok: true; duplicate: boolean } {
     const id = this.messageId(input.messageId);
-    if (!this.d.db.get('SELECT 1 AS x FROM chat_messages WHERE id = ?', id)) throw new ChatError('no_such_message', 'That message is gone.', 404);
+    const author = this.d.db.get<{ user_id: number; role: Role }>(`SELECT m.user_id, ${roleSql('u')} AS role FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.id = ?`, id);
+    if (!author) throw new ChatError('no_such_message', 'That message is gone.', 404);
+    if (admin.role !== 'owner' && author.user_id !== admin.id) this.staffOnlyOwner(admin, { id: author.user_id, role: author.role }, 'close a report about');
     let duplicate = false;
     this.d.db.tx(() => {
       if (!this.d.audit(admin, input.requestId, 'chat_dismiss', `message ${id}`, { messageId: id })) {
@@ -323,11 +349,16 @@ export class Chat {
   /** Stops a player from writing for `minutes`. He can still read and play. */
   mute(admin: User, input: { requestId: unknown; username: unknown; minutes: unknown; reason?: unknown }): { ok: true; duplicate: boolean; username: string; untilMs: number } {
     const target = this.playerOf(input.username);
-    if (target.role === 'owner' || target.id === admin.id) throw new ChatError('cannot_moderate_owner', 'The owner cannot be muted.', 400);
+    if (target.role === 'owner' || (target.id === admin.id && admin.role === 'owner')) throw new ChatError('cannot_moderate_owner', 'The owner cannot be muted.', 400);
+    this.staffOnlyOwner(admin, target, 'mute');
     const minutes = input.minutes;
     if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > MAX_MUTE_MINUTES) {
       throw new ChatError('bad_request', `A mute lasts a whole number of minutes, from 1 to ${MAX_MUTE_MINUTES.toLocaleString('en-US')} (30 days). For longer, ban the player from the chat.`, 400);
     }
+    if (admin.role !== 'owner' && minutes > MOD_MAX_MUTE_MINUTES) {
+      throw new ChatError('ban_too_long', `A moderator can mute for at most ${MOD_MAX_MUTE_MINUTES.toLocaleString('en-US')} minutes (7 days). Only the owner mutes for longer.`, 403);
+    }
+    this.notOwners(admin, target.id);
     const reason = cleanReason(input.reason);
     if (this.restriction(target.id)?.kind === 'ban') throw new ChatError('already_banned', `${target.displayName} is banned from the chat. Lift that first if you want a timed mute instead.`, 409);
     const now = this.d.now();
@@ -354,7 +385,8 @@ export class Chat {
   /** Stops a player from writing until the owner lifts it. */
   ban(admin: User, input: { requestId: unknown; username: unknown; reason?: unknown }): { ok: true; duplicate: boolean; username: string } {
     const target = this.playerOf(input.username);
-    if (target.role === 'owner' || target.id === admin.id) throw new ChatError('cannot_moderate_owner', 'The owner cannot be banned from the chat.', 400);
+    if (target.role === 'owner' || (target.id === admin.id && admin.role === 'owner')) throw new ChatError('cannot_moderate_owner', 'The owner cannot be banned from the chat.', 400);
+    if (admin.role !== 'owner') throw new ChatError('ban_too_long', 'Only the owner bans from the chat for good. A moderator can mute for up to 7 days.', 403);
     const reason = cleanReason(input.reason);
     const now = this.d.now();
     let duplicate = false;
@@ -378,6 +410,10 @@ export class Chat {
   /** Lets a muted or banned player write again. */
   lift(admin: User, input: { requestId: unknown; username: unknown }): { ok: true; duplicate: boolean; username: string } {
     const target = this.playerOf(input.username);
+    if (admin.role !== 'owner') {
+      this.staffOnlyOwner(admin, target, 'lift a mute of');
+      this.notOwners(admin, target.id);
+    }
     let duplicate = false;
     this.d.db.tx(() => {
       if (!this.d.audit(admin, input.requestId, 'chat_lift', target.username, {})) {
@@ -391,22 +427,25 @@ export class Chat {
   }
 
   /** What the admin panel shows: the open reports (newest first) and everybody who is muted or banned right now. */
-  adminView(): AdminChatView {
+  adminView(viewer: User): AdminChatView {
     const now = this.d.now();
+    const owner = viewer.role === 'owner';
     this.d.db.run("DELETE FROM chat_restrictions WHERE kind = 'mute' AND until_ms <= ?", now);
     const reports = this.d.db.all<{ message_id: number; body: string; created_ms: number; username: string; display_name: string; reporters: number; first_ms: number; kind: 'mute' | 'ban' | null }>(
       `SELECT m.id AS message_id, m.body, m.created_ms, u.username, u.display_name, COUNT(r.id) AS reporters, MIN(r.created_ms) AS first_ms, cr.kind
          FROM chat_reports r JOIN chat_messages m ON m.id = r.message_id JOIN users u ON u.id = m.user_id LEFT JOIN chat_restrictions cr ON cr.user_id = u.id
         WHERE r.resolved_ms IS NULL AND (m.deleted_ms IS NULL OR m.deleted_by = m.user_id)
+          AND (? OR (u.role <> 'owner' AND NOT EXISTS (SELECT 1 FROM moderators mo WHERE mo.user_id = u.id)))
         GROUP BY m.id ORDER BY first_ms DESC, m.id DESC LIMIT 100`,
+      owner ? 1 : 0,
     );
-    const restricted = this.d.db.all<{ username: string; display_name: string; kind: 'mute' | 'ban'; until_ms: number | null; reason: string; created_ms: number; by: string }>(
-      `SELECT u.username, u.display_name, cr.kind, cr.until_ms, cr.reason, cr.created_ms, b.username AS by
+    const restricted = this.d.db.all<{ username: string; display_name: string; kind: 'mute' | 'ban'; until_ms: number | null; reason: string; created_ms: number; by: string; by_owner: number }>(
+      `SELECT u.username, u.display_name, cr.kind, cr.until_ms, cr.reason, cr.created_ms, b.username AS by, (b.role = 'owner') AS by_owner
          FROM chat_restrictions cr JOIN users u ON u.id = cr.user_id JOIN users b ON b.id = cr.by_user_id ORDER BY cr.created_ms DESC LIMIT 200`,
     );
     return {
       reports: reports.map((r) => ({ messageId: r.message_id, text: r.body, username: r.username, displayName: r.display_name, createdMs: r.created_ms, reporters: r.reporters, firstReportedMs: r.first_ms, restriction: r.kind })),
-      restricted: restricted.map((r) => ({ username: r.username, displayName: r.display_name, kind: r.kind, untilMs: r.until_ms, reason: r.reason, sinceMs: r.created_ms, by: r.by })),
+      restricted: restricted.map((r) => ({ username: r.username, displayName: r.display_name, kind: r.kind, untilMs: r.until_ms, reason: r.reason, sinceMs: r.created_ms, by: r.by, byOwner: r.by_owner === 1 })),
     };
   }
 }

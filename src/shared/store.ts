@@ -7,6 +7,7 @@ import { CallController, type ControllerDeps } from './callController';
 import { describeLimitEvent } from './limitText';
 import { describeNotice, type ToastText } from './positionNotice';
 import { browserVoiceDeps, VoiceSession } from './voice';
+import { badgeById } from './badgeCatalog';
 import { logoStore } from './logoStore';
 import { profileStore } from './profileStore';
 import type { Account, Announcement, BanNotice, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
@@ -95,8 +96,10 @@ export interface SharedState {
   /** True when the server has 1v1 bots turned on (the page then offers "Play a bot now"). */
   readonly bots: boolean;
   readonly walletCents: number;
-  /** Pop-ups about positions closed by liquidation, stop-loss or take-profit, newest last. */
+  /** Pop-ups about positions closed by liquidation, stop-loss or take-profit (and new badges), newest last. */
   readonly toasts: readonly Toast[];
+  /** Counts up each time the server says this player earned a badge, so an open Badges page asks again. */
+  readonly badgesVersion: number;
 }
 
 const INITIAL: SharedState = {
@@ -132,6 +135,7 @@ const INITIAL: SharedState = {
   bots: true,
   walletCents: 0,
   toasts: [],
+  badgesVersion: 0,
 };
 
 const MAX_NEWS = 400;
@@ -281,6 +285,10 @@ export class SharedStore {
     es.addEventListener('chat', (e) => this.addChatMessage((JSON.parse((e as MessageEvent<string>).data) as { message: ChatMessage }).message));
     es.addEventListener('chat_removed', (e) => this.removeChatMessage((JSON.parse((e as MessageEvent<string>).data) as { id: number }).id));
     es.addEventListener('chat_status', () => void this.refreshChat());
+    // The owner made this player a moderator, or took the job away: bring the role up to date (the menu and pages follow it) and say so.
+    es.addEventListener('role_changed', (e) => this.onRoleChanged(JSON.parse((e as MessageEvent<string>).data) as { role: string }));
+    // This player earned one or more achievement badges.
+    es.addEventListener('badges', (e) => this.onBadges(JSON.parse((e as MessageEvent<string>).data) as { earned: string[] }));
     // A player set or removed his profile picture.
     es.addEventListener('avatar', (e) => profileStore.onAvatar(JSON.parse((e as MessageEvent<string>).data) as { username: string; v: number | null }));
     // A launcher or the owner set or removed the picture of a stock or memecoin.
@@ -333,6 +341,22 @@ export class SharedStore {
   noteLimit(n: LimitNotice): void {
     this.showToast(n.order.ticker, describeLimitEvent(n.what, n.order), TOAST_MS);
     void this.refreshPrivate(false);
+  }
+
+  /** The server gave this player one or more badges: say which, and make an open Badges page ask again. */
+  private onBadges(d: { earned: string[] }): void {
+    const named = d.earned.map((id) => badgeById(id)).filter((b) => b !== undefined);
+    this.set({ badgesVersion: this.state.badgesVersion + 1 });
+    if (named.length === 0) return;
+    const text = named.map((b) => `${b.icon} ${b.name}`).join(' · ');
+    this.showToast('', { tone: 'good', title: named.length === 1 ? 'New badge' : `${named.length} new badges`, text: `${text}. See them in Players → Badges.` }, TOAST_MS);
+  }
+
+  /** The owner made this player a moderator (or took it away). */
+  private onRoleChanged(d: { role: string }): void {
+    void this.recheckMe();
+    if (d.role === 'moderator') this.showToast('', { tone: 'good', title: 'You are a moderator now', text: 'The owner chose you. Open Moderation in your profile menu (top right).' }, TOAST_MS);
+    else this.showToast('', { tone: 'neutral', title: 'You are not a moderator any more', text: 'The owner took the moderator job away.' }, TOAST_MS);
   }
 
   /** Shows a pop-up for a position the market closed; it goes away by itself after `ms` milliseconds. */

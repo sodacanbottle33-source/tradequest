@@ -7,15 +7,19 @@ import { Avatar, OnlineDot, useOnlineWatch } from './Avatar';
 import { newRequestId } from './adminUtil';
 import { MUTE_CHOICES, lengthOf, timeLabel, waitWords } from './chatUtil';
 import { problemText } from './playersUtil';
+import { RoleBadge } from './RoleBadge';
 import { sharedStore, useShared } from './store';
 import type { ChatMessage } from './types';
 
-function Line({ message, mine, isOwner, reported, onReport, onNote }: { message: ChatMessage; mine: boolean; isOwner: boolean; reported: boolean; onReport: (id: number) => void; onNote: (text: string) => void }) {
+function Line({ message, mine, isOwner, isStaff, reported, onReport, onNote }: { message: ChatMessage; mine: boolean; isOwner: boolean; isStaff: boolean; reported: boolean; onReport: (id: number) => void; onNote: (text: string) => void }) {
   const [asking, setAsking] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [moderating, setModerating] = useState(false);
   const [busy, setBusy] = useState(false);
-  const canReport = !mine && message.role !== 'owner' && !isOwner;
+  // Staff do not report ordinary players (they act on them), but a moderator can report another moderator's message: only the owner can act on that.
+  const canReport = !mine && message.role !== 'owner' && (!isStaff || (!isOwner && message.role === 'moderator'));
+  // A moderator can moderate ordinary players only; the owner can moderate everybody.
+  const canModerate = isStaff && !mine && (isOwner || message.role === 'player');
   const moderate = async (what: string, fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
@@ -38,7 +42,7 @@ function Line({ message, mine, isOwner, reported, onReport, onNote }: { message:
           <OnlineDot username={message.username} />
         </span>
         <strong>{who}</strong>
-        {message.role === 'owner' && <span className="badge-owner">Owner</span>}
+        <RoleBadge role={message.role} />
         <span className="muted">{timeLabel(message.createdMs)}</span>
         <span className="chat-tools">
           {!mine && (
@@ -71,7 +75,7 @@ function Line({ message, mine, isOwner, reported, onReport, onNote }: { message:
             </>
           )}
           {canReport && reported && <span className="muted">Reported</span>}
-          {isOwner && !mine && (
+          {canModerate && (
             <button type="button" className="link-btn" onClick={() => setModerating((m) => !m)} aria-expanded={moderating} data-testid={`moderate-${message.id}`}>
               {moderating ? 'Close' : 'Moderate'}
             </button>
@@ -109,7 +113,7 @@ function Line({ message, mine, isOwner, reported, onReport, onNote }: { message:
         </span>
       </div>
       <p className="chat-text">{message.text}</p>
-      {isOwner && !mine && moderating && (
+      {canModerate && moderating && (
         <div className="chat-mod" role="group" aria-label={`Moderate ${who}`}>
           <button type="button" className="btn btn-small btn-sell" disabled={busy} onClick={() => void moderate('Message deleted.', () => api.adminChatDelete({ requestId: newRequestId(), messageId: message.id }))} data-testid={`mod-delete-${message.id}`}>
             Delete message
@@ -126,9 +130,11 @@ function Line({ message, mine, isOwner, reported, onReport, onNote }: { message:
               Mute {c.label}
             </button>
           ))}
-          <button type="button" className="btn btn-small btn-sell" disabled={busy} onClick={() => void moderate(`${who} is banned from the chat.`, () => api.adminChatBan({ requestId: newRequestId(), username: message.username }))} data-testid={`mod-ban-${message.id}`}>
-            Ban from chat
-          </button>
+          {isOwner && (
+            <button type="button" className="btn btn-small btn-sell" disabled={busy} onClick={() => void moderate(`${who} is banned from the chat.`, () => api.adminChatBan({ requestId: newRequestId(), username: message.username }))} data-testid={`mod-ban-${message.id}`}>
+              Ban from chat
+            </button>
+          )}
         </div>
       )}
     </li>
@@ -175,7 +181,7 @@ export function ChatScreen() {
     setReported((old) => new Set(old).add(id));
     try {
       await api.chatReport(id);
-      setNote('Thank you. The owner will look at that message.');
+      setNote('Thank you. The owner and the moderators will look at that message.');
     } catch (e) {
       setReported((old) => {
         const next = new Set(old);
@@ -188,6 +194,7 @@ export function ChatScreen() {
 
   if (!user) return <AuthPanel />;
   const isOwner = user.role === 'owner';
+  const isStaff = isOwner || user.role === 'moderator';
   if (!chat) {
     return (
       <section className="card" aria-label="Chat">
@@ -256,7 +263,7 @@ export function ChatScreen() {
       >
         {chat.messages.length === 0 && <li className="hint">Nobody has written yet. Say hello!</li>}
         {chat.messages.map((m) => (
-          <Line key={m.id} message={m} mine={m.username === user.username} isOwner={isOwner} reported={reported.has(m.id)} onReport={(id) => void report(id)} onNote={setNote} />
+          <Line key={m.id} message={m} mine={m.username === user.username} isOwner={isOwner} isStaff={isStaff} reported={reported.has(m.id)} onReport={(id) => void report(id)} onNote={setNote} />
         ))}
       </ul>
       {note && (
@@ -295,7 +302,7 @@ export function ChatScreen() {
       </form>
       <p className="hint">
         Be kind. Messages are plain text. Spam is slowed down: at most one message every {Math.round(chat.limits.minGapMs / 100) / 10} seconds, and you cannot repeat yourself. Press Report on a message that breaks the rules; the owner
-        can remove messages and stop players from writing.
+        and the moderators can remove messages and stop players from writing.
       </p>
     </section>
   );

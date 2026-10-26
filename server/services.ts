@@ -2,6 +2,7 @@
 
 import type { Admin } from './admin';
 import type { Auth, User } from './auth';
+import type { Badges } from './badges';
 import type { Bankruptcies } from './bankruptcy';
 import type { Calls } from './calls';
 import type { Challenges } from './challenges';
@@ -64,6 +65,8 @@ export interface Services {
   readonly profiles: Profiles;
   /** Pictures for stocks and memecoins (server/companyPictures.ts). */
   readonly companyPictures: CompanyPictures;
+  /** Achievement badges: who earned which, given by a sweep every little while (server/badges.ts). */
+  readonly badges: Badges;
   /** The tutorial's saved progress and the practice lessons with their optional AI teacher (server/learn.ts). */
   readonly learn: Learn;
   /** Companies that went bankrupt, and the daily check that decides if another one does (server/bankruptcy.ts). */

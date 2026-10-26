@@ -8,6 +8,7 @@ import { AdminMarket } from './AdminMarket';
 import { AdminPlayers } from './AdminPlayers';
 import { AdminLaunches } from './AdminLaunches';
 import { AdminStocks } from './AdminStocks';
+import { RoleBadge } from './RoleBadge';
 import type { AdminState } from './types';
 
 type Tab = 'market' | 'players' | 'stocks' | 'launches' | 'chat' | 'log';
@@ -53,7 +54,7 @@ export function AdminScreen() {
     <div className="admin-screen" data-testid="admin-screen">
       <section className="card admin-banner">
         <h2>
-          Admin panel <span className="badge-owner">Owner</span>
+          Admin panel <RoleBadge role="owner" />
         </h2>
         <p className="hint">These tools change the live market for every player. Price moves cannot be undone. Everything you do is written to the log.</p>
       </section>

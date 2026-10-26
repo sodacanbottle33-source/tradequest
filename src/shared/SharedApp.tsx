@@ -15,6 +15,7 @@ import { LearnScreen } from './LearnScreen';
 import { learnSeen } from './learnUtil';
 import { LobbyScreen } from './LobbyScreen';
 import { MarketScreen } from './MarketScreen';
+import { ModScreen } from './ModScreen';
 import { MessagesScreen } from './MessagesScreen';
 import { pmBadge } from './messagesUtil';
 import { NewsList } from './NewsList';
@@ -99,6 +100,11 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
   useEffect(() => {
     if (mode === 'admin' && s.authChecked && !isOwner) onMode('career');
   }, [mode, s.authChecked, isOwner, onMode]);
+  // The moderators' page belongs to the moderators the owner chose. If the player is not one (any more), leave it.
+  const isMod = s.user?.role === 'moderator';
+  useEffect(() => {
+    if (mode === 'mod' && s.authChecked && !isMod) onMode('career');
+  }, [mode, s.authChecked, isMod, onMode]);
 
   // A friend said yes (or you did): the lobby of the two of you opens on the 1v1 screen once, wherever you were.
   const friendLobbyId = s.match?.friendMatch && s.match.phase === 'ready_check' ? s.match.id : 0;
@@ -144,8 +150,12 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
             onMode('admin');
             window.scrollTo?.(0, 0);
           }}
+          onMod={() => {
+            onMode('mod');
+            window.scrollTo?.(0, 0);
+          }}
           onLoggedOut={() => {
-            if (mode === 'admin') onMode('career');
+            if (mode === 'admin' || mode === 'mod') onMode('career');
           }}
         />
       </Header>
@@ -263,6 +273,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
         {shown === 'battle' && <LobbyScreen onGoSignIn={goSignIn} jump={matchJump} onJumpDone={() => setMatchJump(null)} />}
         {shown === 'news' && <NewsScreen onTicker={openCompany} />}
         {mode === 'admin' && isOwner && <AdminScreen />}
+        {mode === 'mod' && isMod && <ModScreen />}
       </main>
 
       <footer className="footer">

@@ -303,7 +303,7 @@ describe('pictures for stocks and memecoins', () => {
     ]);
     const m24 = MIGRATIONS.find((m) => m.version === 24);
     expect(m24?.sql).toContain('CREATE TABLE company_pictures');
-    expect(MIGRATIONS[MIGRATIONS.length - 1]?.version).toBe(24);
+    expect(MIGRATIONS[MIGRATIONS.length - 1]?.version).toBeGreaterThanOrEqual(24);
     const src = await import('node:fs').then((fs) => fs.readFileSync(join(process.cwd(), 'server', 'routes', 'companyPictures.ts'), 'utf8'));
     for (const path of ['/api/company-pictures', '/api/company-picture/:ticker', '/api/company-picture/:ticker/rights', '/api/company-picture/:ticker/remove']) expect(src).toContain(`'${path}'`);
   }, LONG);

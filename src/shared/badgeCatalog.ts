@@ -1,0 +1,83 @@
+// The achievement badges (docs/world.md §22): what each one is called, what it takes to get it, and how rare it is meant to be. This file is only
+// data: the server decides who has earned which badge (server/badges.ts has one rule for each id here), and the screens only show what the server says.
+// A badge is for fun. It gives no money and changes no price.
+
+export type BadgeGroup = 'trading' | 'launching' | 'social' | 'learning';
+
+/** 1 = bronze, 2 = silver, 3 = gold, 4 = diamond. A higher tier is harder to get, and is shown first next to a player's name. */
+export type BadgeTier = 1 | 2 | 3 | 4;
+
+export interface BadgeDef {
+  readonly id: string;
+  readonly group: BadgeGroup;
+  readonly tier: BadgeTier;
+  /** One character (an emoji) that is drawn inside the badge. */
+  readonly icon: string;
+  readonly name: string;
+  /** The sentence that says how to get it. */
+  readonly how: string;
+}
+
+export const BADGE_GROUPS: readonly { readonly id: BadgeGroup; readonly label: string }[] = [
+  { id: 'trading', label: 'Trading and money' },
+  { id: 'launching', label: 'Launching' },
+  { id: 'social', label: 'Friends and chat' },
+  { id: 'learning', label: 'Learn and matches' },
+];
+
+export const TIER_NAMES: readonly string[] = ['', 'Bronze', 'Silver', 'Gold', 'Diamond'];
+
+/** How many badges are shown next to a player's name in the Players list. */
+export const BADGES_SHOWN = 3;
+
+export const BADGES: readonly BadgeDef[] = [
+  // ---- trading and money
+  { id: 'first_trade', group: 'trading', tier: 1, icon: '🛒', name: 'First Trade', how: 'Make your first trade in your Career account.' },
+  { id: 'trades_10', group: 'trading', tier: 1, icon: '📈', name: 'Getting Busy', how: 'Make 10 trades in your Career account.' },
+  { id: 'trades_100', group: 'trading', tier: 2, icon: '🔥', name: 'Market Regular', how: 'Make 100 trades in your Career account.' },
+  { id: 'first_profit', group: 'trading', tier: 1, icon: '💵', name: 'In the Green', how: 'Sell something for more than you paid for it.' },
+  { id: 'limit_filled', group: 'trading', tier: 1, icon: '⏱️', name: 'Patient Trader', how: 'Have a limit order fill.' },
+  { id: 'profit_1k', group: 'trading', tier: 2, icon: '💰', name: 'Doubled Up', how: 'Grow your Career account by $1,000, which doubles the starting money.' },
+  { id: 'profit_10k', group: 'trading', tier: 3, icon: '🐋', name: 'Big Fish', how: 'Grow your Career account by $10,000.' },
+  { id: 'profit_100k', group: 'trading', tier: 4, icon: '💎', name: 'Whale', how: 'Grow your Career account by $100,000.' },
+  // ---- launching
+  { id: 'launch_stock', group: 'launching', tier: 2, icon: '🏢', name: 'Founder', how: 'Launch a stock of your own.' },
+  { id: 'launch_coin', group: 'launching', tier: 2, icon: '🪙', name: 'Coin Minter', how: 'Launch a memecoin of your own.' },
+  { id: 'company_logo', group: 'launching', tier: 1, icon: '🎨', name: 'Brand Builder', how: 'Give a stock or memecoin you launched a picture.' },
+  { id: 'first_investor', group: 'launching', tier: 2, icon: '🤝', name: 'First Investor', how: 'Another player buys a company you launched.' },
+  { id: 'ten_investors', group: 'launching', tier: 3, icon: '🌟', name: 'Crowd Favourite', how: 'Ten different players buy the same company you launched.' },
+  // ---- friends and chat
+  { id: 'welcome', group: 'social', tier: 1, icon: '👋', name: 'Welcome!', how: 'Create your TradeQuest account.' },
+  { id: 'first_friend', group: 'social', tier: 1, icon: '🧑‍🤝‍🧑', name: 'Friendly', how: 'Make your first friend.' },
+  { id: 'five_friends', group: 'social', tier: 2, icon: '🎉', name: 'Popular', how: 'Have 5 friends.' },
+  { id: 'first_group', group: 'social', tier: 1, icon: '💬', name: 'Group Chat', how: 'Join a private group chat.' },
+  { id: 'first_chat', group: 'social', tier: 1, icon: '🗣️', name: 'Say Hi', how: 'Write a message in the public chat.' },
+  { id: 'profile_pic', group: 'social', tier: 1, icon: '📸', name: 'Say Cheese', how: 'Choose a profile picture.' },
+  { id: 'week_one', group: 'social', tier: 1, icon: '📅', name: 'One Week In', how: 'Have your account for 7 days.' },
+  { id: 'month_one', group: 'social', tier: 2, icon: '🗓️', name: 'One Month In', how: 'Have your account for 30 days.' },
+  // ---- learn and matches
+  { id: 'first_lesson', group: 'learning', tier: 1, icon: '📚', name: 'Student', how: 'Finish a lesson in Learn.' },
+  { id: 'lessons_10', group: 'learning', tier: 2, icon: '🎓', name: 'Quick Learner', how: 'Finish 10 lessons in Learn.' },
+  { id: 'lessons_50', group: 'learning', tier: 3, icon: '🧠', name: 'Scholar', how: 'Finish 50 lessons in Learn.' },
+  { id: 'streak_5', group: 'learning', tier: 2, icon: '⚡', name: 'On a Roll', how: 'Get 5 lessons right in a row in Learn.' },
+  { id: 'tutorial_done', group: 'learning', tier: 2, icon: '🧭', name: 'Tutorial Graduate', how: 'Finish every step of the tutorial.' },
+  { id: 'first_match', group: 'learning', tier: 1, icon: '⚔️', name: 'Challenger', how: 'Play a 1v1 match to the end.' },
+  { id: 'first_win', group: 'learning', tier: 2, icon: '🏅', name: 'Victory!', how: 'Win a 1v1 match.' },
+  { id: 'wins_5', group: 'learning', tier: 3, icon: '🥇', name: 'Champion', how: 'Win 5 1v1 matches.' },
+];
+
+const BY_ID = new Map(BADGES.map((b) => [b.id, b]));
+
+export function badgeById(id: string): BadgeDef | undefined {
+  return BY_ID.get(id);
+}
+
+/** The best of the badges a player has: highest tier first, then in the order of this list; at most `limit`. Ids this version does not know are left out. */
+export function bestBadges(ids: readonly string[], limit: number = BADGES_SHOWN): string[] {
+  const have = new Set(ids);
+  return BADGES.filter((b) => have.has(b.id))
+    .map((b, order) => ({ b, order }))
+    .sort((x, y) => y.b.tier - x.b.tier || x.order - y.order)
+    .slice(0, limit)
+    .map((x) => x.b.id);
+}

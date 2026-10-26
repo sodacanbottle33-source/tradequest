@@ -57,7 +57,7 @@ export function AccountScreen({ onOpen }: { onOpen: (ticker: string) => void }) 
       <section className="card" aria-label="Career account">
         <div className="row-between">
           <h2>
-            {user.displayName} <span className="h2-note">Career account{user.role === 'owner' ? ' · owner' : ''}</span>
+            {user.displayName} <span className="h2-note">Career account{user.role === 'owner' ? ' · owner' : user.role === 'moderator' ? ' · moderator' : ''}</span>
           </h2>
           <button type="button" className="btn btn-small btn-ghost" onClick={() => void sharedStore.signOut()}>
             Sign out

@@ -8,6 +8,7 @@ import { CallButton } from './CallBar';
 import { lengthOf, timeLabel, waitWords } from './chatUtil';
 import { friendsToInvite, membersLine } from './messagesUtil';
 import { problemText } from './playersUtil';
+import { RoleBadge } from './RoleBadge';
 import { sharedStore, useShared } from './store';
 import type { PmMessage, PmThreadPage } from './types';
 
@@ -57,7 +58,7 @@ function Line({ message, mine, reported, onReport, onDelete }: { message: PmMess
           <OnlineDot username={message.username} />
         </span>
         <strong>{message.displayName}</strong>
-        {message.role === 'owner' && <span className="badge-owner">Owner</span>}
+        <RoleBadge role={message.role} />
         <span className="muted">{timeLabel(message.createdMs)}</span>
         <span className="chat-tools">
           {canReport && !reported && !asking && (

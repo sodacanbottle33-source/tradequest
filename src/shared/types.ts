@@ -1,11 +1,14 @@
 // What the TradeQuest server sends (see server/routes and docs/world.md §8). The browser only displays these; it never decides
 // a price, a fill, a balance, who is in a lobby or who won.
 
+/** What a player is: an ordinary player, a moderator the owner chose (docs/world.md §21), or the owner. */
+export type Role = 'player' | 'moderator' | 'owner';
+
 export interface User {
   readonly id: number;
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
 }
 
 export interface OverviewRow {
@@ -436,6 +439,8 @@ export interface TradingPause {
 export interface BanNotice {
   readonly reason: string;
   readonly untilMs: number | null;
+  /** A kick is a short ban a moderator gives; the page then says "kicked" and that signing in works again soon. */
+  readonly kind?: 'ban' | 'kick';
 }
 
 // ---- the owner's admin panel (only the owner's browser ever asks for these) ---------------------------------------------
@@ -446,13 +451,25 @@ export type AdminSpeed = 'instant' | 'fast' | 'slow';
 export interface AdminPlayer {
   readonly id: number;
   readonly username: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
   readonly createdMs: number;
   readonly cashCents: number;
   readonly netWorthCents: number;
   readonly coinsCents: number;
   /** The ban in force right now, or null. */
-  readonly banned: { reason: string; bannedMs: number; untilMs: number | null } | null;
+  readonly banned: { reason: string; bannedMs: number; untilMs: number | null; kind?: 'ban' | 'kick' } | null;
+}
+
+/** One line of the moderators' player search: names and whether the player is banned. No money (moderators never see that). */
+export interface StaffPlayer {
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: Role;
+  readonly createdMs: number;
+  readonly banned: { reason: string; bannedMs: number; untilMs: number | null; kind?: 'ban' | 'kick' } | null;
+}
+export interface StaffPlayers {
+  readonly players: readonly StaffPlayer[];
 }
 
 /** A company the owner made. */
@@ -785,10 +802,12 @@ export type Relation = 'you' | 'friend' | 'outgoing' | 'incoming' | 'none';
 export interface PlayerEntry {
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
   readonly netWorthCents: number | null;
   readonly rank: number | null;
   readonly relation: Relation;
+  /** The player's best badges (at most three, best first): ids from the badge list. */
+  readonly badges: readonly string[];
 }
 
 export interface PlayerPage {
@@ -853,7 +872,7 @@ export interface WeeklyBoard {
 export interface FriendEntry {
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
   readonly netWorthCents: number | null;
   readonly rank: number | null;
   readonly sinceMs: number;
@@ -894,7 +913,7 @@ export interface ChatMessage {
   readonly id: number;
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
   readonly text: string;
   readonly createdMs: number;
 }
@@ -933,6 +952,8 @@ export interface AdminChatRestriction {
   readonly reason: string;
   readonly sinceMs: number;
   readonly by: string;
+  /** True when the owner decided it: a moderator cannot lift it. */
+  readonly byOwner?: boolean;
 }
 
 export interface AdminChatView {
@@ -945,7 +966,7 @@ export interface AdminChatView {
 export interface PmPerson {
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
 }
 
 export interface PmMessage {
@@ -953,7 +974,7 @@ export interface PmMessage {
   readonly conversationId: number;
   readonly username: string;
   readonly displayName: string;
-  readonly role: 'player' | 'owner';
+  readonly role: Role;
   readonly text: string;
   readonly createdMs: number;
 }
@@ -1102,4 +1123,19 @@ export interface CallState {
   readonly muted: boolean;
   /** The time on this page's clock when the sound started to flow. */
   readonly connectedAt: number | null;
+}
+
+// ---- achievement badges (server/badges.ts) ------------------------------------------------------------------------------------
+
+/** One line of the Badges page: when this player got the badge (null = not yet) and how many players have it. */
+export interface BadgeLine {
+  readonly id: string;
+  readonly earnedMs: number | null;
+  readonly owners: number;
+}
+
+export interface BadgesView {
+  readonly badges: readonly BadgeLine[];
+  /** How many real players there are, so the page can say "12% of players". */
+  readonly players: number;
 }

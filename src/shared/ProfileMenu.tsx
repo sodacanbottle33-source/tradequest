@@ -1,13 +1,14 @@
 // The profile button at the top right, like the one in Claude: click it and a small menu opens. Signed out it offers "Log in" and
 // "Create account" (the form opens in a window on top of the page); signed in it shows who you are and offers "My account",
-// the Admin panel (only for the owner) and "Log out". Whether somebody is the owner is decided by the server; this menu only
-// shows what the server said.
+// the Admin panel (only for the owner), "Moderation" (only for a moderator the owner chose) and "Log out". Whether somebody is the
+// owner or a moderator is decided by the server; this menu only shows what the server said.
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
 import { PICK_TYPES, shrinkPicture } from './avatarUtil';
 import { avatarUrl, useProfiles } from './profileStore';
 import { problemText } from './playersUtil';
+import { RoleBadge } from './RoleBadge';
 import { ringtoneOn, setRingtoneOn } from './ringtone';
 import { sharedStore, useShared } from './store';
 
@@ -16,6 +17,8 @@ interface Props {
   onAccount: () => void;
   /** Open the admin panel (offered to the owner only). */
   onAdmin: () => void;
+  /** Open the moderators' page (offered to moderators only). */
+  onMod: () => void;
   /** Called after the player logged out, so the screen can leave pages that need a login. */
   onLoggedOut: () => void;
 }
@@ -140,7 +143,7 @@ function AuthDialog({ mode, onClose }: { mode: 'login' | 'register'; onClose: ()
   );
 }
 
-export function ProfileMenu({ onAccount, onAdmin, onLoggedOut }: Props) {
+export function ProfileMenu({ onAccount, onAdmin, onMod, onLoggedOut }: Props) {
   const { user } = useShared();
   const [open, setOpen] = useState(false);
   const [dialog, setDialog] = useState<'login' | 'register' | null>(null);
@@ -177,6 +180,7 @@ export function ProfileMenu({ onAccount, onAdmin, onLoggedOut }: Props) {
 
   const initial = (user?.displayName ?? '?').slice(0, 1).toUpperCase();
   const isOwner = user?.role === 'owner';
+  const isMod = user?.role === 'moderator';
 
   const moveFocus = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -236,11 +240,7 @@ export function ProfileMenu({ onAccount, onAdmin, onLoggedOut }: Props) {
                   <strong data-testid="menu-name">{user.displayName}</strong>
                   <span className="muted">@{user.username}</span>
                 </div>
-                {isOwner && (
-                  <span className="badge-owner" data-testid="owner-badge">
-                    Owner
-                  </span>
-                )}
+                {user && <RoleBadge role={user.role} testId={isOwner ? 'owner-badge' : 'mod-badge'} />}
               </div>
               <button type="button" role="menuitem" className="menu-item" onClick={choose(onAccount)} data-testid="menu-account">
                 My account
@@ -248,6 +248,11 @@ export function ProfileMenu({ onAccount, onAdmin, onLoggedOut }: Props) {
               {isOwner && (
                 <button type="button" role="menuitem" className="menu-item" onClick={choose(onAdmin)} data-testid="menu-admin">
                   Admin panel
+                </button>
+              )}
+              {isMod && (
+                <button type="button" role="menuitem" className="menu-item" onClick={choose(onMod)} data-testid="menu-mod">
+                  Moderation
                 </button>
               )}
               <PictureTools username={user.username} />

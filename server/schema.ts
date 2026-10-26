@@ -929,6 +929,35 @@ CREATE TABLE company_pictures (
 );
 `,
   },
+  {
+    version: 25,
+    name: 'moderators and achievement badges',
+    sql: `
+-- Moderators (server/moderation.ts, docs/world.md §21). The owner chooses them in the admin panel. They are kept in their own table, not in
+-- users.role (whose CHECK only allows 'player' and 'owner' and cannot be changed without rebuilding the table everything points at), and the
+-- program turns "owner, else listed here, else player" into the role every other part sees. The server setting for the owner is never touched by
+-- this table: a moderator row does nothing for a player who is the owner. "appointed_by" is empty if that player is deleted.
+CREATE TABLE moderators (
+  user_id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  appointed_ms INTEGER NOT NULL,
+  appointed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- A short ban that a moderator (or the owner) gave to kick a player out for a while: 'kick' signs him out and keeps him out for 10 minutes to a day,
+-- then he can come back by himself. Everything about a ban works the same way for both kinds; the kind only changes what the player is told.
+ALTER TABLE user_bans ADD COLUMN kind TEXT NOT NULL DEFAULT 'ban' CHECK (kind IN ('ban', 'kick'));
+
+-- Achievement badges (server/badges.ts, docs/world.md §22): which badge a player has and when he got it. The list of badges and the rule for each
+-- one are in the program, not here, so adding a badge never needs a migration. A badge is never taken back.
+CREATE TABLE user_badges (
+  user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  badge     TEXT NOT NULL CHECK (length(badge) BETWEEN 1 AND 40),
+  earned_ms INTEGER NOT NULL,
+  PRIMARY KEY (user_id, badge)
+) WITHOUT ROWID;
+CREATE INDEX user_badges_by_badge ON user_badges(badge);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

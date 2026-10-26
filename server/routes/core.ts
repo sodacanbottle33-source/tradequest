@@ -41,7 +41,7 @@ export function registerCoreRoutes(router: Router, s: Services): void {
   router.get('/api/me', (ctx) => {
     if (ctx.user) return { user: publicUser(ctx.user) };
     const ban = auth.banOfSession(ctx.token);
-    return { user: null, ...(ban ? { banned: { reason: ban.reason, untilMs: ban.untilMs } } : {}) };
+    return { user: null, ...(ban ? { banned: { reason: ban.reason, untilMs: ban.untilMs, kind: ban.kind } } : {}) };
   });
 
   router.post('/api/auth/register', async (ctx) => {

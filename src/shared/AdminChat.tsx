@@ -1,5 +1,8 @@
 // The "Chat" tab of the admin panel: the messages players reported, and everybody who is muted or banned from the chat. The owner can also
 // moderate straight from the Chat screen (Moderate on a message). Every action is written once to the admin log.
+// The same tab is the Chat section of the moderators' page (`staff`): a moderator sees the same public-chat reports (not those about the owner or other
+// moderators, and never the private-chat reports), can delete, mute for up to 7 days and close reports, but cannot ban from the chat for good or lift
+// what the owner decided.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api';
 import { newRequestId, whenText } from './adminUtil';
@@ -7,7 +10,7 @@ import { MUTE_CHOICES } from './chatUtil';
 import { problemText } from './playersUtil';
 import type { AdminChatView, AdminPrivateView } from './types';
 
-export function AdminChat() {
+export function AdminChat({ staff = false }: { staff?: boolean }) {
   const [view, setView] = useState<AdminChatView | null>(null);
   const [priv, setPriv] = useState<AdminPrivateView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -15,13 +18,14 @@ export function AdminChat() {
 
   const load = useCallback(async () => {
     try {
-      const [chat, reports] = await Promise.all([api.adminChat(), api.adminPrivateReports()]);
+      // Private-chat reports are the owner's alone; a moderator's page never asks for them.
+      const [chat, reports] = await Promise.all([api.adminChat(), staff ? Promise.resolve(null) : api.adminPrivateReports()]);
       setView(chat);
       setPriv(reports);
     } catch (e) {
       setMessage({ kind: 'error', text: problemText(e) });
     }
-  }, []);
+  }, [staff]);
   useEffect(() => {
     void load();
     const id = setInterval(() => void load(), 5000);
@@ -100,9 +104,11 @@ export function AdminChat() {
                             Mute {c.label}
                           </button>
                         ))}
-                        <button type="button" className="btn btn-small btn-sell" disabled={busy} onClick={() => void run(`${r.displayName} is banned from the chat.`, () => api.adminChatBan({ requestId: newRequestId(), username: r.username }))} data-testid={`admin-chat-ban-${r.messageId}`}>
-                          Ban from chat
-                        </button>
+                        {!staff && (
+                          <button type="button" className="btn btn-small btn-sell" disabled={busy} onClick={() => void run(`${r.displayName} is banned from the chat.`, () => api.adminChatBan({ requestId: newRequestId(), username: r.username }))} data-testid={`admin-chat-ban-${r.messageId}`}>
+                            Ban from chat
+                          </button>
+                        )}
                         <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => void run('Report closed.', () => api.adminChatDismiss({ requestId: newRequestId(), messageId: r.messageId }))} data-testid={`admin-chat-dismiss-${r.messageId}`}>
                           Dismiss
                         </button>
@@ -116,6 +122,7 @@ export function AdminChat() {
         )}
       </section>
 
+      {!staff && (
       <section className="card" aria-label="Reported private messages" data-testid="admin-private">
         <h2>
           Reported private messages <span className="h2-note">{priv ? priv.reports.length : ''}</span>
@@ -157,6 +164,7 @@ export function AdminChat() {
         )}
         <p className="hint">The highlighted line is the one that was reported. Dismissing a report only closes it. To act on a player, ban him from the game (Players tab) or from the public chat (above); neither stops anyone from reading their own private chats.</p>
       </section>
+      )}
 
       <section className="card" aria-label="Muted and banned">
         <h2>
@@ -181,13 +189,19 @@ export function AdminChat() {
                   <tr key={x.username} data-testid={`admin-chat-restricted-${x.username}`}>
                     <td>{x.displayName}</td>
                     <td>{x.kind === 'ban' ? 'Banned' : 'Muted'}</td>
-                    <td>{x.untilMs === null ? 'until you lift it' : whenText(x.untilMs)}</td>
+                    <td>{x.untilMs === null ? (staff ? 'until the owner lifts it' : 'until you lift it') : whenText(x.untilMs)}</td>
                     <td>{x.reason || '—'}</td>
                     <td>{x.by}</td>
                     <td className="num">
-                      <button type="button" className="btn btn-small" disabled={busy} onClick={() => void run(`${x.displayName} can write again.`, () => api.adminChatLift({ requestId: newRequestId(), username: x.username }))} data-testid={`admin-chat-lift-${x.username}`}>
-                        Let them write again
-                      </button>
+                      {staff && x.byOwner ? (
+                        <span className="muted" data-testid={`admin-chat-owner-decision-${x.username}`}>
+                          The owner decided this
+                        </span>
+                      ) : (
+                        <button type="button" className="btn btn-small" disabled={busy} onClick={() => void run(`${x.displayName} can write again.`, () => api.adminChatLift({ requestId: newRequestId(), username: x.username }))} data-testid={`admin-chat-lift-${x.username}`}>
+                          Let them write again
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

@@ -294,7 +294,7 @@ describe('the player list', () => {
     expect((await call(r, '/api/leaderboard?scope=everything', { cookie: zed })).status).toBe(400);
   }, LONG);
 
-  it('SOCIAL-9: other players see a name, a place and a net worth, nothing more', async () => {
+  it('SOCIAL-9: other players see a name, a place, a net worth and a few badge icons, nothing more', async () => {
     const r = await boot();
     const alice = await signUp(r, 'alice');
     const bob = await signUp(r, 'bob');
@@ -302,7 +302,7 @@ describe('the player list', () => {
     later(r);
     const keys = (o: object): string[] => Object.keys(o).sort();
     const list = (await call(r, '/api/players', { cookie: bob })).json;
-    for (const p of list.players) expect(keys(p)).toEqual(['displayName', 'netWorthCents', 'rank', 'relation', 'role', 'username']);
+    for (const p of list.players) expect(keys(p)).toEqual(['badges', 'displayName', 'netWorthCents', 'rank', 'relation', 'role', 'username']);
     const b = await board(r, bob);
     for (const x of b.rows) expect(keys(x)).toEqual(['displayName', 'netWorthCents', 'rank', 'relation', 'username']);
     const f = await friends(r, bob);

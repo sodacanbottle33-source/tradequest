@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react';
 
 /**
- * The three places of the game: your Career, the 1v1 battles, and the news. The owner's admin panel is a fourth screen that
- * is reached only from the profile menu, so it has no button here.
+ * The three places of the game: your Career, the 1v1 battles, and the news. The owner's panel and the moderators' page are two more
+ * screens that are reached only from the profile menu, so they have no button here.
  */
-export type Mode = 'career' | 'battle' | 'news' | 'admin';
+export type Mode = 'career' | 'battle' | 'news' | 'admin' | 'mod';
 
-const MODES: readonly { id: Exclude<Mode, 'admin'>; label: string }[] = [
+const MODES: readonly { id: Exclude<Mode, 'admin' | 'mod'>; label: string }[] = [
   { id: 'career', label: 'Career' },
   { id: 'battle', label: '1v1' },
   { id: 'news', label: 'News' },

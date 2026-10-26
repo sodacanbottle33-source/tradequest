@@ -5,14 +5,17 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
 import { Avatar, OnlineDot, useOnlineWatch } from './Avatar';
+import { BadgeRow } from './BadgeIcon';
+import { BadgesScreen } from './BadgesScreen';
 import { CallButton } from './CallBar';
 import { ChallengeButton, useChallengeActions } from './Challenges';
 import { clockTime, formatCents } from './format';
 import { problemText, relationLabel, shownText, standingText } from './playersUtil';
+import { RoleBadge } from './RoleBadge';
 import { sharedStore, useShared } from './store';
-import type { BoardScope, FriendAction, FriendEntry, Leaderboard, PlayerEntry, Relation, WeeklyBoard } from './types';
+import type { BoardScope, FriendAction, FriendEntry, Leaderboard, PlayerEntry, Relation, Role, WeeklyBoard } from './types';
 
-type View = 'board' | 'weekly' | 'friends' | 'find';
+type View = 'board' | 'weekly' | 'friends' | 'find' | 'badges';
 
 /** Sends one friend action and hands the lists the server answered with to the store. */
 function useFriendActions() {
@@ -36,7 +39,7 @@ function useFriendActions() {
 }
 type Actions = ReturnType<typeof useFriendActions>;
 
-function Who({ name, username, role, you }: { name: string; username: string; role: 'player' | 'owner'; you?: boolean }) {
+function Who({ name, username, role, you, badges }: { name: string; username: string; role: Role; you?: boolean; badges?: readonly string[] }) {
   return (
     <>
       <span className="pfp-wrap" style={{ marginRight: 8 }}>
@@ -45,7 +48,8 @@ function Who({ name, username, role, you }: { name: string; username: string; ro
       </span>
       <strong>{name}</strong>
       {you && <span className="muted"> (you)</span>}
-      {role === 'owner' && <span className="badge-owner">Owner</span>}
+      <RoleBadge role={role} />
+      <BadgeRow ids={badges} />
     </>
   );
 }
@@ -595,7 +599,7 @@ function FindPanel() {
               {rows.map((p) => (
                 <tr key={p.username} data-username={p.username} className={p.relation === 'you' ? 'row-selected' : undefined}>
                   <td>
-                    <Who name={p.displayName} username={p.username} role={p.role} you={p.relation === 'you'} />
+                    <Who name={p.displayName} username={p.username} role={p.role} you={p.relation === 'you'} badges={p.badges} />
                   </td>
                   <td className="num mono">{p.netWorthCents === null ? '—' : formatCents(p.netWorthCents)}</td>
                   <td className="num">{p.rank === null ? '—' : `#${p.rank.toLocaleString('en-US')}`}</td>
@@ -632,6 +636,7 @@ export function PlayersScreen() {
     ['weekly', 'This week'],
     ['friends', 'Friends'],
     ['find', 'Find players'],
+    ['badges', 'Badges'],
   ];
   return (
     <div className="players-layout">
@@ -651,6 +656,7 @@ export function PlayersScreen() {
       {view === 'weekly' && <WeeklyPanel isOwner={user.role === 'owner'} />}
       {view === 'friends' && <FriendsPanel onFind={() => setView('find')} />}
       {view === 'find' && <FindPanel />}
+      {view === 'badges' && <BadgesScreen />}
     </div>
   );
 }

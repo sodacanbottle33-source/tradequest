@@ -10,9 +10,7 @@ export function Toasts() {
       {toasts.map((t) => (
         <div key={t.id} className={`toast ${t.tone}`} role="alert" data-testid="toast" data-tone={t.tone}>
           <div className="toast-body">
-            <strong className="toast-title">
-              {t.title}: {t.ticker}
-            </strong>
+            <strong className="toast-title">{t.ticker ? `${t.title}: ${t.ticker}` : t.title}</strong>
             <span className="toast-text">{t.text}</span>
           </div>
           <button type="button" className="btn btn-small btn-ghost" aria-label="Close this alert" onClick={() => sharedStore.dismissToast(t.id)}>

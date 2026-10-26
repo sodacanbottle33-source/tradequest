@@ -24,6 +24,7 @@ import { LimitOrders } from './limitOrders';
 import { MarketBots } from './marketBots';
 import { MarketSignals } from './marketSignals';
 import { MatchService } from './lobby/service';
+import { Badges } from './badges';
 import { Learn } from './learn';
 import { Messages } from './messages';
 import { Bankruptcies } from './bankruptcy';
@@ -44,6 +45,7 @@ import { registerLimitRoutes } from './routes/limits';
 import { registerNewsRoutes } from './routes/news';
 import { registerChatRoutes } from './routes/chat';
 import { registerLearnRoutes } from './routes/learn';
+import { registerBadgeRoutes } from './routes/badges';
 import { registerCompanyPictureRoutes } from './routes/companyPictures';
 import { registerProfileRoutes } from './routes/profile';
 import { registerCallRoutes } from './routes/calls';
@@ -286,10 +288,13 @@ export function createApp(options: AppOptions): App {
     isBanned: (userId) => auth.banOf(userId) !== null,
     publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
   });
+  // Achievement badges: a sweep gives them out every little while (see start() below), and a player's own page asks for a fresh look when he opens it.
+  const badges = new Badges({ db, now, publishTo: (userId, event, data) => hub.publishTo(userId, event, data), profitOf: (accountId) => trading.view(accountId).profitCents });
   const social = new Social({
     db,
     trading,
     now,
+    badgesOf: (ids) => badges.best(ids),
     notify: (userId) => {
       hub.publishTo(userId, 'friends', {});
       calls.recheck(userId);
@@ -395,6 +400,7 @@ export function createApp(options: AppOptions): App {
     messages,
     profiles,
     companyPictures,
+    badges,
     learn,
     bankruptcies,
     calls,
@@ -423,6 +429,7 @@ export function createApp(options: AppOptions): App {
   registerMessageRoutes(router, services);
   registerProfileRoutes(router, services);
   registerCompanyPictureRoutes(router, services);
+  registerBadgeRoutes(router, services);
   registerLearnRoutes(router, services);
   registerCallRoutes(router, services);
   options.extend?.(services, router);
@@ -560,6 +567,15 @@ export function createApp(options: AppOptions): App {
   }
 
   let purgeTimer: ReturnType<typeof setInterval> | null = null;
+  let badgeTimer: ReturnType<typeof setInterval> | null = null;
+  let badgeFirst: ReturnType<typeof setTimeout> | null = null;
+  const sweepBadges = (): void => {
+    try {
+      badges.sweep();
+    } catch (error) {
+      log.warn('badges', `The badge sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   let leaseTimer: ReturnType<typeof setInterval> | null = null;
   return {
     services,
@@ -578,12 +594,19 @@ export function createApp(options: AppOptions): App {
       leaseTimer.unref?.();
       purgeTimer = setInterval(() => auth.purgeExpired(), 3_600_000);
       purgeTimer.unref?.();
+      // Badges: one look a few seconds after the start, then every 45 seconds.
+      badgeFirst = setTimeout(sweepBadges, 5_000);
+      badgeFirst.unref?.();
+      badgeTimer = setInterval(sweepBadges, 45_000);
+      badgeTimer.unref?.();
     },
     close() {
       world.stop();
       scheduler?.stop();
       hub.stop();
       if (purgeTimer) clearInterval(purgeTimer);
+      if (badgeTimer) clearInterval(badgeTimer);
+      if (badgeFirst) clearTimeout(badgeFirst);
       if (leaseTimer) clearInterval(leaseTimer);
       try {
         leases.release(SERVER_LEASE);
