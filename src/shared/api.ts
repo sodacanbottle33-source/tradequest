@@ -1,6 +1,7 @@
 // The browser's only way to talk to the server. Every function returns what the server said, or throws an ApiError whose
 // message is the server's own explanation (shown to the player as it is).
 
+import type { CoachReply, LearnState, LessonResult, LessonView, TutorialReply } from '../learn/wire';
 import type {
   Account,
   AdminChatView,
@@ -253,4 +254,14 @@ export const api = {
   launchStock: (body: { requestId: string; name: string; ticker: string; sector: string; seedCents: number; industry?: string; description?: string }) =>
     request<LaunchResult>('POST', '/api/launch/stock', body),
   rugPull: (body: { requestId: string; ticker: string }) => request<RugResult | DrainResult>('POST', '/api/launch/rug', body),
+
+  // Learn (any signed-in player): the tutorial bookmarks and the practice lessons. The server picks every lesson, keeps what happens next
+  // hidden until the answer is in, and grades the answer itself; the AI teacher only talks about a grade that is already decided.
+  learnState: () => request<LearnState>('GET', '/api/learn/state'),
+  learnTutorial: (step: number) => request<TutorialReply>('POST', '/api/learn/tutorial', { step }),
+  learnStart: () => request<LessonView>('POST', '/api/learn/lesson/start', {}),
+  learnAnswer: (lessonId: number, choice: string, reason?: string) =>
+    request<LessonResult>('POST', '/api/learn/lesson/answer', reason ? { lessonId, choice, reason } : { lessonId, choice }),
+  learnSkip: (lessonId: number) => request<{ ok: boolean }>('POST', '/api/learn/lesson/skip', { lessonId }),
+  learnCoach: (lessonId: number) => request<CoachReply>('POST', '/api/learn/lesson/coach', { lessonId }),
 };

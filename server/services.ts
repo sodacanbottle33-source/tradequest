@@ -8,6 +8,7 @@ import type { Challenges } from './challenges';
 import type { Chat } from './chat';
 import type { Config } from './config';
 import type { Launches } from './launch';
+import type { Learn } from './learn';
 import type { FlowService } from './flow';
 import type { CircuitBreaker } from './breaker';
 import type { LimitOrders } from './limitOrders';
@@ -60,6 +61,8 @@ export interface Services {
   readonly messages: Messages;
   /** Profile pictures and who is online (server/profile.ts). */
   readonly profiles: Profiles;
+  /** The tutorial's saved progress and the practice lessons with their optional AI teacher (server/learn.ts). */
+  readonly learn: Learn;
   /** Companies that went bankrupt, and the daily check that decides if another one does (server/bankruptcy.ts). */
   readonly bankruptcies: Bankruptcies;
   /** Voice calls between two friends: ringing and passing the connection messages, nothing saved (server/calls.ts). */

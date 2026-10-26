@@ -854,6 +854,65 @@ CREATE TABLE bankruptcies (
 );
 `,
   },
+  {
+    version: 23,
+    name: 'learn: tutorial progress, practice lessons, XP, AI teacher usage',
+    sql: `
+-- Learn (server/learn.ts): the tutorial and the practice lessons. Nothing here touches money, shares, prices or the leaderboards: it is XP for learning only.
+-- One row per player: which tutorial steps he finished (bit n-1 of tutorial_mask is step n), his XP and his run of good answers.
+CREATE TABLE learn_progress (
+  user_id       INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  tutorial_mask INTEGER NOT NULL DEFAULT 0 CHECK (tutorial_mask >= 0),
+  xp            INTEGER NOT NULL DEFAULT 0 CHECK (xp >= 0),
+  streak        INTEGER NOT NULL DEFAULT 0 CHECK (streak >= 0),
+  best_streak   INTEGER NOT NULL DEFAULT 0 CHECK (best_streak >= 0),
+  lessons_done  INTEGER NOT NULL DEFAULT 0 CHECK (lessons_done >= 0),
+  updated_ms    INTEGER NOT NULL
+);
+
+-- How he does on each kind of chart (pattern key as in src/learn/types.ts): used to practise his weak spots more often.
+CREATE TABLE learn_pattern_stats (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  pattern TEXT NOT NULL,
+  seen    INTEGER NOT NULL DEFAULT 0,
+  best    INTEGER NOT NULL DEFAULT 0,
+  ok      INTEGER NOT NULL DEFAULT 0,
+  wrong   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, pattern)
+) WITHOUT ROWID;
+
+-- Every lesson handed out. The whole practice chart (what the player sees and what happens next) is stored when the lesson starts, so a lesson
+-- stays the same even if the program is updated before he answers. The part that happens next is never sent to the browser before the answer.
+-- An open lesson has answered_ms and skipped_ms empty; there is at most one per player. The AI teacher's text is kept once it has been written,
+-- so nobody pays twice for the same lesson.
+CREATE TABLE learn_lessons (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('direction', 'size')),
+  pattern     TEXT NOT NULL,
+  seed        INTEGER NOT NULL,
+  scenario    TEXT NOT NULL,
+  issued_ms   INTEGER NOT NULL,
+  answered_ms INTEGER,
+  skipped_ms  INTEGER,
+  choice      TEXT,
+  grade       TEXT CHECK (grade IS NULL OR grade IN ('best', 'ok', 'wrong')),
+  reason      TEXT,
+  outcome_pct REAL,
+  coach_text  TEXT,
+  coach_ms    INTEGER
+);
+CREATE INDEX learn_lessons_user ON learn_lessons(user_id, id);
+
+-- How many times the AI teacher was asked, per day (days since 1970, UTC). user_id 0 is the total for everybody; it limits what the whole game can spend.
+CREATE TABLE learn_ai_usage (
+  day     INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  calls   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, user_id)
+) WITHOUT ROWID;
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

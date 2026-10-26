@@ -15,6 +15,8 @@ import { Logger } from './log';
 async function main(): Promise<void> {
   const config = loadConfig();
   const log = new Logger({ level: config.logLevel });
+  if (config.ai) log.info('learn', `The AI teacher is on (${config.ai.provider}, model ${config.ai.model}): at most ${config.ai.perUserDaily} comments per player and ${config.ai.globalDaily} in total per day.`);
+  else if (config.aiProblem) log.warn('learn', `The AI teacher is OFF because its settings are wrong: ${config.aiProblem} The lessons still work with the built-in teacher.`);
   const backup = backupSettingsFromEnv(process.env);
   const store = backup ? storeFromSettings(backup) : null;
   let restored = false; // the store already holds exactly the world that was just loaded from it

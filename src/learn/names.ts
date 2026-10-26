@@ -1,0 +1,43 @@
+// Invented names for the practice charts. They are not companies of the game's market and not real ones: a lesson says so every time.
+
+export const PRACTICE_STOCKS: readonly (readonly [string, string])[] = [
+  ['BRWF', 'Brightwell Foods'],
+  ['KOVE', 'Kovalent Energy'],
+  ['MERL', 'Merleau Shipping'],
+  ['TALB', 'Talbright Software'],
+  ['QUIN', 'Quindle Health'],
+  ['SAVR', 'Saverton Bank'],
+  ['NORD', 'Nordhaven Steel'],
+  ['PYRA', 'Pyralis Solar'],
+  ['ODEL', 'Odelmont Retail'],
+  ['VIXO', 'Vixoria Games'],
+  ['LUMA', 'Lumagrid Networks'],
+  ['HARB', 'Harbourline Rail'],
+  ['ZENT', 'Zentavo Motors'],
+  ['CALI', 'Caliber Tools'],
+  ['ORIN', 'Orinoco Water'],
+  ['FENX', 'Fenwick Pharma'],
+  ['DUSK', 'Duskfield Mining'],
+  ['AMBR', 'Amberly Hotels'],
+  ['TRIV', 'Trivane Robotics'],
+  ['WELM', 'Welmar Paper'],
+  ['GALT', 'Galtree Media'],
+  ['SOLV', 'Solvent Labs'],
+  ['PRIX', 'Prixton Airlines'],
+  ['YARD', 'Yardley Homes'],
+];
+
+export const PRACTICE_COINS: readonly (readonly [string, string])[] = [
+  ['MOGO', 'MogoCoin'],
+  ['BLIP', 'BlipToken'],
+  ['ZAPP', 'ZappDoge'],
+  ['FLUF', 'FluffInu'],
+  ['NYAN', 'NyanMoon'],
+  ['PIXL', 'PixelPup'],
+  ['WOBL', 'WobbleCat'],
+  ['HYPE', 'HypeFrog'],
+  ['TOOT', 'TootCoin'],
+  ['GRRR', 'GrrrBear'],
+  ['SPRK', 'SparkRocket'],
+  ['BLOP', 'BlopBlop'],
+];

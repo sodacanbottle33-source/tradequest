@@ -11,6 +11,8 @@ import { ChatScreen } from './ChatScreen';
 import { CompanyView } from './CompanyView';
 import { clockTime } from './format';
 import { LaunchScreen } from './LaunchScreen';
+import { LearnScreen } from './LearnScreen';
+import { learnSeen } from './learnUtil';
 import { LobbyScreen } from './LobbyScreen';
 import { MarketScreen } from './MarketScreen';
 import { MessagesScreen } from './MessagesScreen';
@@ -25,12 +27,13 @@ import { ProfileMenu } from './ProfileMenu';
 import { WinBurstLayer } from './WinBurst';
 import { sharedStore, useShared } from './store';
 
-type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'players' | 'chat' | 'messages' | 'account';
+type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'learn' | 'players' | 'chat' | 'messages' | 'account';
 const CAREER_TABS: [CareerTab, string][] = [
   ['market', 'Market'],
   ['coins', 'Memecoins'],
   ['earnings', 'Earnings'],
   ['launch', 'Launch'],
+  ['learn', 'Learn'],
   ['players', 'Players'],
   ['chat', 'Chat'],
   ['messages', 'Messages'],
@@ -41,6 +44,8 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
   const s = useShared();
   const [chosenTab, setCareerTab] = useState<CareerTab>('market');
   const [ticker, setTicker] = useState<string | null>(null);
+  // A small "New" mark on the Learn tab until this browser has opened it once.
+  const [learnNew, setLearnNew] = useState<boolean>(() => !learnSeen());
   // A company the player asked for (a news story, the breaking banner) while Career is closed: it opens inside his match instead, once.
   const [matchJump, setMatchJump] = useState<{ ticker: string } | null>(null);
 
@@ -215,11 +220,17 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
               className={careerTab === id ? 'tab active' : 'tab'}
               onClick={() => {
                 setCareerTab(id);
+                if (id === 'learn') setLearnNew(false);
                 if (id === 'market' || id === 'coins') setTicker(null);
               }}
               data-testid={`tab-${id}`}
             >
               {label}
+              {id === 'learn' && learnNew && (
+                <span className="tab-new" data-testid="learn-new">
+                  New
+                </span>
+              )}
               {id === 'chat' && unread > 0 && (
                 <span className="tab-count" data-testid="chat-badge" aria-label={`${unread} new chat message${unread === 1 ? '' : 's'}`}>
                   {unread > 99 ? '99+' : unread}
@@ -244,6 +255,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
         {shown === 'career' && (careerTab === 'market' || careerTab === 'coins') && (ticker ? <CompanyView ticker={ticker} onBack={() => setTicker(null)} onTicker={openCompany} /> : <MarketScreen key={careerTab} kind={careerTab === 'coins' ? 'coins' : 'stocks'} onOpen={openCompany} selected={ticker} />)}
         {shown === 'career' && careerTab === 'earnings' && <EarningsScreen onOpen={openCompany} />}
         {shown === 'career' && careerTab === 'launch' && <LaunchScreen onOpen={openCompany} />}
+        {shown === 'career' && careerTab === 'learn' && <LearnScreen />}
         {shown === 'career' && careerTab === 'players' && <PlayersScreen />}
         {shown === 'career' && careerTab === 'chat' && <ChatScreen />}
         {shown === 'career' && careerTab === 'messages' && <MessagesScreen />}

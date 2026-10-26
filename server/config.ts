@@ -2,6 +2,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { loadAiSettings, type AiSettings } from './aiClient';
 
 /** A file in the data folder holding the owner's username (written by `npm run owner -- <username>`). */
 export const OWNER_FILE = 'owner.txt';
@@ -36,6 +37,10 @@ export interface Config {
   readonly ownerUsername: string;
   /** The servers voice calls use to connect two players (TQ_ICE_SERVERS: a JSON list; the default is free public STUN). */
   readonly iceServers: readonly IceServer[];
+  /** The AI teacher of the Learn lessons (TQ_AI_KEY and friends, server/aiClient.ts). Null = off, which is the default. */
+  readonly ai: AiSettings | null;
+  /** Why the AI teacher is off although a setting for it was given (a wrong value), or null. A wrong AI setting never stops the game from starting. */
+  readonly aiProblem: string | null;
   readonly logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
 
@@ -90,6 +95,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const dataDir = env.TQ_DATA_DIR && env.TQ_DATA_DIR !== '' ? env.TQ_DATA_DIR : join(process.cwd(), 'data');
   const level = (env.TQ_LOG_LEVEL ?? 'info').toLowerCase();
   if (!['debug', 'info', 'warn', 'error'].includes(level)) throw new Error(`TQ_LOG_LEVEL must be debug, info, warn or error, got "${level}"`);
+  // The AI teacher is optional: a wrong value in its settings turns it off and says why (the game still starts), it never stops the server.
+  const ai: { settings: AiSettings | null; problem: string | null } = { settings: null, problem: null };
+  try {
+    ai.settings = loadAiSettings(env);
+  } catch (error) {
+    ai.problem = error instanceof Error ? error.message : String(error);
+  }
   return {
     port: int(env, 'TQ_PORT', 8787, 1, 65535),
     host: env.TQ_HOST && env.TQ_HOST !== '' ? env.TQ_HOST : '127.0.0.1',
@@ -102,6 +114,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     marketBots: (env.TQ_BOTS ?? '1') !== '0' && (env.TQ_MARKET_BOTS ?? '1') !== '0',
     ownerUsername: ownerOf(env, dataDir),
     iceServers: iceServersOf(env.TQ_ICE_SERVERS),
+    ai: ai.settings,
+    aiProblem: ai.problem,
     logLevel: level as Config['logLevel'],
   };
 }

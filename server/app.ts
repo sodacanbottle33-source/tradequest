@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import type { Company } from '../src/world';
 import { Admin } from './admin';
+import { DEFAULT_GLOBAL_DAILY, DEFAULT_PER_USER_DAILY, createAiClient, type AiClient } from './aiClient';
 import { Auth, AuthError, SESSION_COOKIE } from './auth';
 import { Calls } from './calls';
 import { Challenges } from './challenges';
@@ -23,6 +24,7 @@ import { LimitOrders } from './limitOrders';
 import { MarketBots } from './marketBots';
 import { MarketSignals } from './marketSignals';
 import { MatchService } from './lobby/service';
+import { Learn } from './learn';
 import { Messages } from './messages';
 import { Bankruptcies } from './bankruptcy';
 import { Profiles } from './profile';
@@ -40,6 +42,7 @@ import { registerEarningsRoutes } from './routes/earnings';
 import { registerLimitRoutes } from './routes/limits';
 import { registerNewsRoutes } from './routes/news';
 import { registerChatRoutes } from './routes/chat';
+import { registerLearnRoutes } from './routes/learn';
 import { registerProfileRoutes } from './routes/profile';
 import { registerCallRoutes } from './routes/calls';
 import { registerMessageRoutes } from './routes/messages';
@@ -76,6 +79,10 @@ export interface AppOptions {
   readonly marketBots?: boolean;
   /** The fee on stock orders in Career, in basis points of the order's value (the game turns it on in main.ts with STOCK_FEE_BPS; tests of other things leave it at 0). */
   readonly stockFeeBps?: number;
+  /** For tests: the AI teacher to use instead of the one the settings describe (null = off). */
+  readonly aiClient?: AiClient | null;
+  /** For tests: the dice of the lesson chooser (a whole number below n). */
+  readonly learnRandom?: (n: number) => number;
   /** Folder with the built web app (npm run build), served by the same server. */
   readonly staticDir?: string;
   /** Extra setup after the services exist (news, lobby). */
@@ -337,6 +344,16 @@ export function createApp(options: AppOptions): App {
     publish: (event, data) => hub.publishSignedIn(event, data),
     audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
   });
+  // The tutorial and the practice lessons. The AI teacher is off unless the owner set TQ_AI_KEY (server/aiClient.ts); `options.aiClient` lets a test plug in its own.
+  const learn = new Learn({
+    db,
+    now,
+    log,
+    ai: options.aiClient !== undefined ? options.aiClient : config.ai ? createAiClient(config.ai) : null,
+    perUserDaily: config.ai?.perUserDaily ?? DEFAULT_PER_USER_DAILY,
+    globalDaily: config.ai?.globalDaily ?? DEFAULT_GLOBAL_DAILY,
+    ...(options.learnRandom ? { random: options.learnRandom } : {}),
+  });
   const launches = new Launches({ db, world, trading, halts, news: newsService, views, hub, log, now, notify: () => hub.publish('notice', admin.notice()), inMatch: (userId) => matches.inMatch(userId) });
   const breaker = options.autoPauses === false ? null : new CircuitBreaker({ world, halts, log, onChange: () => { views.invalidate(); hub.publish('notice', admin.notice()); } });
   breakerStep = breaker ? (tick) => breaker.step(tick) : null;
@@ -368,6 +385,7 @@ export function createApp(options: AppOptions): App {
     chat,
     messages,
     profiles,
+    learn,
     bankruptcies,
     calls,
     news: newsService,
@@ -394,6 +412,7 @@ export function createApp(options: AppOptions): App {
   registerChatRoutes(router, services);
   registerMessageRoutes(router, services);
   registerProfileRoutes(router, services);
+  registerLearnRoutes(router, services);
   registerCallRoutes(router, services);
   options.extend?.(services, router);
 
