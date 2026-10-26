@@ -691,7 +691,7 @@ describe('groups', () => {
 
   it('PM-32: any member of a group invites his own friends, never somebody else\'s, and the friend still has to accept; the creator alone removes and renames', async () => {
     const r = await boot();
-    const { alice, bob, carol, dave } = await world(r);
+    const { alice, bob, carol } = await world(r);
     await befriend(r, alice, 'alice', bob, 'bob');
     await befriend(r, bob, 'bob', carol, 'carol');
     const id = (await post(r, alice, 'group/create', { title: 'club', usernames: ['bob'] })).json.conversation.id as number;
