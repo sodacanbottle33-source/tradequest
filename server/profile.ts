@@ -23,7 +23,7 @@ export type AvatarMime = 'image/jpeg' | 'image/png' | 'image/webp';
 
 export class ProfileError extends Error {
   constructor(
-    readonly code: 'bad_request' | 'too_large' | 'bad_image' | 'rate_limited' | 'no_such_player' | 'no_picture',
+    readonly code: 'bad_request' | 'too_large' | 'bad_image' | 'rate_limited' | 'no_such_player' | 'no_picture' | 'no_such_company' | 'not_allowed',
     message: string,
     readonly status: number,
   ) {

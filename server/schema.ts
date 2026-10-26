@@ -913,6 +913,22 @@ CREATE TABLE learn_ai_usage (
 ) WITHOUT ROWID;
 `,
   },
+  {
+    version: 24,
+    name: 'pictures for stocks and memecoins',
+    sql: `
+-- A company's picture (server/companyPictures.ts, docs/world.md §20): one small picture per company, already shrunk by the browser, kept as the
+-- bytes the browser made. The player who launched the company and the owner can set or remove it; the owner can do so for any company. Only the
+-- picture is stored here: it changes nothing about prices, shares or money. "set_by" is who last changed it (empty if that player is deleted).
+CREATE TABLE company_pictures (
+  company_id INTEGER PRIMARY KEY REFERENCES companies(id),
+  mime       TEXT NOT NULL CHECK (mime IN ('image/jpeg', 'image/png', 'image/webp')),
+  data       BLOB NOT NULL CHECK (length(data) BETWEEN 1 AND 65536),
+  updated_ms INTEGER NOT NULL,
+  set_by     INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

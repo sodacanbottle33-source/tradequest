@@ -1,5 +1,6 @@
 // All companies on the shared market: search, filter by sector, sort, and live price / change / market cap.
 import { memo, useMemo, useState } from 'react';
+import { CompanyLogo } from './CompanyLogo';
 import { formatBps, formatCap, formatCount, SECTOR_NAMES, toneOf } from './format';
 import { FlashPrice } from './PriceFx';
 import { useShared } from './store';
@@ -26,6 +27,7 @@ const Row = memo(function Row({ coins, row, price, selected, onOpen }: RowProps)
   return (
     <tr className={selected ? 'row-selected' : undefined} data-ticker={row.ticker}>
       <td>
+        <CompanyLogo ticker={row.ticker} size={24} className="logo-inline" />
         <button type="button" className="link-btn company-link" onClick={() => onOpen(row.ticker)}>
           <strong>{row.ticker}</strong>
         </button>{' '}

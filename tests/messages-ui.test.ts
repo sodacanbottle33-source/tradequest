@@ -248,4 +248,25 @@ describe('the screens', () => {
     expect(log).toContain("case 'pm_dismiss'");
     expect(code(src('shared', 'AdminChat.tsx'))).toContain('adminPrivateReports');
   });
+
+  it('MSGUI-15: every member of a group gets the invite box (with his own friends); renaming and removing people stay with the creator', () => {
+    const view = code(src('shared', 'PmThreadView.tsx'));
+    // The list of friends to pick from does not depend on being the creator ...
+    const choices = /const inviteChoices = ([^;]*);/.exec(view)?.[1] ?? '';
+    expect(choices).toContain("conv.kind === 'group'");
+    expect(choices).toContain('friendsToInvite(friends.friends, conv)');
+    expect(choices).not.toContain('isCreator');
+    // ... the tools box is there for every group member, and the two creator-only tools are each behind the creator check.
+    expect(view).toMatch(/\{conv\.kind === 'group' && \(\s*<div className="pm-admin"/);
+    expect(view).toMatch(/\{isCreator && \(renaming === null/);
+    expect(view).toMatch(/\{isCreator &&\s*\[\.\.\.conv\.members\.filter/);
+    expect(view).toContain('data-testid="pm-invite-select"');
+    expect(view).toContain('data-testid="pm-member-hint"');
+    // The server decides: the member's own friends only.
+    const server = code(readFileSync(resolve(process.cwd(), 'server', 'messages.ts'), 'utf8'));
+    const invite = /invite\(me: User, conversationId: unknown, username: unknown\)[\s\S]*?\n  }\n/.exec(server)?.[0] ?? '';
+    expect(invite).toContain('this.memberGroup(me, conversationId)');
+    expect(invite).not.toContain('ownGroup');
+    expect(invite).toContain('this.checkCanInvite(me, friend, row.id)');
+  });
 });

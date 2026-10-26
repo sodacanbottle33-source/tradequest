@@ -180,7 +180,7 @@ function GroupMaker({ onDone }: { onDone: () => void }) {
           {error}
         </p>
       )}
-      <p className="hint">Each friend gets an invitation and sees the group only when they accept. A new member reads only what is said after they join. You can invite more friends, remove people and rename the group later.</p>
+      <p className="hint">Each friend gets an invitation and sees the group only when they accept. A new member reads only what is said after they join. Every member can invite their own friends later; only you can remove people or rename the group.</p>
     </section>
   );
 }

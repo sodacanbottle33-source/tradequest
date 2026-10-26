@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { pulseClass, usePulse, useTween } from '../ui/usePulse';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
+import { CompanyLogo } from './CompanyLogo';
 import { formatBps, formatCents, formatShares, toneOf } from './format';
 import { OpenOrders } from './OpenOrders';
 import { sharedStore, useShared } from './store';
@@ -127,6 +128,7 @@ export function AccountScreen({ onOpen }: { onOpen: (ticker: string) => void }) 
                   return (
                     <tr key={p.ticker}>
                       <td>
+                        <CompanyLogo ticker={p.ticker} size={22} className="logo-inline" />
                         <button type="button" className="link-btn" onClick={() => onOpen(p.ticker)}>
                           <strong>{p.ticker}</strong>
                         </button>{' '}

@@ -283,7 +283,7 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
       </h2>
     );
 
-  const inviteChoices = isCreator && friends ? friendsToInvite(friends.friends, conv) : [];
+  const inviteChoices = conv.kind === 'group' && friends ? friendsToInvite(friends.friends, conv) : [];
   const roomLeft = messages.limits.maxGroupMembers - conv.members.length - conv.invited.length;
 
   return (
@@ -332,9 +332,9 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
         </div>
       )}
 
-      {isCreator && (
+      {conv.kind === 'group' && (
         <div className="pm-admin" role="group" aria-label="Group settings" data-testid="pm-group-tools">
-          {renaming === null ? (
+          {isCreator && (renaming === null ? (
             <button type="button" className="btn btn-small btn-ghost" onClick={() => setRenaming(conv.title)} data-testid="pm-rename">
               Rename
             </button>
@@ -359,7 +359,7 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
                 Cancel
               </button>
             </span>
-          )}
+          ))}
           {roomLeft > 0 && inviteChoices.length > 0 && (
             <span className="people-actions">
               <select className="qty-input" value={inviting} onChange={(e) => setInviting(e.target.value)} aria-label="Invite a friend" data-testid="pm-invite-select">
@@ -386,9 +386,22 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
               </button>
             </span>
           )}
-          {[...conv.members.filter((p) => p.username !== me), ...conv.invited].map((p) => (
-            <SureButton key={p.username} label={`Remove ${p.displayName}`} question={`Remove ${p.displayName}?`} busy={busy} onYes={() => void run(null, () => applyGroup(api.groupRemove(conv.id, p.username)))} testId={`pm-remove-${p.username}`} />
-          ))}
+          {isCreator &&
+            [...conv.members.filter((p) => p.username !== me), ...conv.invited].map((p) => (
+              <SureButton
+                key={p.username}
+                label={`Remove ${p.displayName}`}
+                question={`Remove ${p.displayName}?`}
+                busy={busy}
+                onYes={() => void run(null, () => applyGroup(api.groupRemove(conv.id, p.username)))}
+                testId={`pm-remove-${p.username}`}
+              />
+            ))}
+          {!isCreator && (
+            <span className="hint" data-testid="pm-member-hint">
+              You can invite your own friends. Only {conv.creator ? (conv.members.find((p) => p.username === conv.creator)?.displayName ?? conv.creator) : 'the player who made the group'} can remove people or rename the group.
+            </span>
+          )}
         </div>
       )}
 

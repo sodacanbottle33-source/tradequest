@@ -7,6 +7,7 @@ import { CallController, type ControllerDeps } from './callController';
 import { describeLimitEvent } from './limitText';
 import { describeNotice, type ToastText } from './positionNotice';
 import { browserVoiceDeps, VoiceSession } from './voice';
+import { logoStore } from './logoStore';
 import { profileStore } from './profileStore';
 import type { Account, Announcement, BanNotice, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
 
@@ -256,6 +257,8 @@ export class SharedStore {
       void this.refreshChallenges();
       void this.refreshChat();
       void this.refreshMessages();
+      // The pictures of stocks and memecoins are for everybody, also a visitor who is not signed in.
+      void logoStore.load();
       if (this.state.user) {
         void this.calls.reconcile();
         void profileStore.start();
@@ -280,6 +283,8 @@ export class SharedStore {
     es.addEventListener('chat_status', () => void this.refreshChat());
     // A player set or removed his profile picture.
     es.addEventListener('avatar', (e) => profileStore.onAvatar(JSON.parse((e as MessageEvent<string>).data) as { username: string; v: number | null }));
+    // A launcher or the owner set or removed the picture of a stock or memecoin.
+    es.addEventListener('company_picture', (e) => logoStore.onPicture(JSON.parse((e as MessageEvent<string>).data) as { ticker: string; v: number | null }));
     // Private chats: a new message in one of your conversations, or something about them changed (a request, an invitation, a read mark...).
     es.addEventListener('pm', (e) => {
       const d = JSON.parse((e as MessageEvent<string>).data) as { conversationId: number; message: PmMessage };

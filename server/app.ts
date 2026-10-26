@@ -27,6 +27,7 @@ import { MatchService } from './lobby/service';
 import { Learn } from './learn';
 import { Messages } from './messages';
 import { Bankruptcies } from './bankruptcy';
+import { CompanyPictures } from './companyPictures';
 import { Profiles } from './profile';
 import { Logger } from './log';
 import { NewsScheduler } from './news/scheduler';
@@ -43,6 +44,7 @@ import { registerLimitRoutes } from './routes/limits';
 import { registerNewsRoutes } from './routes/news';
 import { registerChatRoutes } from './routes/chat';
 import { registerLearnRoutes } from './routes/learn';
+import { registerCompanyPictureRoutes } from './routes/companyPictures';
 import { registerProfileRoutes } from './routes/profile';
 import { registerCallRoutes } from './routes/calls';
 import { registerMessageRoutes } from './routes/messages';
@@ -344,6 +346,13 @@ export function createApp(options: AppOptions): App {
     publish: (event, data) => hub.publishSignedIn(event, data),
     audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
   });
+  // Pictures for stocks and memecoins (the launcher and the owner set them; everybody, signed in or not, sees them).
+  const companyPictures = new CompanyPictures({
+    db,
+    now,
+    publish: (event, data) => hub.publish(event, data),
+    audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
+  });
   // The tutorial and the practice lessons. The AI teacher is off unless the owner set TQ_AI_KEY (server/aiClient.ts); `options.aiClient` lets a test plug in its own.
   const learn = new Learn({
     db,
@@ -385,6 +394,7 @@ export function createApp(options: AppOptions): App {
     chat,
     messages,
     profiles,
+    companyPictures,
     learn,
     bankruptcies,
     calls,
@@ -412,6 +422,7 @@ export function createApp(options: AppOptions): App {
   registerChatRoutes(router, services);
   registerMessageRoutes(router, services);
   registerProfileRoutes(router, services);
+  registerCompanyPictureRoutes(router, services);
   registerLearnRoutes(router, services);
   registerCallRoutes(router, services);
   options.extend?.(services, router);

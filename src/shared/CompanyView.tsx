@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { CompanyChart } from './CompanyChart';
+import { CompanyLogo } from './CompanyLogo';
+import { CompanyPictureBox } from './CompanyPictureTools';
 import { EarningsPanel } from './EarningsPanel';
 import { bidFrom, formatBps, formatCap, formatCents, formatCount, SECTOR_NAMES, toneOf } from './format';
 import { NewsList } from './NewsList';
@@ -169,6 +171,7 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
             {coin ? '← All memecoins' : '← All companies'}
           </button>
           <h2>
+            <CompanyLogo ticker={detail.ticker} size={44} className="logo-title" />
             <span className="ticker">{detail.ticker}</span> {detail.name}
             {halted && (
               <span className="badge-halted" data-testid="halted-badge">
@@ -184,6 +187,7 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
           <p className="muted">
             {SECTOR_NAMES[detail.sector] ?? detail.sector} · {detail.industry} · {coin ? `lives on ${detail.hq}` : detail.hq}
           </p>
+          <CompanyPictureBox ticker={detail.ticker} />
           {coin && !pool && (
             <p className="hint coin-warning" data-testid="coin-warning">
               Memecoin: it can move 10 % in a minute, and trading is never paused. High leverage can wipe out your margin in seconds. Every order pays a trading fee (shown before you trade).

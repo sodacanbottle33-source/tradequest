@@ -7,8 +7,8 @@
 //   • a player who blocked another cannot be written to, asked for friendship or invited by him, and what the other player wrote (and writes)
 //     in a conversation they share is hidden from him. Blocking also ends the friendship and closes a waiting request. The blocked player is
 //     not told that he was blocked, only that he cannot write to that player;
-//   • a group has at most MAX_GROUP_MEMBERS players. Its creator invites his own friends (an invitation has to be accepted), removes people and
-//     renames it; anybody can leave;
+//   • a group has at most MAX_GROUP_MEMBERS players. Any member invites his own friends (an invitation has to be accepted; you cannot invite
+//     somebody else's friend); only its creator removes people and renames it; anybody can leave;
 //   • messages are plain one-line text like in the public chat (server/chat.ts: same cleaning, same length, same pause between messages, same
 //     burst limit and no repeats), and a brand-new account writes only after NEW_ACCOUNT_WAIT_MS (the owner is exempt).
 // Only the members of a conversation can read it. The owner cannot: he sees only what a player REPORTS (that message and the few before it,
@@ -721,6 +721,13 @@ export class Messages {
     return row;
   }
 
+  /** The group (as a member sees it) or an error: any member, not only the creator, may invite his own friends. */
+  private memberGroup(me: User, conversationId: unknown): ConvRow {
+    const row = this.rowsOf(me, this.idOf(conversationId, 'conversation'))[0];
+    if (!row || row.kind !== 'group' || row.state !== 'member') throw new MessageError('no_such_conversation', 'That group is not there.', 404);
+    return row;
+  }
+
   private checkCanInvite(me: User, friend: UserLite, conversationId: number | null): void {
     if (!this.areFriends(me.id, friend.id)) throw new MessageError('not_friends', `${friend.displayName} is not your friend. You can only invite your friends.`, 403);
     if (this.d.isBanned(friend.id)) throw new MessageError('no_such_player', `There is no player called "${friend.username}".`, 404);
@@ -759,9 +766,9 @@ export class Messages {
     return { conversation: this.viewOf(me, id) as ConversationView };
   }
 
-  /** Invites one more friend of the creator. */
+  /** Invites one more friend of the member who asks (any member of the group, not only its creator). The friend still has to accept. */
   invite(me: User, conversationId: unknown, username: unknown): { conversation: ConversationView } {
-    const row = this.ownGroup(me, conversationId);
+    const row = this.memberGroup(me, conversationId);
     const friend = this.findUser(username);
     this.d.db.tx(() => {
       if (this.memberIds(row.id).length >= MAX_GROUP_MEMBERS) throw new MessageError('group_full', `A group has at most ${MAX_GROUP_MEMBERS} players.`, 409);

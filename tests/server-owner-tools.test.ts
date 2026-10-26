@@ -575,7 +575,7 @@ describe('the database upgrade to schema 7', () => {
       db.run("INSERT INTO users(id, username, display_name, pw_hash, role, created_ms) VALUES (2, 'alice', 'alice', 'x', 'player', 1)");
       db.run("INSERT INTO accounts(user_id, kind, match_id, cash_cents, start_cash_cents, created_ms) VALUES (2, 'career', NULL, 123400, 100000, 1)");
       db.run("INSERT INTO admin_log(request_id, created_ms, admin_user_id, action, target, detail_json) VALUES ('old-request-01', 5, 1, 'flow', 'price impact', '{}')");
-      expect(migrate(db)).toEqual([7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]); // versions 8 to 23 (companies made by the owner, automatic pauses, leverage, memecoins with shorts and stops, the memecoin fee, launches, 1v1 bots, margin costs and limit orders, free coin launches, money pools, friends, challenges and the chat, private chats, the Learn tables) follow at once
+      expect(migrate(db)).toEqual([7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]); // versions 8 to 24 (companies made by the owner, automatic pauses, leverage, memecoins with shorts and stops, the memecoin fee, launches, 1v1 bots, margin costs and limit orders, free coin launches, money pools, friends, challenges and the chat, private chats, the Learn tables, company pictures) follow at once
       expect(db.all('SELECT request_id, action FROM admin_log')).toEqual([{ request_id: 'old-request-01', action: 'flow' }]);
       expect(db.all('SELECT cash_cents, start_cash_cents, reset_trade_id FROM accounts')).toEqual([{ cash_cents: 123400, start_cash_cents: 100000, reset_trade_id: 0 }]);
       for (const [i, action] of ['ban', 'unban', 'shares', 'reset', 'announce', 'pause', 'unpause'].entries()) {

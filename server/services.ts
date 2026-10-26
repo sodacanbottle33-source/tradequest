@@ -18,6 +18,7 @@ import type { Leases } from './lease';
 import type { MatchService } from './lobby/service';
 import type { Logger } from './log';
 import type { Messages } from './messages';
+import type { CompanyPictures } from './companyPictures';
 import type { Profiles } from './profile';
 import type { NewsScheduler } from './news/scheduler';
 import type { NewsService } from './news/service';
@@ -61,6 +62,8 @@ export interface Services {
   readonly messages: Messages;
   /** Profile pictures and who is online (server/profile.ts). */
   readonly profiles: Profiles;
+  /** Pictures for stocks and memecoins (server/companyPictures.ts). */
+  readonly companyPictures: CompanyPictures;
   /** The tutorial's saved progress and the practice lessons with their optional AI teacher (server/learn.ts). */
   readonly learn: Learn;
   /** Companies that went bankrupt, and the daily check that decides if another one does (server/bankruptcy.ts). */

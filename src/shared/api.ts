@@ -196,6 +196,12 @@ export const api = {
   removeAvatar: () => request<{ ok: boolean }>('POST', '/api/profile/avatar/remove', {}),
   online: () => request<{ online: string[] }>('GET', '/api/online'),
   adminAvatarRemove: (body: { requestId: string; username: string }) => request<{ ok: boolean; duplicate: boolean; username: string }>('POST', '/api/admin/avatar/remove', body),
+  // Pictures for stocks and memecoins (anyone can look; the launcher and the owner change them). A picture is shown at /api/company-picture/<ticker>?v=<version>.
+  companyPictures: () => request<{ pictures: Record<string, number> }>('GET', '/api/company-pictures'),
+  companyPictureRights: (ticker: string) => request<{ canChange: boolean; ticker: string; hasPicture: boolean }>('GET', `/api/company-picture/${encodeURIComponent(ticker)}/rights`),
+  setCompanyPicture: (ticker: string, image: string, requestId: string) =>
+    request<{ ok: boolean; duplicate: boolean; ticker: string; version: number | null }>('POST', `/api/company-picture/${encodeURIComponent(ticker)}`, { image, requestId }),
+  removeCompanyPicture: (ticker: string, requestId: string) => request<{ ok: boolean; duplicate: boolean; ticker: string }>('POST', `/api/company-picture/${encodeURIComponent(ticker)}/remove`, { requestId }),
 
   // Private chats (any signed-in player). The server decides who may write to whom; the owner cannot read them.
   messages: () => request<MessagesView>('GET', '/api/messages'),

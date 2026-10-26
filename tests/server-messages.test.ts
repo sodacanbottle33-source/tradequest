@@ -655,7 +655,7 @@ describe('groups', () => {
     expect(carol).toBeTruthy();
   }, LONG);
 
-  it('PM-17: a group holds at most the allowed number of players, invited ones counted; only its creator invites, removes and renames', async () => {
+  it('PM-17: a group holds at most the allowed number of players, invited ones counted; only its creator removes and renames', async () => {
     const r = await boot();
     const { alice, bob, carol } = await world(r);
     const extra = bulk(r, 'friend', MAX_GROUP_MEMBERS);
@@ -670,12 +670,14 @@ describe('groups', () => {
     expect([full.status, full.json.error.code]).toEqual([409, 'group_full']);
     // Somebody already in cannot be asked again.
     expect((await post(r, alice, 'group/invite', { conversationId: id, username: 'bob' })).status).toBe(409);
-    // Bob joins; he is not the creator, so he cannot invite, remove or rename.
+    // Bob joins; he is not the creator, so he cannot remove or rename. The size limit holds for him too when he invites.
     await post(r, bob, 'respond', { conversationId: id, answer: 'accept' });
-    for (const [path, body] of [['group/invite', { username: 'carol' }], ['group/remove', { username: 'friend0' }], ['group/rename', { title: 'mine now' }]] as const) {
+    for (const [path, body] of [['group/remove', { username: 'friend0' }], ['group/rename', { title: 'mine now' }]] as const) {
       const res = await post(r, bob, path, { conversationId: id, ...body });
       expect([path, res.status, res.json.error.code]).toEqual([path, 403, 'not_creator']);
     }
+    const bobFull = await post(r, bob, 'group/invite', { conversationId: id, username: 'carol' });
+    expect([bobFull.status, bobFull.json.error.code]).toEqual([409, 'group_full']);
     // The creator renames, and the new name reaches everybody.
     const renamed = await post(r, alice, 'group/rename', { conversationId: id, title: 'the bigger club' });
     expect(renamed.json.conversation.title).toBe('the bigger club');
@@ -685,6 +687,44 @@ describe('groups', () => {
     const direct = (await tell(r, alice, 'bob', 'hello')).json.conversationId as number;
     expect((await post(r, alice, 'group/rename', { conversationId: direct, title: 'x' })).status).toBe(404);
     expect((await post(r, alice, 'group/invite', { conversationId: direct, username: 'carol' })).status).toBe(404);
+  }, LONG);
+
+  it('PM-32: any member of a group invites his own friends, never somebody else\'s, and the friend still has to accept; the creator alone removes and renames', async () => {
+    const r = await boot();
+    const { alice, bob, carol, dave } = await world(r);
+    await befriend(r, alice, 'alice', bob, 'bob');
+    await befriend(r, bob, 'bob', carol, 'carol');
+    const id = (await post(r, alice, 'group/create', { title: 'club', usernames: ['bob'] })).json.conversation.id as number;
+    // Bob has only been invited: he is not in the group yet, so he cannot invite anybody.
+    const early = await post(r, bob, 'group/invite', { conversationId: id, username: 'carol' });
+    expect([early.status, early.json.error.code]).toEqual([404, 'no_such_conversation']);
+    await post(r, bob, 'respond', { conversationId: id, answer: 'accept' });
+    // Alice is not carol's friend, so she cannot invite her; bob is, so he can. Dave is nobody's friend.
+    const notHers = await post(r, alice, 'group/invite', { conversationId: id, username: 'carol' });
+    expect([notHers.status, notHers.json.error.code]).toEqual([403, 'not_friends']);
+    const stranger = await post(r, bob, 'group/invite', { conversationId: id, username: 'dave' });
+    expect([stranger.status, stranger.json.error.code]).toEqual([403, 'not_friends']);
+    const watching = await listen(r, alice);
+    const asked = await post(r, bob, 'group/invite', { conversationId: id, username: 'carol' });
+    expect(asked.status).toBe(200);
+    expect(asked.json.conversation.invited.map((p: any) => p.username)).toEqual(['carol']);
+    expect(await until(() => watching.text().includes('event: pm_changed'))).toBe(true);
+    // The same friend cannot be asked twice; carol sees the invitation, from the member who asked her, and cannot read the group yet.
+    expect((await post(r, bob, 'group/invite', { conversationId: id, username: 'carol' })).status).toBe(409);
+    const seen = await inbox(r, carol);
+    expect(seen.requests).toMatchObject([{ kind: 'invite', conversationId: id, title: 'club', from: { username: 'bob' }, memberCount: 2 }]);
+    expect((await thread(r, carol, id)).status).toBe(404);
+    expect((await post(r, carol, 'group/invite', { conversationId: id, username: 'bob' })).status).toBe(404);
+    // She accepts. She can remove and rename nothing, but she can leave, and after that she cannot invite any more.
+    await post(r, carol, 'respond', { conversationId: id, answer: 'accept' });
+    for (const [path, body] of [['group/remove', { username: 'bob' }], ['group/rename', { title: 'mine' }]] as const) {
+      const res = await post(r, carol, path, { conversationId: id, ...body });
+      expect([path, res.status, res.json.error.code]).toEqual([path, 403, 'not_creator']);
+    }
+    expect((await thread(r, alice, id)).json.conversation.members.map((p: any) => p.username)).toEqual(['alice', 'bob', 'carol']);
+    expect((await post(r, carol, 'group/leave', { conversationId: id })).status).toBe(200);
+    const gone = await post(r, carol, 'group/invite', { conversationId: id, username: 'bob' });
+    expect([gone.status, gone.json.error.code]).toEqual([404, 'no_such_conversation']);
   }, LONG);
 
   it('PM-18: the creator takes a player out or takes back an invitation; anybody leaves; the longest-standing member takes over; the last one out closes the group', async () => {
@@ -1015,8 +1055,8 @@ describe('the database and the code', () => {
         d.exec(`PRAGMA user_version = ${m.version}`);
       }
       for (const id of [1, 2, 3]) d.run("INSERT INTO users(id, username, display_name, pw_hash, role, created_ms) VALUES (?, ?, ?, 'x', 'player', 1)", id, `u${id}`, `u${id}`);
-      expect(migrate(d)).toEqual([21, 22, 23]); // (23 adds the Learn tables; 22 adds deleting your own private message, pictures and the weekly marks)
-      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(23);
+      expect(migrate(d)).toEqual([21, 22, 23, 24]); // (24 adds the empty company-picture table; 23 adds the Learn tables; 22 adds deleting your own private message, pictures and the weekly marks)
+      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(24);
       for (const table of ['conversations', 'conversation_members', 'private_messages', 'blocks', 'private_reports']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)?.n).toBe(0);
       expect(migrate(d)).toEqual([]);
       // A conversation is direct (two different players, the smaller number first) or a group (with a name).

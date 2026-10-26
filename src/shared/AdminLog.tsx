@@ -53,6 +53,10 @@ function describe(e: Entry): string {
       return `closed the reports about a private message (${e.target})`;
     case 'avatar_remove':
       return `removed the profile picture of ${e.target}`;
+    case 'company_pic_set':
+      return `set the picture of ${e.target}`;
+    case 'company_pic_remove':
+      return `removed the picture of ${e.target}`;
     case 'sens': // older entries: the per-stock setting no longer exists
       return `changed how strongly trades move ${e.target}: ${String(d.from)} → ${String(d.to)}`;
     default:

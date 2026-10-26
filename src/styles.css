@@ -2875,6 +2875,45 @@ code {
   margin: 4px 12px 8px;
 }
 
+/* ---- pictures for stocks and memecoins (src/shared/CompanyLogo.tsx, CompanyPictureTools.tsx) ---- */
+.logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 22%;
+  object-fit: cover;
+  background: var(--panel-2);
+  color: #fff;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+  user-select: none;
+}
+.logo-inline {
+  margin-right: 8px;
+}
+.logo-title {
+  margin-right: 10px;
+}
+.logo-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+.logo-error {
+  color: var(--down);
+}
+.logo-pick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
 /* ---------- Celebrations for your own wins and launches, and gentle entrances on My account and Launch (looks only) ---------- */
 .win-burst .win-x {
   font-size: 46px;

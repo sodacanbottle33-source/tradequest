@@ -10,6 +10,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, api } from './api';
 import { dollarsToCents, newRequestId } from './adminUtil';
 import { AuthPanel } from './AuthPanel';
+import { CompanyLogo } from './CompanyLogo';
+import { CompanyPictureTools, LaunchPicturePicker, sendLaunchPicture } from './CompanyPictureTools';
 import { formatCap, formatCents, formatCount, toneOf } from './format';
 import { sharedStore, useShared } from './store';
 import type { CoinPreview, Estimate, LaunchState, LaunchView, StockLaunchPreview } from './types';
@@ -184,6 +186,7 @@ function CoinForm({ state, cash, onDone }: { state: LaunchState; cash: number; o
   const [seed, setSeed] = useState('');
   const [dev, setDev] = useState('');
   const [description, setDescription] = useState('');
+  const [picture, setPicture] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null); // the request id, once "Launch coin…" was pressed
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message>(null);
@@ -220,6 +223,8 @@ function CoinForm({ state, cash, onDone }: { state: LaunchState; cash: number; o
       const res = await api.launchCoin({ requestId: confirm, name: name.trim(), ticker, seedCents, dev: dev.trim() || undefined, description: description.trim() || undefined });
       setConfirm(null);
       const held = res.stakeShares ?? 0;
+      const pictureProblem = await sendLaunchPicture(res.ticker, picture);
+      const pictureNote = pictureProblem === null ? '' : `The picture could not be saved (${pictureProblem}). You can add it again below, under your launches, or on the coin's page. `;
       const text =
         res.loaded === false
           ? `${res.ticker} was saved, but it could not be added to the running market. It will start trading after the next server start.`
@@ -233,9 +238,10 @@ function CoinForm({ state, cash, onDone }: { state: LaunchState; cash: number; o
       setSeed('');
       setDev('');
       setDescription('');
+      setPicture(null);
       setMessage(null);
       if (res.loaded !== false) celebrate(launchWin(res.ticker));
-      await onDone({ kind: res.loaded === false ? 'error' : 'ok', text });
+      await onDone({ kind: res.loaded === false ? 'error' : 'ok', text: pictureNote === '' ? text : `${text} ${pictureNote.trim()}` });
     } catch (error) {
       setConfirm(null);
       setMessage({ kind: 'error', text: problem(error) });
@@ -297,6 +303,7 @@ function CoinForm({ state, cash, onDone }: { state: LaunchState; cash: number; o
           onChange={(e) => setDescription(e.target.value)}
           data-testid="launch-coin-description"
         />
+        <LaunchPicturePicker kind="coin" image={picture} onImage={setPicture} />
 
         {shown !== null && (
           <div className="admin-confirm" data-testid="launch-coin-preview">
@@ -425,6 +432,7 @@ function StockForm({ state, cash, onDone }: { state: LaunchState; cash: number; 
   const [seed, setSeed] = useState('');
   const [industry, setIndustry] = useState('');
   const [description, setDescription] = useState('');
+  const [picture, setPicture] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message>(null);
@@ -454,6 +462,8 @@ function StockForm({ state, cash, onDone }: { state: LaunchState; cash: number; 
     try {
       const res = await api.launchStock({ requestId: confirm, name: name.trim(), ticker, sector, seedCents, industry: industry.trim() || undefined, description: description.trim() || undefined });
       setConfirm(null);
+      const pictureProblem = await sendLaunchPicture(res.ticker, picture);
+      const pictureNote = pictureProblem === null ? '' : `The picture could not be saved (${pictureProblem}). You can add it again below, under your launches, or on the company's page. `;
       const text =
         res.loaded === false
           ? `${res.ticker} was saved, but it could not be added to the running market. It will start trading after the next server start.`
@@ -463,9 +473,10 @@ function StockForm({ state, cash, onDone }: { state: LaunchState; cash: number; 
       setSeed('');
       setIndustry('');
       setDescription('');
+      setPicture(null);
       setMessage(null);
       if (res.loaded !== false) celebrate(launchWin(res.ticker));
-      await onDone({ kind: res.loaded === false ? 'error' : 'ok', text });
+      await onDone({ kind: res.loaded === false ? 'error' : 'ok', text: pictureNote === '' ? text : `${text} ${pictureNote.trim()}` });
     } catch (error) {
       setConfirm(null);
       setMessage({ kind: 'error', text: problem(error) });
@@ -539,6 +550,7 @@ function StockForm({ state, cash, onDone }: { state: LaunchState; cash: number; 
           onChange={(e) => setDescription(e.target.value)}
           data-testid="launch-stock-description"
         />
+        <LaunchPicturePicker kind="stock" image={picture} onImage={setPicture} />
 
         {shown !== null && (
           <div className="admin-confirm" data-testid="launch-stock-preview">
@@ -680,6 +692,7 @@ function LaunchCard({ launch: l, onOpen, onChanged }: { launch: LaunchView; onOp
     <div className="launch-card" data-testid={`launch-row-${l.ticker}`}>
       <div className="row-between">
         <h3>
+          <CompanyLogo ticker={l.ticker} size={32} className="logo-inline" />
           <button type="button" className="link-btn" onClick={() => onOpen(l.ticker)} data-testid={`launch-open-${l.ticker}`}>
             {l.ticker}
           </button>{' '}
@@ -739,6 +752,7 @@ function LaunchCard({ launch: l, onOpen, onChanged }: { launch: LaunchView; onOp
       {l.listed && l.sharesNow > 0 && !l.pool?.dead && (
         <p className="hint">Worth now is at the middle price. Selling everything at once brings back less: the buy–sell gap, the price push{l.kind === 'coin' ? ' and the 0.5% fee' : ''} come off it.</p>
       )}
+      <CompanyPictureTools ticker={l.ticker} />
       {l.rugs > 0 && !l.pool && (
         <p className="hint">
           Dumped {l.ruggedShares.toLocaleString('en-US')} {unit} in {l.rugs} {l.rugs === 1 ? 'order' : 'orders'} for {formatCents(l.ruggedCents)}.
