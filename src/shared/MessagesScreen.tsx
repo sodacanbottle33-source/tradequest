@@ -1,7 +1,7 @@
 // Private chats: talk to one player, or to a small group of friends, away from the public chat room. The server decides who may write to whom
 // (friends at once, anybody else with a request that has to be accepted), what is hidden and what is refused; this screen lists the conversations
 // and requests it sends, and asks it to write, answer, block or make a group. Everything a player wrote is shown as plain text.
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
 import { Avatar, OnlineDot, useOnlineWatch } from './Avatar';
@@ -10,9 +10,9 @@ import { lastLine, previewOf, requestTitle, whenLabel } from './messagesUtil';
 import { PmThreadView } from './PmThreadView';
 import { problemText } from './playersUtil';
 import { sharedStore, useShared } from './store';
-import type { PmRequest } from './types';
+import type { PmRequest, PublicGroup } from './types';
 
-type Panel = 'none' | 'new' | 'group' | 'blocked';
+type Panel = 'none' | 'new' | 'group' | 'public' | 'blocked';
 
 // ---- writing to somebody new ---------------------------------------------------------------------------------------------------
 
@@ -110,21 +110,23 @@ function GroupMaker({ onDone }: { onDone: () => void }) {
   const { messages, friends } = useShared();
   const [title, setTitle] = useState('');
   const [picked, setPicked] = useState<readonly string[]>([]);
+  const [visibility, setVisibility] = useState<'private' | 'public'>('private');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!messages) return null;
   const limits = messages.limits;
   const list = friends?.friends ?? [];
   const most = limits.maxGroupMembers - 1;
+  const isPublic = visibility === 'public';
 
   const toggle = (username: string) => setPicked((old) => (old.includes(username) ? old.filter((u) => u !== username) : old.length >= most ? old : [...old, username]));
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy || title.trim() === '' || picked.length === 0) return;
+    if (busy || title.trim() === '' || (picked.length === 0 && !isPublic)) return;
     setBusy(true);
     setError(null);
     try {
-      const out = await api.groupCreate(title.trim(), [...picked]);
+      const out = await api.groupCreate(title.trim(), [...picked], visibility);
       void sharedStore.refreshMessages();
       onDone();
       void sharedStore.openConversation(out.conversation.id);
@@ -139,25 +141,46 @@ function GroupMaker({ onDone }: { onDone: () => void }) {
   return (
     <section className="card" aria-label="New group" data-testid="pm-group-new">
       <h2>
-        New group <span className="h2-note">up to {limits.maxGroupMembers} players</span>
+        New group <span className="h2-note">up to {isPublic ? limits.maxPublicGroupMembers : limits.maxGroupMembers} players</span>
       </h2>
       {!messages.you.canWrite && (
         <p className="notice warn" role="status">
           {messages.you.message}
         </p>
       )}
-      {list.length === 0 ? (
-        <p className="hint">A group is made of your friends. You have none yet: add some from the Players tab first.</p>
+      {list.length === 0 && !isPublic ? (
+        <div>
+          <p className="hint">A private group is made of your friends. You have none yet: add some from the Players tab first, or make a public group that anybody can join.</p>
+          <button type="button" className="btn btn-small" onClick={() => setVisibility('public')} data-testid="pm-group-go-public">
+            Make a public group instead
+          </button>
+        </div>
       ) : (
         <form className="pm-form" onSubmit={onSubmit}>
+          <fieldset className="pm-pick pm-visibility-pick">
+            <legend>Who can join</legend>
+            <label className="pm-pick-row">
+              <input type="radio" name="pm-group-visibility" checked={!isPublic} onChange={() => setVisibility('private')} data-testid="pm-group-private" />
+              <span>
+                <strong>Private</strong> <span className="muted">only friends you invite, up to {limits.maxGroupMembers} players</span>
+              </span>
+            </label>
+            <label className="pm-pick-row">
+              <input type="radio" name="pm-group-visibility" checked={isPublic} onChange={() => setVisibility('public')} data-testid="pm-group-public" />
+              <span>
+                <strong>Public</strong> <span className="muted">anybody can find it in Public groups and join, up to {limits.maxPublicGroupMembers} players</span>
+              </span>
+            </label>
+          </fieldset>
           <label className="qty-label" htmlFor="pm-group-title">
             Group name
           </label>
           <input id="pm-group-title" className="qty-input" type="text" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={limits.maxGroupTitle} autoComplete="off" data-testid="pm-group-title" />
           <fieldset className="pm-pick">
             <legend>
-              Invite friends <span className="muted">({picked.length} of {most})</span>
+              Invite friends <span className="muted">({picked.length} of {most}{isPublic ? ', if you want' : ''})</span>
             </legend>
+            {list.length === 0 && <span className="hint">You have no friends yet. A public group can start empty; players find it in Public groups.</span>}
             {list.map((f) => (
               <label key={f.username} className="pm-pick-row">
                 <input type="checkbox" checked={picked.includes(f.username)} onChange={() => toggle(f.username)} disabled={!picked.includes(f.username) && picked.length >= most} data-testid={`pm-pick-${f.username}`} />
@@ -166,7 +189,7 @@ function GroupMaker({ onDone }: { onDone: () => void }) {
             ))}
           </fieldset>
           <div className="people-actions">
-            <button type="submit" className="btn btn-primary" disabled={busy || !messages.you.canWrite || title.trim() === '' || picked.length === 0} data-testid="pm-group-create">
+            <button type="submit" className="btn btn-primary" disabled={busy || !messages.you.canWrite || title.trim() === '' || (picked.length === 0 && !isPublic)} data-testid="pm-group-create">
               {busy ? 'Making…' : 'Make the group'}
             </button>
             <button type="button" className="btn btn-ghost" onClick={onDone}>
@@ -180,7 +203,116 @@ function GroupMaker({ onDone }: { onDone: () => void }) {
           {error}
         </p>
       )}
-      <p className="hint">Each friend gets an invitation and sees the group only when they accept. A new member reads only what is said after they join. Every member can invite their own friends later; only you can remove people or rename the group.</p>
+      <p className="hint">
+        Each friend gets an invitation and sees the group only when they accept. A new member reads only what is said after they join. Every member can invite their own friends later with the Invite friends button; only you can remove people,
+        rename the group or change who can join.
+      </p>
+    </section>
+  );
+}
+
+// ---- public groups ------------------------------------------------------------------------------------------------------------
+
+/** The groups anybody can join: a search box and a list, busiest first. */
+function PublicGroupsPanel({ onDone, onOpen }: { onDone: () => void; onOpen: (id: number) => void }) {
+  const { messages } = useShared();
+  const [query, setQuery] = useState('');
+  const [groups, setGroups] = useState<readonly PublicGroup[] | null>(null);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const latest = useRef(0);
+
+  // Ask for the list when the screen opens and a moment after each change of the search words.
+  useEffect(() => {
+    const ticket = (latest.current += 1);
+    const timer = setTimeout(
+      () => {
+        api
+          .publicGroups(query.trim())
+          .then((out) => {
+            if (latest.current === ticket) setGroups(out.groups);
+          })
+          .catch((e: unknown) => {
+            if (latest.current === ticket) setError(problemText(e));
+          });
+      },
+      query === '' ? 0 : 250,
+    );
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  if (!messages) return null;
+  const join = async (group: PublicGroup) => {
+    if (busy !== null) return;
+    setBusy(group.id);
+    setError(null);
+    try {
+      const out = await api.groupJoin(group.id);
+      void sharedStore.refreshMessages();
+      onOpen(out.conversation.id);
+    } catch (e) {
+      setError(problemText(e));
+      void api
+        .publicGroups(query.trim())
+        .then((fresh) => setGroups(fresh.groups))
+        .catch(() => undefined);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <section className="card" aria-label="Public groups" data-testid="pm-public">
+      <div className="row-between">
+        <h2>
+          Public groups <span className="h2-note">anybody can join</span>
+        </h2>
+        <button type="button" className="btn btn-small btn-ghost" onClick={onDone}>
+          Close
+        </button>
+      </div>
+      <input className="qty-input" type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by group name…" aria-label="Search public groups" maxLength={messages.limits.maxGroupTitle} autoComplete="off" data-testid="pm-public-search" />
+      {groups === null && !error && <p className="hint">Loading the groups…</p>}
+      {groups !== null && groups.length === 0 && (
+        <p className="hint" data-testid="pm-public-empty">
+          {query.trim() === '' ? 'There are no public groups yet. Press New group and choose Public to make the first one.' : 'No public group has that in its name.'}
+        </p>
+      )}
+      {groups !== null && groups.length > 0 && (
+        <ul className="pm-list" aria-label="Public groups" data-testid="pm-public-list">
+          {groups.map((g) => (
+            <li key={g.id} className="pm-request" data-testid={`pm-public-${g.id}`}>
+              <strong>{g.title}</strong>
+              <span className="pm-preview muted">
+                {g.memberCount} of {g.max} players{g.creator ? ` · made by ${g.creator.displayName}` : ''}
+              </span>
+              <span className="people-actions">
+                {g.joined ? (
+                  <button type="button" className="btn btn-small" onClick={() => onOpen(g.id)} data-testid={`pm-public-open-${g.id}`}>
+                    Open
+                  </button>
+                ) : (
+                  <button type="button" className="btn btn-small btn-primary" disabled={busy !== null || g.memberCount >= g.max || !messages.you.canWrite} onClick={() => void join(g)} data-testid={`pm-public-join-${g.id}`}>
+                    {g.memberCount >= g.max ? 'Full' : busy === g.id ? 'Joining…' : 'Join'}
+                  </button>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!messages.you.canWrite && (
+        <p className="notice warn" role="status">
+          {messages.you.message}
+        </p>
+      )}
+      {error && (
+        <p className="notice error" role="alert" data-testid="pm-public-error">
+          {error}
+        </p>
+      )}
+      <p className="hint">
+        Anybody who can write can join a public group at once. Everyone in it can read what is said after they join, so do not share private things there. You can leave at any time, and the player who made the group can remove people.
+      </p>
     </section>
   );
 }
@@ -378,6 +510,9 @@ export function MessagesScreen() {
             <button type="button" className="btn btn-small" onClick={() => choose('group')} aria-pressed={panel === 'group'} data-testid="pm-group-button">
               New group
             </button>
+            <button type="button" className="btn btn-small" onClick={() => choose('public')} aria-pressed={panel === 'public'} data-testid="pm-public-button">
+              Public groups
+            </button>
           </span>
         </div>
 
@@ -385,7 +520,7 @@ export function MessagesScreen() {
 
         {messages.conversations.length === 0 && messages.requests.length === 0 && (
           <p className="hint" data-testid="pm-empty">
-            No conversations yet. Press New message to write to a friend, or to anybody else: a player who is not your friend gets a request and decides whether to answer.
+            No conversations yet. Press New message to write to a friend, or to anybody else: a player who is not your friend gets a request and decides whether to answer. Press Public groups to find a group anybody can join.
           </p>
         )}
         {messages.conversations.length > 0 && (
@@ -401,7 +536,7 @@ export function MessagesScreen() {
                       </span>
                     )}
                     <strong>{c.title}</strong>
-                    {c.kind === 'group' && <span className="tag">Group</span>}
+                    {c.kind === 'group' && <span className="tag">{c.visibility === 'public' ? 'Public group' : 'Group'}</span>}
                     {c.requestState === 'waiting' && <span className="tag">Waiting for a reply</span>}
                     {c.unread > 0 && (
                       <span className="tab-count" aria-label={`${c.unread} unread`}>
@@ -424,6 +559,7 @@ export function MessagesScreen() {
       <div className="pm-main">
         {panel === 'new' && <ComposeNew key={pmCompose ?? ''} initialTo={pmCompose ?? ''} onDone={() => setPanel('none')} />}
         {panel === 'group' && <GroupMaker onDone={() => setPanel('none')} />}
+        {panel === 'public' && <PublicGroupsPanel onDone={() => setPanel('none')} onOpen={open} />}
         {panel === 'blocked' && <BlockedPanel onDone={() => setPanel('none')} />}
         {showThread && pmThread && <PmThreadView thread={pmThread} onClose={close} />}
         {panel === 'none' && pmOpen !== null && !showThread && (

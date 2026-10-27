@@ -101,6 +101,12 @@ function ModPlayers() {
                       <strong>{p.username}</strong>
                     </button>
                     <RoleBadge role={p.role} />
+                    {p.formerNames.length > 0 && (
+                      <span className="muted former-names" data-testid={`mod-former-${p.username}`}>
+                        {' '}
+                        was {p.formerNames.join(', ')}
+                      </span>
+                    )}
                   </td>
                   <td>
                     {p.banned ? (

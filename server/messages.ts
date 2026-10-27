@@ -10,11 +10,15 @@
 //   • a group has at most MAX_GROUP_MEMBERS players. Any member invites his own friends (an invitation has to be accepted; you cannot invite
 //     somebody else's friend); only its creator removes people and renames it; anybody can leave;
 //   • messages are plain one-line text like in the public chat (server/chat.ts: same cleaning, same length, same pause between messages, same
-//     burst limit and no repeats), and a brand-new account writes only after NEW_ACCOUNT_WAIT_MS (the owner is exempt).
+//     burst limit and no repeats), and a brand-new account writes only after NEW_ACCOUNT_WAIT_MS (the owner is exempt). A message can also carry one
+//     small picture (server/chatPictures.ts); in a direct chat only friends send pictures, and a picture in a public group needs an older account;
+//   • a group is private (only invited friends) or public (docs/world.md §23: it is listed, any player can join, up to MAX_PUBLIC_GROUP_MEMBERS). Only its
+//     creator chooses which, and a player the creator removed cannot join it again. A member can invite several friends at once.
 // Only the members of a conversation can read it. The owner cannot: he sees only what a player REPORTS (that message and the few before it,
 // copied at the time of the report), in the admin panel, and can close the report. Only the newest PM_KEEP messages of a conversation are kept.
 
 import { roleSql, type Role, type User } from './auth';
+import { PICTURE_BODY, type ChatPictures, type PictureBytes, type PictureState } from './chatPictures';
 import { CHAT_BURST, CHAT_BURST_MS, CHAT_MAX_LENGTH, MIN_GAP_MS, NEW_ACCOUNT_WAIT_MS, REPEAT_MS, cleanMessage, waitText } from './chat';
 import type { Logger } from './log';
 import { cleanName } from './social';
@@ -25,8 +29,12 @@ export const PM_PAGE = 50;
 export const PM_PAGE_MAX = 100;
 /** How many messages of one conversation are kept; older ones are deleted. */
 export const PM_KEEP = 1000;
-/** A group holds at most this many players (counting the ones who have been invited and not answered). */
+/** A private group holds at most this many players (counting the ones who have been invited and not answered). */
 export const MAX_GROUP_MEMBERS = 8;
+/** A public group holds more, since anybody can join it. */
+export const MAX_PUBLIC_GROUP_MEMBERS = 30;
+/** How many public groups the list shows at once. */
+export const PUBLIC_GROUPS_SHOWN = 50;
 /** The most groups one player can be in. */
 export const MAX_GROUPS = 20;
 export const MAX_GROUP_TITLE = 40;
@@ -62,6 +70,7 @@ export type MessageErrorCode =
   | 'too_many_requests'
   | 'too_many_groups'
   | 'group_full'
+  | 'removed_from_group'
   | 'not_creator'
   | 'rate_limited'
   | 'too_many_blocks';
@@ -88,8 +97,11 @@ export interface PrivateMessage {
   readonly username: string;
   readonly displayName: string;
   readonly role: Role;
+  /** What the player typed (empty for a message that is only a picture). */
   readonly text: string;
   readonly createdMs: number;
+  /** The picture the message carries: there is one ('ok'), it expired ('expired'), or none (null). */
+  readonly picture: PictureState | null;
 }
 
 /** Whether the player can write at all right now (a brand-new account cannot yet). */
@@ -113,6 +125,8 @@ export interface ConversationView {
   readonly invited: readonly PersonRef[];
   /** The username of the group's creator. */
   readonly creator: string | null;
+  /** A group: 'public' = listed, anybody can join; 'private' = invited friends only. A direct chat is always private. */
+  readonly visibility: 'private' | 'public';
   readonly last: PrivateMessage | null;
   readonly lastMs: number;
   readonly unread: number;
@@ -141,6 +155,25 @@ export interface MessagesLimits {
   readonly maxGroupMembers: number;
   readonly maxGroups: number;
   readonly maxGroupTitle: number;
+  readonly maxPublicGroupMembers: number;
+  /** The owner has not switched pictures off. */
+  readonly picturesOn: boolean;
+}
+
+/** A line of the list of public groups. */
+export interface PublicGroupView {
+  readonly id: number;
+  readonly title: string;
+  readonly memberCount: number;
+  readonly max: number;
+  readonly creator: PersonRef | null;
+  /** The player is a member already. */
+  readonly joined: boolean;
+}
+
+export interface PublicGroupsView {
+  readonly groups: readonly PublicGroupView[];
+  readonly max: number;
 }
 
 export interface MessagesView {
@@ -176,6 +209,8 @@ export interface ReportedLine {
   readonly createdMs: number;
   /** True for the message that was reported. */
   readonly reported: boolean;
+  /** The line was a picture (the owner can look at the reported one's own copy). */
+  readonly picture: boolean;
 }
 
 export interface PrivateReportEntry {
@@ -185,6 +220,8 @@ export interface PrivateReportEntry {
   readonly author: PersonRef;
   readonly reporters: number;
   readonly firstReportedMs: number;
+  /** The report holds a copy of the reported message's picture. */
+  readonly picture: boolean;
   /** The reported message and up to REPORT_CONTEXT before it, as they were. */
   readonly lines: readonly ReportedLine[];
   /** How many different messages of this author have open reports. */
@@ -197,6 +234,7 @@ export interface AdminPrivateView {
 
 export interface MessagesDeps {
   readonly db: Db;
+  readonly pictures: ChatPictures;
   readonly log: Logger;
   readonly now: () => number;
   /** Sends an event to one player's pages. */
@@ -219,6 +257,7 @@ interface ConvRow {
   created_by: number | null;
   created_ms: number;
   last_ms: number;
+  visibility: 'private' | 'public';
   request: 'pending' | 'accepted' | 'declined' | null;
   requester_id: number | null;
   request_ms: number | null;
@@ -237,6 +276,7 @@ interface MessageRow {
   role: Role;
   body: string;
   created_ms: number;
+  pic: PictureState | null;
 }
 
 interface Built {
@@ -258,6 +298,10 @@ const VISIBLE = `m.id > cm.since_id
   AND m.deleted_ms IS NULL
   AND NOT EXISTS (SELECT 1 FROM blocks bl WHERE bl.blocker_id = cm.user_id AND bl.blocked_id = m.user_id)
   AND NOT EXISTS (SELECT 1 FROM user_bans ub WHERE ub.user_id = m.user_id AND (ub.until_ms IS NULL OR ub.until_ms > ?))`;
+
+/** SQL that gives the state of a message's picture: NULL (none), 'expired' or 'ok'. `p` is private_message_pictures joined on the message. */
+const picSql = (p: string): string => `(CASE WHEN ${p}.message_id IS NULL THEN NULL WHEN ${p}.data IS NULL THEN 'expired' ELSE 'ok' END)`;
+const textOf = (r: { body: string; pic: PictureState | null }): string => (r.pic !== null && r.body === PICTURE_BODY ? '' : r.body);
 
 const pair = (a: number, b: number): [number, number] => (a < b ? [a, b] : [b, a]);
 const ref = (u: { username: string; display_name: string; role: Role }): PersonRef => ({ username: u.username, displayName: u.display_name, role: u.role });
@@ -316,7 +360,7 @@ export class Messages {
 
   private rowsOf(me: User, onlyId?: number): ConvRow[] {
     return this.d.db.all<ConvRow>(
-      `SELECT c.id, c.kind, c.title, c.direct_a, c.direct_b, c.created_by, c.created_ms, c.last_ms, c.request, c.requester_id, c.request_ms,
+      `SELECT c.id, c.kind, c.title, c.direct_a, c.direct_b, c.created_by, c.created_ms, c.last_ms, c.visibility, c.request, c.requester_id, c.request_ms,
               cm.state, cm.invited_by, cm.joined_ms, cm.since_id, cm.read_id
          FROM conversations c JOIN conversation_members cm ON cm.conversation_id = c.id AND cm.user_id = ?
         ${onlyId === undefined ? '' : 'WHERE c.id = ?'}
@@ -364,7 +408,7 @@ export class Messages {
   // ---- reading -----------------------------------------------------------------------------------------------------
 
   private toMessage(r: MessageRow): PrivateMessage {
-    return { id: r.id, conversationId: r.conversation_id, username: r.username, displayName: r.display_name, role: r.role, text: r.body, createdMs: r.created_ms };
+    return { id: r.id, conversationId: r.conversation_id, username: r.username, displayName: r.display_name, role: r.role, text: textOf(r), createdMs: r.created_ms, picture: r.pic };
   }
 
   /** The views of the given conversations of one player (what the list and the thread header show). */
@@ -395,8 +439,8 @@ export class Messages {
         .map((r) => [r.cid, r.n] as const),
     );
     const lastRows = this.d.db.all<MessageRow>(
-      `SELECT lm.id, lm.conversation_id, u.username, u.display_name, ${roleSql('u')} AS role, lm.body, lm.created_ms
-         FROM private_messages lm JOIN users u ON u.id = lm.user_id
+      `SELECT lm.id, lm.conversation_id, u.username, u.display_name, ${roleSql('u')} AS role, lm.body, lm.created_ms, ${picSql('p')} AS pic
+         FROM private_messages lm JOIN users u ON u.id = lm.user_id LEFT JOIN private_message_pictures p ON p.message_id = lm.id
         WHERE lm.id IN (SELECT MAX(m.id) FROM private_messages m JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ?
                          WHERE m.conversation_id IN (${marks}) AND ${VISIBLE} GROUP BY m.conversation_id)`,
       me.id,
@@ -428,6 +472,7 @@ export class Messages {
             members,
             invited,
             creator,
+            visibility: row.visibility,
             last: last.get(row.id) ?? null,
             lastMs: row.last_ms,
             unread: unread.get(row.id) ?? 0,
@@ -458,6 +503,7 @@ export class Messages {
         members: [ref({ username: me.username, display_name: me.displayName, role: me.role }), person],
         invited: [],
         creator: null,
+        visibility: 'private',
         last: last.get(row.id) ?? null,
         lastMs: row.last_ms,
         unread: unread.get(row.id) ?? 0,
@@ -492,7 +538,7 @@ export class Messages {
   }
 
   private limits(): MessagesLimits {
-    return { maxLength: CHAT_MAX_LENGTH, minGapMs: MIN_GAP_MS, maxGroupMembers: MAX_GROUP_MEMBERS, maxGroups: MAX_GROUPS, maxGroupTitle: MAX_GROUP_TITLE };
+    return { maxLength: CHAT_MAX_LENGTH, minGapMs: MIN_GAP_MS, maxGroupMembers: MAX_GROUP_MEMBERS, maxGroups: MAX_GROUPS, maxGroupTitle: MAX_GROUP_TITLE, maxPublicGroupMembers: MAX_PUBLIC_GROUP_MEMBERS, picturesOn: this.d.pictures.enabled() };
   }
 
   private blockedList(userId: number): BlockedView[] {
@@ -515,8 +561,9 @@ export class Messages {
     if (!conversation) throw new MessageError('no_such_conversation', 'That conversation is not there.', 404);
     const size = Math.min(Math.max(1, Math.floor(limit) || PM_PAGE), PM_PAGE_MAX);
     const rows = this.d.db.all<MessageRow>(
-      `SELECT m.id, m.conversation_id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms
+      `SELECT m.id, m.conversation_id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms, ${picSql('p')} AS pic
          FROM private_messages m JOIN users u ON u.id = m.user_id JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ?
+         LEFT JOIN private_message_pictures p ON p.message_id = m.id
         WHERE m.conversation_id = ? ${beforeId === undefined ? '' : 'AND m.id < ?'} AND ${VISIBLE}
         ORDER BY m.id DESC LIMIT ?`,
       ...(beforeId === undefined ? [me.id, id, this.d.now(), size + 1] : [me.id, id, beforeId, this.d.now(), size + 1]),
@@ -526,23 +573,23 @@ export class Messages {
 
   // ---- writing -----------------------------------------------------------------------------------------------------
 
-  private checkText(raw: unknown): string {
-    if (typeof raw !== 'string') throw new MessageError('bad_request', 'The message must be text.', 400);
-    const text = cleanMessage(raw);
-    if (text === '') throw new MessageError('empty', 'Type a message first.', 400);
+  private checkText(raw: unknown, withPicture = false): string {
+    if (typeof raw !== 'string' && !(withPicture && (raw === undefined || raw === null))) throw new MessageError('bad_request', 'The message must be text.', 400);
+    const text = cleanMessage(raw ?? '');
+    if (text === '' && !withPicture) throw new MessageError('empty', 'Type a message first.', 400);
     const length = Array.from(text).length;
     if (length > CHAT_MAX_LENGTH) throw new MessageError('too_long', `Messages can be at most ${CHAT_MAX_LENGTH} characters. Yours is ${length}.`, 400);
     return text;
   }
 
   /** The pause between messages, the half-minute limit and no repeating the last message of this conversation. */
-  private checkPace(me: User, conversationId: number | null, text: string): void {
+  private checkPace(me: User, conversationId: number | null, text: string, repeats = true): void {
     const now = this.d.now();
     const mine = this.d.db.all<{ created_ms: number }>('SELECT created_ms FROM private_messages WHERE user_id = ? AND created_ms > ? ORDER BY id DESC LIMIT ?', me.id, now - CHAT_BURST_MS, CHAT_BURST);
     const latest = mine[0];
     if (latest && now - latest.created_ms < MIN_GAP_MS) throw new MessageError('too_fast', 'Slow down: wait a moment between messages.', 429);
     if (mine.length >= CHAT_BURST) throw new MessageError('too_fast', 'You are writing too fast. Wait a few seconds.', 429);
-    if (conversationId !== null) {
+    if (conversationId !== null && repeats) {
       const same = this.d.db.get<{ body: string; created_ms: number }>('SELECT body, created_ms FROM private_messages WHERE user_id = ? AND conversation_id = ? ORDER BY id DESC LIMIT 1', me.id, conversationId);
       if (same && same.body.toLowerCase() === text.toLowerCase() && now - same.created_ms < REPEAT_MS) throw new MessageError('repeat', 'You just sent that. Write something different.', 400);
     }
@@ -563,10 +610,12 @@ export class Messages {
    * Sends a message, either into a conversation the player is in (`conversationId`) or to a player (`username`): that opens the direct chat
    * with him if there is none, as a request when the two are not friends.
    */
-  send(me: User, input: { conversationId?: unknown; username?: unknown; text: unknown }): SendResult {
+  send(me: User, input: { conversationId?: unknown; username?: unknown; text: unknown; picture?: unknown }): SendResult {
     const you = this.you(me);
     if (!you.canWrite) throw new MessageError('too_new', you.message as string, 403);
-    const text = this.checkText(input.text);
+    const withPicture = input.picture !== undefined && input.picture !== null;
+    const text = this.checkText(input.text, withPicture);
+    const picture: PictureBytes | null = withPicture ? this.d.pictures.decode(input.picture) : null;
     const now = this.d.now();
     const byId = input.conversationId !== undefined && input.conversationId !== null;
     const done = this.d.db.tx(() => {
@@ -591,7 +640,8 @@ export class Messages {
         const friend = this.areFriends(me.id, other.id);
         const check = this.directCheck(row, me.id, other, friend);
         if (!check.ok) throw new MessageError(check.code, check.message, 403);
-        this.checkPace(me, row?.id ?? null, text);
+        this.checkPace(me, row?.id ?? null, text, picture === null);
+        if (picture) this.d.pictures.checkSend(me, 'friends', friend);
         const startsRequest = !friend && (!row || row.request === null);
         if (startsRequest) this.checkNewRequest(me, other);
         if (!row) {
@@ -616,9 +666,11 @@ export class Messages {
           this.d.db.run('UPDATE conversations SET request = NULL, requester_id = NULL, request_ms = NULL WHERE id = ?', row.id);
         }
       } else {
-        this.checkPace(me, conversationId, text);
+        this.checkPace(me, conversationId, text, picture === null);
+        if (picture) this.d.pictures.checkSend(me, row?.visibility === 'public' ? 'public' : 'friends');
       }
-      const id = this.d.db.run('INSERT INTO private_messages(conversation_id, user_id, body, created_ms) VALUES (?, ?, ?, ?)', conversationId, me.id, text, now).lastInsertRowid;
+      const id = this.d.db.run('INSERT INTO private_messages(conversation_id, user_id, body, created_ms) VALUES (?, ?, ?, ?)', conversationId, me.id, text === '' ? PICTURE_BODY : text, now).lastInsertRowid;
+      if (picture) this.d.pictures.save('pm', id, picture);
       this.d.db.run('UPDATE conversations SET last_ms = ? WHERE id = ?', now, conversationId);
       this.d.db.run('UPDATE conversation_members SET read_id = ? WHERE conversation_id = ? AND user_id = ?', id, conversationId, me.id);
       this.d.db.run(
@@ -629,7 +681,11 @@ export class Messages {
       );
       return { conversationId, id };
     });
-    const message: PrivateMessage = { id: done.id, conversationId: done.conversationId, username: me.username, displayName: me.displayName, role: me.role, text, createdMs: now };
+    if (picture) {
+      this.d.pictures.noteSent(me.id);
+      this.d.pictures.prune();
+    }
+    const message: PrivateMessage = { id: done.id, conversationId: done.conversationId, username: me.username, displayName: me.displayName, role: me.role, text, createdMs: now, picture: picture ? 'ok' : null };
     for (const userId of this.recipients(done.conversationId, me.id)) this.d.publishTo(userId, 'pm', { conversationId: done.conversationId, message });
     const conversation = this.viewOf(me, done.conversationId) as ConversationView;
     return { conversationId: done.conversationId, message, conversation, you: this.you(me) };
@@ -738,16 +794,32 @@ export class Messages {
     }
   }
 
-  /** Makes a group and invites friends to it. The creator is a member at once; the others are invited. */
-  createGroup(me: User, input: { title: unknown; usernames: unknown }): { conversation: ConversationView } {
+  private cleanVisibility(raw: unknown): 'private' | 'public' {
+    if (raw === undefined || raw === null || raw === 'private') return 'private';
+    if (raw === 'public') return 'public';
+    throw new MessageError('bad_request', 'visibility must be "private" or "public".', 400);
+  }
+
+  /** How many players a group may hold (counting the ones invited and not answered). */
+  private capOf(visibility: 'private' | 'public'): number {
+    return visibility === 'public' ? MAX_PUBLIC_GROUP_MEMBERS : MAX_GROUP_MEMBERS;
+  }
+
+  /**
+   * Makes a group and invites friends to it. The creator is a member at once; the others are invited. A public group may be made with nobody invited
+   * (players find it in the list); a private one needs at least one friend.
+   */
+  createGroup(me: User, input: { title: unknown; usernames: unknown; visibility?: unknown }): { conversation: ConversationView } {
     const you = this.you(me);
     if (!you.canWrite) throw new MessageError('too_new', you.message as string, 403);
     const title = this.cleanTitle(input.title);
-    if (!Array.isArray(input.usernames) || input.usernames.length === 0) throw new MessageError('bad_request', 'Pick at least one friend to invite.', 400);
-    if (input.usernames.length > MAX_GROUP_MEMBERS - 1) throw new MessageError('group_full', `A group has at most ${MAX_GROUP_MEMBERS} players, you and ${MAX_GROUP_MEMBERS - 1} friends.`, 400);
+    const visibility = this.cleanVisibility(input.visibility);
+    const usernames = input.usernames === undefined && visibility === 'public' ? [] : input.usernames;
+    if (!Array.isArray(usernames) || (usernames.length === 0 && visibility !== 'public')) throw new MessageError('bad_request', 'Pick at least one friend to invite.', 400);
+    if (usernames.length > MAX_GROUP_MEMBERS - 1) throw new MessageError('group_full', `A group has at most ${MAX_GROUP_MEMBERS} players, you and ${MAX_GROUP_MEMBERS - 1} friends.`, 400);
     const now = this.d.now();
     const friends: UserLite[] = [];
-    for (const name of input.usernames) {
+    for (const name of usernames) {
       const f = this.findUser(name);
       if (f.id === me.id) throw new MessageError('bad_request', 'You are in the group already.', 400);
       if (!friends.some((x) => x.id === f.id)) friends.push(f);
@@ -757,7 +829,7 @@ export class Messages {
       if (made >= GROUPS_PER_HOUR) throw new MessageError('rate_limited', `You have made ${GROUPS_PER_HOUR} groups in the last hour. Wait a while.`, 429);
       if (this.groupCount(me.id) >= MAX_GROUPS) throw new MessageError('too_many_groups', `You are in ${MAX_GROUPS} groups, the most there can be. Leave one first.`, 409);
       for (const f of friends) this.checkCanInvite(me, f, null);
-      const convId = this.d.db.run("INSERT INTO conversations(kind, title, created_by, created_ms, last_ms) VALUES ('group', ?, ?, ?, ?)", title, me.id, now, now).lastInsertRowid;
+      const convId = this.d.db.run("INSERT INTO conversations(kind, title, created_by, created_ms, last_ms, visibility) VALUES ('group', ?, ?, ?, ?, ?)", title, me.id, now, now, visibility).lastInsertRowid;
       this.d.db.run("INSERT INTO conversation_members(conversation_id, user_id, state, joined_ms) VALUES (?, ?, 'member', ?)", convId, me.id, now);
       for (const f of friends) this.d.db.run("INSERT INTO conversation_members(conversation_id, user_id, state, invited_by, joined_ms) VALUES (?, ?, 'invited', ?, ?)", convId, f.id, me.id, now);
       return convId;
@@ -766,14 +838,33 @@ export class Messages {
     return { conversation: this.viewOf(me, id) as ConversationView };
   }
 
-  /** Invites one more friend of the member who asks (any member of the group, not only its creator). The friend still has to accept. */
-  invite(me: User, conversationId: unknown, username: unknown): { conversation: ConversationView } {
+  /**
+   * Invites friends of the member who asks (any member of the group, not only its creator): one username or a list. Each friend still has to accept.
+   * All or none: if one of them cannot be invited, nobody is, and the answer says who and why.
+   */
+  invite(me: User, conversationId: unknown, who: unknown): { conversation: ConversationView } {
     const row = this.memberGroup(me, conversationId);
-    const friend = this.findUser(username);
+    const names: unknown[] = Array.isArray(who) ? who : [who];
+    if (names.length === 0) throw new MessageError('bad_request', 'Pick at least one friend to invite.', 400);
+    if (names.length > MAX_PUBLIC_GROUP_MEMBERS) throw new MessageError('bad_request', 'Pick fewer friends.', 400);
+    const friends: UserLite[] = [];
+    for (const name of names) {
+      const f = this.findUser(name);
+      if (!friends.some((x) => x.id === f.id)) friends.push(f);
+    }
+    const cap = this.capOf(row.visibility);
     this.d.db.tx(() => {
-      if (this.memberIds(row.id).length >= MAX_GROUP_MEMBERS) throw new MessageError('group_full', `A group has at most ${MAX_GROUP_MEMBERS} players.`, 409);
-      this.checkCanInvite(me, friend, row.id);
-      this.d.db.run("INSERT INTO conversation_members(conversation_id, user_id, state, invited_by, joined_ms) VALUES (?, ?, 'invited', ?, ?)", row.id, friend.id, me.id, this.d.now());
+      const count = this.memberIds(row.id).length;
+      if (count >= cap) throw new MessageError('group_full', `A group has at most ${cap} players.`, 409);
+      if (count + friends.length > cap) throw new MessageError('group_full', `There is room for ${cap - count} more ${cap - count === 1 ? 'player' : 'players'} in this group, and you picked ${friends.length}.`, 409);
+      for (const friend of friends) {
+        this.checkCanInvite(me, friend, row.id);
+        if (this.d.db.get('SELECT 1 AS x FROM group_removed WHERE conversation_id = ? AND user_id = ?', row.id, friend.id)) {
+          if (row.created_by !== me.id) throw new MessageError('removed_from_group', `${friend.displayName} was removed from this group. Only the player who made the group can invite them again.`, 403);
+          this.d.db.run('DELETE FROM group_removed WHERE conversation_id = ? AND user_id = ?', row.id, friend.id);
+        }
+        this.d.db.run("INSERT INTO conversation_members(conversation_id, user_id, state, invited_by, joined_ms) VALUES (?, ?, 'invited', ?, ?)", row.id, friend.id, me.id, this.d.now());
+      }
     });
     this.nudge(this.memberIds(row.id));
     return { conversation: this.viewOf(me, row.id) as ConversationView };
@@ -785,8 +876,11 @@ export class Messages {
     const target = this.findUserAnyState(username);
     if (target.id === me.id) throw new MessageError('bad_request', 'Use Leave to leave your own group.', 400);
     const before = this.memberIds(row.id);
+    const was = this.d.db.get<{ state: 'member' | 'invited' }>('SELECT state FROM conversation_members WHERE conversation_id = ? AND user_id = ?', row.id, target.id)?.state;
     const gone = this.d.db.run('DELETE FROM conversation_members WHERE conversation_id = ? AND user_id = ?', row.id, target.id).changes;
     if (gone === 0) throw new MessageError('bad_request', `${target.displayName} is not in that group.`, 404);
+    // Somebody who was IN the group cannot walk back into it (a public group lets anyone in); taking back an invitation is not a removal.
+    if (was === 'member') this.d.db.run('INSERT OR REPLACE INTO group_removed(conversation_id, user_id, created_ms) VALUES (?, ?, ?)', row.id, target.id, this.d.now());
     this.nudge(before);
     return { conversation: this.viewOf(me, row.id) as ConversationView };
   }
@@ -825,6 +919,75 @@ export class Messages {
     this.d.db.run('UPDATE conversations SET title = ? WHERE id = ?', this.cleanTitle(title), row.id);
     this.nudge(this.memberIds(row.id));
     return { conversation: this.viewOf(me, row.id) as ConversationView };
+  }
+
+  /** The creator makes the group public (listed, anybody can join) or private (invited friends only). */
+  setVisibility(me: User, conversationId: unknown, visibility: unknown): { conversation: ConversationView } {
+    const row = this.ownGroup(me, conversationId);
+    if (visibility !== 'public' && visibility !== 'private') throw new MessageError('bad_request', 'visibility must be "private" or "public".', 400);
+    if (visibility !== row.visibility) {
+      if (visibility === 'private' && this.memberIds(row.id).length > MAX_GROUP_MEMBERS) {
+        throw new MessageError('group_full', `A private group has at most ${MAX_GROUP_MEMBERS} players. Remove some players first, then make it private.`, 409);
+      }
+      this.d.db.run('UPDATE conversations SET visibility = ? WHERE id = ?', visibility, row.id);
+      this.nudge(this.memberIds(row.id));
+    }
+    return { conversation: this.viewOf(me, row.id) as ConversationView };
+  }
+
+  // ---- public groups -----------------------------------------------------------------------------------------------
+
+  /** The public groups, the busiest first; `query` keeps only the ones whose name contains it. Groups whose creator was banned from the game are left out. */
+  publicGroups(me: User, query?: unknown): PublicGroupsView {
+    const q = typeof query === 'string' ? cleanMessage(query).slice(0, MAX_GROUP_TITLE) : '';
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const now = this.d.now();
+    const rows = this.d.db.all<{ id: number; title: string; created_by: number | null; n: number; mine: number }>(
+      `SELECT c.id, c.title, c.created_by,
+              (SELECT COUNT(*) FROM conversation_members m WHERE m.conversation_id = c.id AND m.state = 'member') AS n,
+              EXISTS (SELECT 1 FROM conversation_members m WHERE m.conversation_id = c.id AND m.user_id = ? AND m.state = 'member') AS mine
+         FROM conversations c
+        WHERE c.kind = 'group' AND c.visibility = 'public'
+          AND NOT EXISTS (SELECT 1 FROM user_bans ub WHERE ub.user_id = c.created_by AND (ub.until_ms IS NULL OR ub.until_ms > ?))
+          AND NOT EXISTS (SELECT 1 FROM group_removed gr WHERE gr.conversation_id = c.id AND gr.user_id = ?)
+          ${q === '' ? '' : "AND c.title LIKE ? ESCAPE '\\'"}
+        ORDER BY n DESC, c.last_ms DESC, c.id DESC LIMIT ?`,
+      ...(q === '' ? [me.id, now, me.id, PUBLIC_GROUPS_SHOWN] : [me.id, now, me.id, like, PUBLIC_GROUPS_SHOWN]),
+    );
+    return {
+      groups: rows.map((r) => {
+        const creator = r.created_by === null ? undefined : this.userById(r.created_by);
+        return { id: r.id, title: r.title, memberCount: r.n, max: MAX_PUBLIC_GROUP_MEMBERS, creator: creator ? { username: creator.username, displayName: creator.displayName, role: creator.role } : null, joined: r.mine === 1 };
+      }),
+      max: MAX_PUBLIC_GROUP_MEMBERS,
+    };
+  }
+
+  /** A player joins a public group at once (he reads only what is said after he joins). */
+  join(me: User, conversationId: unknown): { conversation: ConversationView } {
+    const you = this.you(me);
+    if (!you.canWrite) throw new MessageError('too_new', you.message as string, 403);
+    const id = this.idOf(conversationId, 'conversation');
+    const now = this.d.now();
+    this.d.db.tx(() => {
+      const c = this.d.db.get<{ id: number; visibility: 'private' | 'public'; created_by: number | null }>("SELECT id, visibility, created_by FROM conversations WHERE id = ? AND kind = 'group'", id);
+      if (!c || c.visibility !== 'public' || (c.created_by !== null && this.d.isBanned(c.created_by))) throw new MessageError('no_such_conversation', 'That group is not there, or it is not public.', 404);
+      const mine = this.d.db.get<{ state: 'member' | 'invited' }>('SELECT state FROM conversation_members WHERE conversation_id = ? AND user_id = ?', id, me.id);
+      if (mine?.state === 'member') throw new MessageError('bad_request', 'You are in that group already.', 409);
+      if (this.d.db.get('SELECT 1 AS x FROM group_removed WHERE conversation_id = ? AND user_id = ?', id, me.id)) {
+        throw new MessageError('removed_from_group', 'The player who made that group removed you from it. You cannot join it again.', 403);
+      }
+      if (this.groupCount(me.id) >= MAX_GROUPS) throw new MessageError('too_many_groups', `You are in ${MAX_GROUPS} groups, the most there can be. Leave one first.`, 409);
+      if (!mine && this.memberIds(id).length >= MAX_PUBLIC_GROUP_MEMBERS) throw new MessageError('group_full', `That group is full (${MAX_PUBLIC_GROUP_MEMBERS} players).`, 409);
+      const newest = this.d.db.get<{ m: number | null }>('SELECT MAX(id) AS m FROM private_messages WHERE conversation_id = ?', id)?.m ?? 0;
+      if (mine) {
+        this.d.db.run("UPDATE conversation_members SET state = 'member', joined_ms = ?, since_id = ?, read_id = ? WHERE conversation_id = ? AND user_id = ?", now, newest, newest, id, me.id);
+      } else {
+        this.d.db.run("INSERT INTO conversation_members(conversation_id, user_id, state, invited_by, joined_ms, since_id, read_id) VALUES (?, ?, 'member', NULL, ?, ?, ?)", id, me.id, now, newest, newest);
+      }
+    });
+    this.nudge(this.memberIds(id));
+    return { conversation: this.viewOf(me, id) as ConversationView };
   }
 
   // ---- blocking ----------------------------------------------------------------------------------------------------
@@ -868,8 +1031,9 @@ export class Messages {
     const id = this.idOf(messageId, 'messageId');
     const now = this.d.now();
     const msg = this.d.db.get<MessageRow & { author_id: number }>(
-      `SELECT m.id, m.conversation_id, m.user_id AS author_id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms
+      `SELECT m.id, m.conversation_id, m.user_id AS author_id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms, ${picSql('p')} AS pic
          FROM private_messages m JOIN users u ON u.id = m.user_id JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ? AND cm.state = 'member'
+         LEFT JOIN private_message_pictures p ON p.message_id = m.id
         WHERE m.id = ? AND ${VISIBLE}`,
       me.id,
       id,
@@ -881,8 +1045,9 @@ export class Messages {
     const recent = this.d.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM private_reports WHERE reporter_id = ? AND created_ms > ?', me.id, now - 3_600_000)?.n ?? 0;
     if (recent >= PM_REPORTS_PER_HOUR) throw new MessageError('rate_limited', 'You have sent a lot of reports. Wait a while before sending more.', 429);
     const before = this.d.db.all<MessageRow>(
-      `SELECT m.id, m.conversation_id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms
+      `SELECT m.id, m.conversation_id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms, ${picSql('p')} AS pic
          FROM private_messages m JOIN users u ON u.id = m.user_id JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ?
+         LEFT JOIN private_message_pictures p ON p.message_id = m.id
         WHERE m.conversation_id = ? AND m.id < ? AND ${VISIBLE} ORDER BY m.id DESC LIMIT ?`,
       me.id,
       msg.conversation_id,
@@ -890,15 +1055,19 @@ export class Messages {
       now,
       REPORT_CONTEXT,
     );
-    const lines: ReportedLine[] = [...before.reverse(), msg].map((r) => ({ username: r.username, displayName: r.display_name, text: r.body, createdMs: r.created_ms, reported: r.id === id }));
+    const lines: ReportedLine[] = [...before.reverse(), msg].map((r) => ({ username: r.username, displayName: r.display_name, text: textOf(r), createdMs: r.created_ms, reported: r.id === id, picture: r.pic !== null }));
+    // The report keeps its own copy of the reported picture (once per message), so the owner can look at it after the writer deleted the message or it expired.
+    const copy = this.d.db.get('SELECT 1 AS x FROM private_reports WHERE message_id = ? AND picture IS NOT NULL', id) === undefined ? this.d.pictures.image('pm', id) : null;
     this.d.db.run(
-      'INSERT OR IGNORE INTO private_reports(message_id, conversation_id, reporter_id, author_id, created_ms, context_json) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT OR IGNORE INTO private_reports(message_id, conversation_id, reporter_id, author_id, created_ms, context_json, picture, picture_mime) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       id,
       msg.conversation_id,
       me.id,
       msg.author_id,
       now,
       JSON.stringify(lines),
+      copy ? copy.data : null,
+      copy ? copy.mime : null,
     );
   }
 
@@ -919,6 +1088,7 @@ export class Messages {
     if (msg.user_id !== me.id) throw new MessageError('bad_request', 'You can only delete your own messages.', 403);
     if (msg.deleted_ms !== null) return { ok: true };
     this.d.db.run('UPDATE private_messages SET deleted_ms = ? WHERE id = ? AND deleted_ms IS NULL', this.d.now(), id);
+    this.d.pictures.drop('pm', id); // a report about it has its own copy
     const members = this.memberIds(msg.conversation_id);
     // Every open page takes that one message off the screen at once (an older one it holds is not found again by a refresh of the newest page).
     for (const member of new Set(members)) this.d.publishTo(member, 'pm_deleted', { conversationId: msg.conversation_id, id });
@@ -930,8 +1100,8 @@ export class Messages {
 
   /** The open reports, newest first: only what was reported, never the conversations. */
   adminView(): AdminPrivateView {
-    const rows = this.d.db.all<{ message_id: number; conversation_id: number; author_id: number; reporters: number; first_ms: number; first_id: number }>(
-      `SELECT message_id, conversation_id, author_id, COUNT(*) AS reporters, MIN(created_ms) AS first_ms, MIN(id) AS first_id
+    const rows = this.d.db.all<{ message_id: number; conversation_id: number; author_id: number; reporters: number; first_ms: number; first_id: number; pic: number }>(
+      `SELECT message_id, conversation_id, author_id, COUNT(*) AS reporters, MIN(created_ms) AS first_ms, MIN(id) AS first_id, MAX(picture IS NOT NULL) AS pic
          FROM private_reports WHERE resolved_ms IS NULL GROUP BY message_id ORDER BY first_ms DESC, message_id DESC LIMIT 100`,
     );
     const reports = rows.map((r): PrivateReportEntry => {
@@ -946,7 +1116,8 @@ export class Messages {
         author: author ? { username: author.username, displayName: author.displayName, role: author.role } : { username: '(gone)', displayName: '(gone)', role: 'player' },
         reporters: r.reporters,
         firstReportedMs: r.first_ms,
-        lines: JSON.parse(context) as ReportedLine[],
+        picture: r.pic === 1,
+        lines: (JSON.parse(context) as Partial<ReportedLine>[]).map((l) => ({ username: l.username ?? '', displayName: l.displayName ?? '', text: l.text ?? '', createdMs: l.createdMs ?? 0, reported: l.reported === true, picture: l.picture === true })),
         authorOpenReports: open,
       };
     });
@@ -964,7 +1135,34 @@ export class Messages {
         return;
       }
       this.d.db.run('UPDATE private_reports SET resolved_ms = ? WHERE message_id = ? AND resolved_ms IS NULL', this.d.now(), id);
+      this.d.db.run('UPDATE private_reports SET picture = NULL, picture_mime = NULL WHERE message_id = ?', id); // nothing left to look at
     });
     return { ok: true, duplicate };
+  }
+
+  /** The picture of a message in a conversation the player is in (and may read: after he joined, not from somebody he blocked or the owner banned). */
+  pictureOf(me: User, messageId: unknown): PictureBytes & { createdMs: number } {
+    const id = this.idOf(messageId, 'messageId');
+    const row = this.d.db.get<{ id: number }>(
+      `SELECT m.id FROM private_messages m JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = ? AND cm.state = 'member'
+        WHERE m.id = ? AND ${VISIBLE}`,
+      me.id,
+      id,
+      this.d.now(),
+    );
+    const image = row ? this.d.pictures.image('pm', id) : null;
+    if (!image) throw new MessageError('no_such_message', 'That picture is gone.', 404);
+    return image;
+  }
+
+  /** The owner looks at the copy of a reported private picture (only while a report about it is open). */
+  reportPicture(messageId: unknown): PictureBytes {
+    const id = this.idOf(messageId, 'messageId');
+    const r = this.d.db.get<{ picture: Uint8Array; picture_mime: PictureBytes['mime'] }>(
+      'SELECT picture, picture_mime FROM private_reports WHERE message_id = ? AND resolved_ms IS NULL AND picture IS NOT NULL ORDER BY id LIMIT 1',
+      id,
+    );
+    if (!r) throw new MessageError('no_such_message', 'There is no picture in an open report about that message.', 404);
+    return { mime: r.picture_mime, data: r.picture };
   }
 }

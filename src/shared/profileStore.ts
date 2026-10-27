@@ -70,6 +70,26 @@ class ProfileStore {
     this.set({ avatars: next });
   }
 
+  /** A player changed his username: his picture and his online dot move to the new name. */
+  onRenamed(from: string, to: string): void {
+    if (!this.signedIn) return;
+    const key = Object.keys(this.state.avatars).find((k) => k.toLowerCase() === from.toLowerCase());
+    const online = [...this.state.online].find((k) => k.toLowerCase() === from.toLowerCase());
+    if (key === undefined && online === undefined) return;
+    const avatars = { ...this.state.avatars };
+    if (key !== undefined) {
+      const version = avatars[key] as number;
+      delete avatars[key];
+      avatars[to] = version;
+    }
+    const names = new Set(this.state.online);
+    if (online !== undefined) {
+      names.delete(online);
+      names.add(to);
+    }
+    this.set({ avatars, online: names });
+  }
+
   private async pollOnline(): Promise<void> {
     if (!this.signedIn) return;
     try {

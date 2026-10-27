@@ -192,6 +192,10 @@ describe('who may read and write', () => {
       ['POST', '/api/messages/group/remove', { conversationId: 1, username: 'bob' }],
       ['POST', '/api/messages/group/leave', { conversationId: 1 }],
       ['POST', '/api/messages/group/rename', { conversationId: 1, title: 'y' }],
+      ['POST', '/api/messages/group/join', { conversationId: 1 }],
+      ['POST', '/api/messages/group/visibility', { conversationId: 1, visibility: 'public' }],
+      ['GET', '/api/messages/groups/public', undefined],
+      ['GET', '/api/messages/picture/1', undefined],
       ['GET', '/api/admin/private-reports', undefined],
       ['POST', '/api/admin/private-reports/dismiss', { requestId: requestId(), messageId: 1 }],
     ];
@@ -1055,8 +1059,8 @@ describe('the database and the code', () => {
         d.exec(`PRAGMA user_version = ${m.version}`);
       }
       for (const id of [1, 2, 3]) d.run("INSERT INTO users(id, username, display_name, pw_hash, role, created_ms) VALUES (?, ?, ?, 'x', 'player', 1)", id, `u${id}`, `u${id}`);
-      expect(migrate(d)).toEqual([21, 22, 23, 24, 25]); // (25 adds the empty moderator and badge tables; 24 adds the empty company-picture table; 23 adds the Learn tables; 22 adds deleting your own private message, pictures and the weekly marks)
-      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(25);
+      expect(migrate(d)).toEqual([21, 22, 23, 24, 25, 26]); // (26 adds public groups, pictures and the username log; 25 adds the empty moderator and badge tables; 24 adds the empty company-picture table; 23 adds the Learn tables; 22 adds deleting your own private message, pictures and the weekly marks)
+      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(26);
       for (const table of ['conversations', 'conversation_members', 'private_messages', 'blocks', 'private_reports']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)?.n).toBe(0);
       expect(migrate(d)).toEqual([]);
       // A conversation is direct (two different players, the smaller number first) or a group (with a name).

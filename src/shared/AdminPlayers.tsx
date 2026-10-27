@@ -160,6 +160,12 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
                       <strong>{p.username}</strong>
                     </button>
                     <RoleBadge role={p.role} />
+                    {p.formerNames.length > 0 && (
+                      <span className="muted former-names" data-testid={`admin-former-${p.username}`}>
+                        {' '}
+                        was {p.formerNames.join(', ')}
+                      </span>
+                    )}
                     {p.banned && (
                       <span className="badge-banned" data-testid={`admin-banned-${p.username}`}>
                         Banned

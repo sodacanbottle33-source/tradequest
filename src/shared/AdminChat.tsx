@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from './api';
 import { newRequestId, whenText } from './adminUtil';
 import { MUTE_CHOICES } from './chatUtil';
+import { MessagePicture } from './ChatPicture';
 import { problemText } from './playersUtil';
 import type { AdminChatView, AdminPrivateView } from './types';
 
@@ -54,6 +55,27 @@ export function AdminChat({ staff = false }: { staff?: boolean }) {
           {message.text}
         </p>
       )}
+      {!staff && view !== null && (
+        <section className="card" aria-label="Pictures in chats" data-testid="admin-pictures">
+          <h2>
+            Pictures in chats <span className="h2-note">{view.picturesOn ? 'on' : 'off'}</span>
+          </h2>
+          <p className="hint" data-testid="admin-pictures-state">
+            {view.picturesOn
+              ? 'Players can send pictures in chats with friends, in groups and in the public chat room. A picture is kept for 7 days.'
+              : 'Pictures are switched off. Nobody can send a new picture. Pictures already sent still show until they expire.'}
+          </p>
+          <button
+            type="button"
+            className={view.picturesOn ? 'btn btn-small btn-sell' : 'btn btn-small'}
+            disabled={busy}
+            onClick={() => void run(view.picturesOn ? 'Pictures in chats are switched off.' : 'Pictures in chats are switched on.', () => api.adminChatPictures({ requestId: newRequestId(), on: !view.picturesOn }))}
+            data-testid="admin-pictures-toggle"
+          >
+            {view.picturesOn ? 'Switch pictures off' : 'Switch pictures on'}
+          </button>
+        </section>
+      )}
       <section className="card" aria-label="Reported messages">
         <h2>
           Reported messages <span className="h2-note">{view ? view.reports.length : ''}</span>
@@ -80,6 +102,7 @@ export function AdminChat({ staff = false }: { staff?: boolean }) {
                   <tr key={r.messageId} data-testid={`admin-chat-report-${r.messageId}`}>
                     <td className="chat-text">
                       {r.text}
+                      {r.picture && <MessagePicture kind="chat" messageId={r.messageId} state={r.picture} />}
                       <div className="muted">{whenText(r.createdMs)}</div>
                     </td>
                     <td>
@@ -155,6 +178,19 @@ export function AdminChat({ staff = false }: { staff?: boolean }) {
                     <li key={i} className={l.reported ? 'pm-report-line reported' : 'pm-report-line'}>
                       <strong>{l.displayName}</strong> <span className="muted">{whenText(l.createdMs)}</span>
                       <span className="chat-text">{l.text}</span>
+                      {l.picture && !l.reported && (
+                        <span className="muted" data-testid={`admin-private-line-picture-${r.messageId}-${i}`}>
+                          {' '}
+                          (sent a picture)
+                        </span>
+                      )}
+                      {l.reported && r.picture && <MessagePicture kind="report" messageId={r.messageId} state="ok" />}
+                      {l.reported && !r.picture && l.picture && (
+                        <span className="muted" data-testid={`admin-private-no-copy-${r.messageId}`}>
+                          {' '}
+                          (this message had a picture, but no copy was kept)
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>

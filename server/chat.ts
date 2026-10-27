@@ -10,9 +10,12 @@
 //     ban a player from the chat, or lift either. Each of those is written once to the admin log. Muting and banning never touch playing.
 //   • moderators (docs/world.md §21) share these tools for ordinary players only: they cannot act on the owner, on another moderator or on
 //     themselves, mute for at most 7 days, ban from the chat never (only the owner does, for good), and cannot lift what the owner decided.
+//   • a message can also carry one small picture (server/chatPictures.ts, docs/world.md §24); the same slow-down applies, a picture needs an account that is
+//     older than a text, and a picture that somebody reported stays until the report is closed.
 // Only the newest CHAT_KEEP messages are kept.
 
 import { roleSql, type Role, type User } from './auth';
+import { PICTURE_BODY, type ChatPictures, type PictureBytes, type PictureState } from './chatPictures';
 import { cleanName } from './social';
 import type { Logger } from './log';
 import type { Db } from './sqlite';
@@ -71,8 +74,11 @@ export interface ChatMessage {
   readonly username: string;
   readonly displayName: string;
   readonly role: Role;
+  /** What the player typed (empty for a message that is only a picture). */
   readonly text: string;
   readonly createdMs: number;
+  /** The picture the message carries: there is one ('ok'), it expired ('expired'), or none (null). */
+  readonly picture: PictureState | null;
 }
 
 /** Whether the player can write right now, and if not, why and until when. */
@@ -90,12 +96,14 @@ export interface ChatView {
   /** True when there are older messages than the first one shown. */
   readonly more: boolean;
   readonly you: ChatYou;
-  readonly limits: { readonly maxLength: number; readonly minGapMs: number };
+  /** `picturesOn`: the owner has not switched pictures off (the page hides its picture button when he has). */
+  readonly limits: { readonly maxLength: number; readonly minGapMs: number; readonly picturesOn: boolean };
 }
 
 export interface ChatReportEntry {
   readonly messageId: number;
   readonly text: string;
+  readonly picture: PictureState | null;
   readonly username: string;
   readonly displayName: string;
   readonly createdMs: number;
@@ -124,6 +132,7 @@ export interface AdminChatView {
 
 export interface ChatDeps {
   readonly db: Db;
+  readonly pictures: ChatPictures;
   readonly log: Logger;
   readonly now: () => number;
   /** Sends an event to every signed-in page. */
@@ -141,6 +150,7 @@ interface MessageRow {
   role: Role;
   body: string;
   created_ms: number;
+  pic: PictureState | null;
 }
 
 interface Restriction {
@@ -177,6 +187,9 @@ function cleanReason(value: unknown): string {
   return text;
 }
 
+/** SQL that gives the state of a message's picture: NULL (none), 'expired' or 'ok'. `p` is chat_message_pictures joined on the message. */
+const PIC = "(CASE WHEN p.message_id IS NULL THEN NULL WHEN p.data IS NULL THEN 'expired' ELSE 'ok' END)";
+
 export class Chat {
   constructor(private readonly d: ChatDeps) {}
 
@@ -206,7 +219,7 @@ export class Chat {
   }
 
   private toMessage(r: MessageRow): ChatMessage {
-    return { id: r.id, username: r.username, displayName: r.display_name, role: r.role, text: r.body, createdMs: r.created_ms };
+    return { id: r.id, username: r.username, displayName: r.display_name, role: r.role, text: r.pic !== null && r.body === PICTURE_BODY ? '' : r.body, createdMs: r.created_ms, picture: r.pic };
   }
 
   /** The newest messages (oldest first), or the page before `beforeId`. Messages of players the owner banned from the game are left out. */
@@ -214,8 +227,8 @@ export class Chat {
     const size = Math.min(Math.max(1, Math.floor(limit) || CHAT_PAGE), CHAT_PAGE_MAX);
     const now = this.d.now();
     const rows = this.d.db.all<MessageRow>(
-      `SELECT m.id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms
-         FROM chat_messages m JOIN users u ON u.id = m.user_id
+      `SELECT m.id, u.username, u.display_name, ${roleSql('u')} AS role, m.body, m.created_ms, ${PIC} AS pic
+         FROM chat_messages m JOIN users u ON u.id = m.user_id LEFT JOIN chat_message_pictures p ON p.message_id = m.id
         WHERE m.deleted_ms IS NULL ${beforeId === undefined ? '' : 'AND m.id < ?'}
           AND NOT EXISTS (SELECT 1 FROM user_bans b WHERE b.user_id = m.user_id AND (b.until_ms IS NULL OR b.until_ms > ?))
         ORDER BY m.id DESC LIMIT ?`,
@@ -223,33 +236,63 @@ export class Chat {
     );
     const more = rows.length > size;
     const shown = rows.slice(0, size).reverse().map((r) => this.toMessage(r));
-    return { messages: shown, more, you: this.you(me), limits: { maxLength: CHAT_MAX_LENGTH, minGapMs: MIN_GAP_MS } };
+    return { messages: shown, more, you: this.you(me), limits: { maxLength: CHAT_MAX_LENGTH, minGapMs: MIN_GAP_MS, picturesOn: this.d.pictures.enabled() } };
   }
 
   // ---- writing -----------------------------------------------------------------------------------------------------
 
-  /** Posts a message. Throws ChatError with the reason when the player cannot write or writes too much. */
-  send(me: User, raw: unknown): ChatMessage {
+  /**
+   * Posts a message, with a picture if `pictureRaw` is given ("data:image/jpeg;base64,..."; then the text may be empty: it is a caption).
+   * Throws ChatError with the reason when the player cannot write or writes too much, and PictureProblem when the picture is not allowed.
+   */
+  send(me: User, raw: unknown, pictureRaw?: unknown): ChatMessage {
     const now = this.d.now();
     const you = this.you(me);
     if (!you.canWrite) throw new ChatError(you.reason === 'banned' ? 'chat_banned' : you.reason === 'muted' ? 'muted' : 'too_new', you.message as string, 403);
-    if (typeof raw !== 'string') throw new ChatError('bad_request', 'The message must be text.', 400);
-    const text = cleanMessage(raw);
-    if (text === '') throw new ChatError('empty', 'Type a message first.', 400);
+    const withPicture = pictureRaw !== undefined && pictureRaw !== null;
+    if (typeof raw !== 'string' && !(withPicture && (raw === undefined || raw === null))) throw new ChatError('bad_request', 'The message must be text.', 400);
+    const text = cleanMessage(raw ?? '');
+    if (text === '' && !withPicture) throw new ChatError('empty', 'Type a message first.', 400);
     if (Array.from(text).length > CHAT_MAX_LENGTH) throw new ChatError('too_long', `Messages can be at most ${CHAT_MAX_LENGTH} characters. Yours is ${Array.from(text).length}.`, 400);
+    const picture: PictureBytes | null = withPicture ? this.d.pictures.decode(pictureRaw) : null;
     const mine = this.d.db.all<{ body: string; created_ms: number }>('SELECT body, created_ms FROM chat_messages WHERE user_id = ? AND created_ms > ? ORDER BY id DESC LIMIT ?', me.id, now - CHAT_BURST_MS, CHAT_BURST);
     const last = mine[0];
     if (last && now - last.created_ms < MIN_GAP_MS) throw new ChatError('too_fast', 'Slow down: wait a moment between messages.', 429);
     if (mine.length >= CHAT_BURST) throw new ChatError('too_fast', 'You are writing too fast. Wait a few seconds.', 429);
-    if (last && last.body.toLowerCase() === text.toLowerCase() && now - last.created_ms < REPEAT_MS) throw new ChatError('repeat', 'You just sent that. Write something different.', 400);
+    if (picture) this.d.pictures.checkSend(me, 'public');
+    else if (last && last.body.toLowerCase() === text.toLowerCase() && now - last.created_ms < REPEAT_MS) throw new ChatError('repeat', 'You just sent that. Write something different.', 400);
     const id = this.d.db.tx(() => {
-      const newId = this.d.db.run('INSERT INTO chat_messages(user_id, body, created_ms) VALUES (?, ?, ?)', me.id, text, now).lastInsertRowid;
+      const newId = this.d.db.run('INSERT INTO chat_messages(user_id, body, created_ms) VALUES (?, ?, ?)', me.id, text === '' ? PICTURE_BODY : text, now).lastInsertRowid;
+      if (picture) this.d.pictures.save('chat', newId, picture);
       this.d.db.run('DELETE FROM chat_messages WHERE id <= ?', newId - CHAT_KEEP);
       return newId;
     });
-    const message: ChatMessage = { id, username: me.username, displayName: me.displayName, role: me.role, text, createdMs: now };
+    if (picture) {
+      this.d.pictures.noteSent(me.id);
+      this.d.pictures.prune();
+    }
+    const message: ChatMessage = { id, username: me.username, displayName: me.displayName, role: me.role, text, createdMs: now, picture: picture ? 'ok' : null };
     this.d.publish('chat', { message });
     return message;
+  }
+
+  /** The picture of a chat message, for the page to show. A message that was deleted, or whose writer is banned from the game, shows nothing to players (the owner and the moderators still see a reported one). */
+  pictureOf(me: User, messageId: unknown): PictureBytes & { createdMs: number } {
+    const id = this.messageId(messageId);
+    const row = this.d.db.get<{ deleted_ms: number | null; banned: number }>(
+      `SELECT m.deleted_ms, EXISTS (SELECT 1 FROM user_bans b WHERE b.user_id = m.user_id AND (b.until_ms IS NULL OR b.until_ms > ?)) AS banned FROM chat_messages m WHERE m.id = ?`,
+      this.d.now(),
+      id,
+    );
+    if (!row || (me.role === 'player' && (row.deleted_ms !== null || row.banned === 1))) throw new ChatError('no_such_message', 'That picture is gone.', 404);
+    const image = this.d.pictures.image('chat', id);
+    if (!image) throw new ChatError('no_such_message', 'That picture is gone.', 404);
+    return image;
+  }
+
+  /** Empties the picture of a deleted message unless somebody's report about it is still open (the owner may need to see it). */
+  private dropPictureUnlessReported(id: number): void {
+    if (this.d.db.get('SELECT 1 AS x FROM chat_reports WHERE message_id = ? AND resolved_ms IS NULL', id) === undefined) this.d.pictures.drop('chat', id);
   }
 
   /** A player reports a message for the owner to look at. Reporting the same message twice changes nothing. */
@@ -277,6 +320,7 @@ export class Chat {
     if (msg.user_id !== me.id) throw new ChatError('bad_request', 'You can only delete your own messages.', 403);
     if (msg.deleted_ms !== null) return { ok: true };
     this.d.db.run('UPDATE chat_messages SET deleted_ms = ?, deleted_by = ? WHERE id = ? AND deleted_ms IS NULL', this.d.now(), me.id, id);
+    this.dropPictureUnlessReported(id);
     this.d.publish('chat_removed', { id });
     return { ok: true };
   }
@@ -324,6 +368,7 @@ export class Chat {
       }
       this.d.db.run('UPDATE chat_messages SET deleted_ms = ?, deleted_by = ? WHERE id = ? AND deleted_ms IS NULL', now, admin.id, id);
       this.d.db.run('UPDATE chat_reports SET resolved_ms = ? WHERE message_id = ? AND resolved_ms IS NULL', now, id);
+      this.d.pictures.drop('chat', id);
     });
     if (!duplicate && msg.deleted_ms === null) this.d.publish('chat_removed', { id });
     return { ok: true, duplicate };
@@ -431,9 +476,10 @@ export class Chat {
     const now = this.d.now();
     const owner = viewer.role === 'owner';
     this.d.db.run("DELETE FROM chat_restrictions WHERE kind = 'mute' AND until_ms <= ?", now);
-    const reports = this.d.db.all<{ message_id: number; body: string; created_ms: number; username: string; display_name: string; reporters: number; first_ms: number; kind: 'mute' | 'ban' | null }>(
-      `SELECT m.id AS message_id, m.body, m.created_ms, u.username, u.display_name, COUNT(r.id) AS reporters, MIN(r.created_ms) AS first_ms, cr.kind
+    const reports = this.d.db.all<{ message_id: number; body: string; created_ms: number; username: string; display_name: string; reporters: number; first_ms: number; kind: 'mute' | 'ban' | null; pic: PictureState | null }>(
+      `SELECT m.id AS message_id, m.body, m.created_ms, u.username, u.display_name, COUNT(r.id) AS reporters, MIN(r.created_ms) AS first_ms, cr.kind, ${PIC} AS pic
          FROM chat_reports r JOIN chat_messages m ON m.id = r.message_id JOIN users u ON u.id = m.user_id LEFT JOIN chat_restrictions cr ON cr.user_id = u.id
+         LEFT JOIN chat_message_pictures p ON p.message_id = m.id
         WHERE r.resolved_ms IS NULL AND (m.deleted_ms IS NULL OR m.deleted_by = m.user_id)
           AND (? OR (u.role <> 'owner' AND NOT EXISTS (SELECT 1 FROM moderators mo WHERE mo.user_id = u.id)))
         GROUP BY m.id ORDER BY first_ms DESC, m.id DESC LIMIT 100`,
@@ -444,7 +490,7 @@ export class Chat {
          FROM chat_restrictions cr JOIN users u ON u.id = cr.user_id JOIN users b ON b.id = cr.by_user_id ORDER BY cr.created_ms DESC LIMIT 200`,
     );
     return {
-      reports: reports.map((r) => ({ messageId: r.message_id, text: r.body, username: r.username, displayName: r.display_name, createdMs: r.created_ms, reporters: r.reporters, firstReportedMs: r.first_ms, restriction: r.kind })),
+      reports: reports.map((r) => ({ messageId: r.message_id, text: r.pic !== null && r.body === PICTURE_BODY ? '' : r.body, picture: r.pic, username: r.username, displayName: r.display_name, createdMs: r.created_ms, reporters: r.reporters, firstReportedMs: r.first_ms, restriction: r.kind })),
       restricted: restricted.map((r) => ({ username: r.username, displayName: r.display_name, kind: r.kind, untilMs: r.until_ms, reason: r.reason, sinceMs: r.created_ms, by: r.by, byOwner: r.by_owner === 1 })),
     };
   }

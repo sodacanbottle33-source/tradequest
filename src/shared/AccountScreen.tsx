@@ -8,6 +8,7 @@ import { formatBps, formatCents, formatShares, toneOf } from './format';
 import { OpenOrders } from './OpenOrders';
 import { sharedStore, useShared } from './store';
 import type { Trade } from './types';
+import { UsernamePanel } from './UsernamePanel';
 
 /** What a trade is called in the list: the market's own trades say why they happened. */
 export function tradeLabel(t: Trade): string {
@@ -102,6 +103,8 @@ export function AccountScreen({ onOpen }: { onOpen: (ticker: string) => void }) 
           {career && career.reservedCents > 0 ? 'Cash set aside in open limit orders is still yours and counts in net worth; it comes back when an order fills, ends or is cancelled. ' : ''}Holdings are valued at the price you could sell at right now (the bid), minus any debt from leverage. A short position is valued at the price you would pay to buy the shares back (the ask) and counts as what is left of its collateral. 1v1 rewards go to your virtual currency, never to Career cash.
         </p>
       </section>
+
+      <UsernamePanel />
 
       <section className="card" aria-label="Holdings">
         <h2>Holdings</h2>

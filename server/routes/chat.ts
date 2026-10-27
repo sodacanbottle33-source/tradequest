@@ -3,8 +3,9 @@
 
 import { isStaff, type User } from '../auth';
 import { ChatError, CHAT_PAGE } from '../chat';
-import { HttpError, intParam } from '../http';
-import type { Ctx, Router } from '../router';
+import { PIC_REQUEST_LIMIT, PictureProblem } from '../chatPictures';
+import { HttpError, intParam, readJson } from '../http';
+import { HANDLED, type Ctx, type Router } from '../router';
 import type { Services } from '../services';
 
 export function registerChatRoutes(router: Router, s: Services): void {
@@ -25,7 +26,7 @@ export function registerChatRoutes(router: Router, s: Services): void {
     try {
       return fn();
     } catch (error) {
-      if (error instanceof ChatError) throw new HttpError(error.status, error.code, error.message);
+      if (error instanceof ChatError || error instanceof PictureProblem) throw new HttpError(error.status, error.code, error.message);
       throw error;
     }
   }
@@ -46,9 +47,26 @@ export function registerChatRoutes(router: Router, s: Services): void {
   router.post('/api/chat/send', async (ctx) => {
     const user = ctx.requireUser();
     limited(user.id, 12, 'chat messages');
-    const b = await ctx.body();
-    const message = guard(() => chat.send(user, b.text));
+    // A message with a picture is bigger than one without (the picture comes as text inside the JSON).
+    const b = await readJson(ctx.req, PIC_REQUEST_LIMIT);
+    const message = guard(() => chat.send(user, b.text, b.picture));
     return { message, you: chat.you(user) };
+  });
+
+  /** The picture of a chat message. The address is the message's number, which never changes, so a browser may keep it. */
+  router.get('/api/chat/picture/:id', (ctx) => {
+    const user = ctx.requireUser();
+    const picture = guard(() => chat.pictureOf(user, Number(ctx.params.id)));
+    ctx.res.writeHead(200, {
+      'Content-Type': picture.mime,
+      'Content-Length': picture.data.length,
+      'Cache-Control': 'private, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+      // Even if somebody got a page to open this address on its own, nothing in it can run.
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+    });
+    ctx.res.end(Buffer.from(picture.data));
+    return HANDLED;
   });
 
   router.post('/api/chat/report', async (ctx) => {
@@ -70,7 +88,18 @@ export function registerChatRoutes(router: Router, s: Services): void {
 
   router.get('/api/admin/chat', (ctx) => {
     const user = staff(ctx);
-    return chat.adminView(user);
+    return { ...chat.adminView(user), picturesOn: s.chatPictures.enabled() };
+  });
+
+  /** The owner switches pictures in all chats off or on (text keeps working). It is written to the admin log once per requestId. */
+  router.post('/api/admin/chat/pictures', async (ctx) => {
+    const user = ctx.requireUser();
+    if (user.role !== 'owner') throw new HttpError(403, 'owner_only', 'Only the owner can do that.');
+    const b = await ctx.body();
+    if (typeof b.on !== 'boolean') throw new HttpError(400, 'bad_request', 'on must be true or false.');
+    const first = s.admin.logOnce(user, b.requestId, 'chat_pictures', b.on ? 'on' : 'off', { on: b.on });
+    if (first) s.chatPictures.setEnabled(b.on);
+    return { ok: true, duplicate: !first, picturesOn: s.chatPictures.enabled() };
   });
 
   router.post('/api/admin/chat/delete', async (ctx) => {

@@ -2,9 +2,10 @@
 // write to whom, how fast, what a message may be) is decided in server/messages.ts; the owner's role is checked here for every owner request.
 
 import type { User } from '../auth';
-import { HttpError, intParam } from '../http';
+import { PIC_REQUEST_LIMIT, PictureProblem } from '../chatPictures';
+import { HttpError, intParam, readJson } from '../http';
 import { MessageError, PM_PAGE } from '../messages';
-import type { Ctx, Router } from '../router';
+import { HANDLED, type Ctx, type Router } from '../router';
 import type { Services } from '../services';
 
 export function registerMessageRoutes(router: Router, s: Services): void {
@@ -25,7 +26,7 @@ export function registerMessageRoutes(router: Router, s: Services): void {
     try {
       return fn();
     } catch (error) {
-      if (error instanceof MessageError) throw new HttpError(error.status, error.code, error.message);
+      if (error instanceof MessageError || error instanceof PictureProblem) throw new HttpError(error.status, error.code, error.message);
       throw error;
     }
   }
@@ -49,8 +50,25 @@ export function registerMessageRoutes(router: Router, s: Services): void {
   router.post('/api/messages/send', async (ctx) => {
     const user = ctx.requireUser();
     limited(user.id, 'write', 12);
-    const b = await ctx.body();
-    return guard(() => messages.send(user, { conversationId: b.conversationId, username: b.username, text: b.text }));
+    // A message with a picture is bigger than one without (the picture comes as text inside the JSON).
+    const b = await readJson(ctx.req, PIC_REQUEST_LIMIT);
+    return guard(() => messages.send(user, { conversationId: b.conversationId, username: b.username, text: b.text, picture: b.picture }));
+  });
+
+  /** The picture of a private message, for a player who may read it. The address is the message's number, which never changes. */
+  router.get('/api/messages/picture/:id', (ctx) => {
+    const user = ctx.requireUser();
+    limited(user.id, 'other', 120);
+    const picture = guard(() => messages.pictureOf(user, Number(ctx.params.id)));
+    ctx.res.writeHead(200, {
+      'Content-Type': picture.mime,
+      'Content-Length': picture.data.length,
+      'Cache-Control': 'private, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+    });
+    ctx.res.end(Buffer.from(picture.data));
+    return HANDLED;
   });
 
   router.post('/api/messages/read', async (ctx) => {
@@ -71,14 +89,35 @@ export function registerMessageRoutes(router: Router, s: Services): void {
     const user = ctx.requireUser();
     limited(user.id, 'other', 30);
     const b = await ctx.body();
-    return guard(() => messages.createGroup(user, { title: b.title, usernames: b.usernames }));
+    return guard(() => messages.createGroup(user, { title: b.title, usernames: b.usernames, visibility: b.visibility }));
+  });
+
+  /** The public groups anybody can join (newest activity and busiest first), optionally only those whose name has `q` in it. */
+  router.get('/api/messages/groups/public', (ctx) => {
+    const user = ctx.requireUser();
+    limited(user.id, 'other', 40);
+    return guard(() => messages.publicGroups(user, ctx.url.searchParams.get('q') ?? undefined));
+  });
+
+  router.post('/api/messages/group/join', async (ctx) => {
+    const user = ctx.requireUser();
+    limited(user.id, 'other', 30);
+    const b = await ctx.body();
+    return guard(() => messages.join(user, b.conversationId));
+  });
+
+  router.post('/api/messages/group/visibility', async (ctx) => {
+    const user = ctx.requireUser();
+    limited(user.id, 'other', 30);
+    const b = await ctx.body();
+    return guard(() => messages.setVisibility(user, b.conversationId, b.visibility));
   });
 
   router.post('/api/messages/group/invite', async (ctx) => {
     const user = ctx.requireUser();
     limited(user.id, 'other', 30);
     const b = await ctx.body();
-    return guard(() => messages.invite(user, b.conversationId, b.username));
+    return guard(() => messages.invite(user, b.conversationId, b.usernames !== undefined ? b.usernames : b.username));
   });
 
   router.post('/api/messages/group/remove', async (ctx) => {
@@ -136,6 +175,21 @@ export function registerMessageRoutes(router: Router, s: Services): void {
   router.get('/api/admin/private-reports', (ctx) => {
     owner(ctx);
     return messages.adminView();
+  });
+
+  /** The owner looks at the copy of a reported picture (only while a report about it is open). */
+  router.get('/api/admin/private-reports/picture/:id', (ctx) => {
+    owner(ctx);
+    const picture = guard(() => messages.reportPicture(Number(ctx.params.id)));
+    ctx.res.writeHead(200, {
+      'Content-Type': picture.mime,
+      'Content-Length': picture.data.length,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+    });
+    ctx.res.end(Buffer.from(picture.data));
+    return HANDLED;
   });
 
   router.post('/api/admin/private-reports/dismiss', async (ctx) => {

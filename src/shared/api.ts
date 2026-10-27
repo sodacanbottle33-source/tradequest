@@ -47,7 +47,10 @@ import type {
   PmConversation,
   PmSendResult,
   PmThreadPage,
+  PublicGroupsView,
   Relation,
+  RenameResult,
+  RenameStatus,
   Resolution,
   StaffPlayers,
   DrainResult,
@@ -187,7 +190,8 @@ export const api = {
 
   // The public chat room (any signed-in player).
   chat: (beforeId?: number, limit = 50) => request<ChatView>('GET', `/api/chat?limit=${limit}${beforeId === undefined ? '' : `&before=${beforeId}`}`),
-  chatSend: (text: string) => request<{ message: ChatMessage; you: ChatYou }>('POST', '/api/chat/send', { text }),
+  /** `picture` is a data address ("data:image/jpeg;base64,..."), already shrunk by chatPictureUtil; the text may then be empty. */
+  chatSend: (text: string, picture?: string) => request<{ message: ChatMessage; you: ChatYou }>('POST', '/api/chat/send', picture === undefined ? { text } : { text, picture }),
   chatReport: (messageId: number) => request<{ ok: boolean }>('POST', '/api/chat/report', { messageId }),
   /** Deletes a message you wrote yourself. */
   chatDelete: (messageId: number) => request<{ ok: boolean }>('POST', '/api/chat/delete', { messageId }),
@@ -197,6 +201,10 @@ export const api = {
   setAvatar: (image: string) => request<{ version: number }>('POST', '/api/profile/avatar', { image }),
   removeAvatar: () => request<{ ok: boolean }>('POST', '/api/profile/avatar/remove', {}),
   online: () => request<{ online: string[] }>('GET', '/api/online'),
+
+  // Changing your username: what it costs and whether you may now, and the change itself.
+  usernameStatus: () => request<RenameStatus>('GET', '/api/account/username'),
+  changeUsername: (username: string) => request<RenameResult>('POST', '/api/account/username', { username }),
   adminAvatarRemove: (body: { requestId: string; username: string }) => request<{ ok: boolean; duplicate: boolean; username: string }>('POST', '/api/admin/avatar/remove', body),
   // Pictures for stocks and memecoins (anyone can look; the launcher and the owner change them). A picture is shown at /api/company-picture/<ticker>?v=<version>.
   companyPictures: () => request<{ pictures: Record<string, number> }>('GET', '/api/company-pictures'),
@@ -209,7 +217,7 @@ export const api = {
   messages: () => request<MessagesView>('GET', '/api/messages'),
   messagesThread: (id: number, beforeId?: number, limit = 50) => request<PmThreadPage>('GET', `/api/messages/thread/${id}?limit=${limit}${beforeId === undefined ? '' : `&before=${beforeId}`}`),
   /** Writes into a conversation (by its number) or to a player (by name: that opens the chat, as a request when you are not friends). */
-  messagesSend: (body: { conversationId: number; text: string } | { username: string; text: string }) => request<PmSendResult>('POST', '/api/messages/send', body),
+  messagesSend: (body: ({ conversationId: number } | { username: string }) & { text: string; picture?: string }) => request<PmSendResult>('POST', '/api/messages/send', body),
   messagesRead: (conversationId: number, upToId?: number) => request<{ ok: boolean }>('POST', '/api/messages/read', upToId === undefined ? { conversationId } : { conversationId, upToId }),
   messagesRespond: (conversationId: number, answer: 'accept' | 'decline') => request<MessagesView>('POST', '/api/messages/respond', { conversationId, answer }),
   messagesReport: (messageId: number) => request<{ ok: boolean }>('POST', '/api/messages/report', { messageId }),
@@ -217,8 +225,14 @@ export const api = {
   messagesDelete: (messageId: number) => request<{ ok: boolean }>('POST', '/api/messages/delete', { messageId }),
   messagesBlock: (username: string) => request<MessagesView>('POST', '/api/messages/block', { username }),
   messagesUnblock: (username: string) => request<MessagesView>('POST', '/api/messages/unblock', { username }),
-  groupCreate: (title: string, usernames: string[]) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/create', { title, usernames }),
-  groupInvite: (conversationId: number, username: string) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/invite', { conversationId, username }),
+  groupCreate: (title: string, usernames: string[], visibility: 'private' | 'public' = 'private') =>
+    request<{ conversation: PmConversation }>('POST', '/api/messages/group/create', { title, usernames, visibility }),
+  /** Invites one or several friends at once (all or none). */
+  groupInvite: (conversationId: number, usernames: string[]) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/invite', { conversationId, usernames }),
+  /** The public groups anybody can join, busiest first; `q` keeps the ones with that in their name. */
+  publicGroups: (q = '') => request<PublicGroupsView>('GET', `/api/messages/groups/public${q === '' ? '' : `?q=${enc(q)}`}`),
+  groupJoin: (conversationId: number) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/join', { conversationId }),
+  groupVisibility: (conversationId: number, visibility: 'private' | 'public') => request<{ conversation: PmConversation }>('POST', '/api/messages/group/visibility', { conversationId, visibility }),
   groupRemove: (conversationId: number, username: string) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/remove', { conversationId, username }),
   groupRename: (conversationId: number, title: string) => request<{ conversation: PmConversation }>('POST', '/api/messages/group/rename', { conversationId, title }),
   groupLeave: (conversationId: number) => request<MessagesView>('POST', '/api/messages/group/leave', { conversationId }),
@@ -240,6 +254,8 @@ export const api = {
 
   // Owner only (the chat tools below are also open to moderators): the server answers 403 to anybody else.
   adminChat: () => request<AdminChatView>('GET', '/api/admin/chat'),
+  /** The owner switches pictures in all chats off or on (text keeps working). */
+  adminChatPictures: (body: { requestId: string; on: boolean }) => request<{ ok: boolean; duplicate: boolean; picturesOn: boolean }>('POST', '/api/admin/chat/pictures', body),
   adminChatDelete: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/chat/delete', body),
   adminChatDismiss: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/chat/dismiss', body),
   adminChatMute: (body: { requestId: string; username: string; minutes: number; reason?: string }) => request<{ ok: boolean; duplicate: boolean; username: string; untilMs: number }>('POST', '/api/admin/chat/mute', body),

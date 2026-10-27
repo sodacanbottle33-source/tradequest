@@ -289,6 +289,8 @@ export class SharedStore {
     es.addEventListener('role_changed', (e) => this.onRoleChanged(JSON.parse((e as MessageEvent<string>).data) as { role: string }));
     // This player earned one or more achievement badges.
     es.addEventListener('badges', (e) => this.onBadges(JSON.parse((e as MessageEvent<string>).data) as { earned: string[] }));
+    // A player paid for a new username: every list that shows the old name is brought up to date.
+    es.addEventListener('user_renamed', (e) => this.onUserRenamed(JSON.parse((e as MessageEvent<string>).data) as { from: string; to: string }));
     // A player set or removed his profile picture.
     es.addEventListener('avatar', (e) => profileStore.onAvatar(JSON.parse((e as MessageEvent<string>).data) as { username: string; v: number | null }));
     // A launcher or the owner set or removed the picture of a stock or memecoin.
@@ -357,6 +359,29 @@ export class SharedStore {
     void this.recheckMe();
     if (d.role === 'moderator') this.showToast('', { tone: 'good', title: 'You are a moderator now', text: 'The owner chose you. Open Moderation in your profile menu (top right).' }, TOAST_MS);
     else this.showToast('', { tone: 'neutral', title: 'You are not a moderator any more', text: 'The owner took the moderator job away.' }, TOAST_MS);
+  }
+
+  /**
+   * A player changed his username. The pictures and the online dots follow the name; the friends, the chat room and the private chats are
+   * asked for again (they show names). If it was THIS player (on another page of his), his own name is asked for again too.
+   */
+  private onUserRenamed(d: { from: string; to: string }): void {
+    profileStore.onRenamed(d.from, d.to);
+    const me = this.state.user;
+    if (me && me.username.toLowerCase() === d.from.toLowerCase()) void this.recheckMe();
+    void this.refreshFriends();
+    void this.refreshChat();
+    this.onPmChanged();
+  }
+
+  /** This page changed the player's username (the server's answer carries the new user): take it and bring the money and the lists up to date. */
+  noteRenamed(user: User, previous: string): void {
+    if (this.state.user) this.set({ user });
+    profileStore.onRenamed(previous, user.username);
+    void this.refreshAccount();
+    void this.refreshFriends();
+    void this.refreshChat();
+    this.onPmChanged();
   }
 
   /** Shows a pop-up for a position the market closed; it goes away by itself after `ms` milliseconds. */

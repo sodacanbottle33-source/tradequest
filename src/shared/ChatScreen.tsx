@@ -5,6 +5,7 @@ import { api } from './api';
 import { AuthPanel } from './AuthPanel';
 import { Avatar, OnlineDot, useOnlineWatch } from './Avatar';
 import { newRequestId } from './adminUtil';
+import { MessagePicture, PictureButton, PicturePreview, usePicturePick } from './ChatPicture';
 import { MUTE_CHOICES, lengthOf, timeLabel, waitWords } from './chatUtil';
 import { problemText } from './playersUtil';
 import { RoleBadge } from './RoleBadge';
@@ -112,7 +113,8 @@ function Line({ message, mine, isOwner, isStaff, reported, onReport, onNote }: {
           )}
         </span>
       </div>
-      <p className="chat-text">{message.text}</p>
+      {message.text !== '' && <p className="chat-text">{message.text}</p>}
+      {message.picture !== null && <MessagePicture kind="chat" messageId={message.id} state={message.picture} />}
       {canModerate && moderating && (
         <div className="chat-mod" role="group" aria-label={`Moderate ${who}`}>
           <button type="button" className="btn btn-small btn-sell" disabled={busy} onClick={() => void moderate('Message deleted.', () => api.adminChatDelete({ requestId: newRequestId(), messageId: message.id }))} data-testid={`mod-delete-${message.id}`}>
@@ -149,6 +151,7 @@ export function ChatScreen() {
   const [note, setNote] = useState<string | null>(null);
   const [reported, setReported] = useState<ReadonlySet<number>>(new Set());
   const [loadingMore, setLoadingMore] = useState(false);
+  const pic = usePicturePick();
   const log = useRef<HTMLUListElement | null>(null);
   useOnlineWatch();
   const stick = useRef(true);
@@ -209,13 +212,14 @@ export function ChatScreen() {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const typed = text.trim();
-    if (typed === '' || sending) return;
+    if ((typed === '' && !pic.picture) || sending) return;
     setSending(true);
     setError(null);
     try {
-      const out = await api.chatSend(typed);
+      const out = await api.chatSend(typed, pic.picture ?? undefined);
       sharedStore.noteSent(out.message, out.you);
       setText('');
+      pic.clear();
       stick.current = true;
     } catch (e) {
       setError(problemText(e));
@@ -296,12 +300,14 @@ export function ChatScreen() {
         <span className={length > chat.limits.maxLength ? 'chat-count over' : 'chat-count'} aria-live="off" data-testid="chat-count">
           {length}/{chat.limits.maxLength}
         </span>
-        <button type="submit" className="btn btn-primary" disabled={!you.canWrite || sending || length === 0 || length > chat.limits.maxLength} data-testid="chat-send">
+        {chat.limits.picturesOn && <PictureButton pick={pic} disabled={!you.canWrite || sending} testId="chat-picture" />}
+        <button type="submit" className="btn btn-primary" disabled={!you.canWrite || sending || (length === 0 && !pic.picture) || length > chat.limits.maxLength} data-testid="chat-send">
           {sending ? 'Sending…' : 'Send'}
         </button>
       </form>
+      <PicturePreview pick={pic} testId="chat-picture-preview" />
       <p className="hint">
-        Be kind. Messages are plain text. Spam is slowed down: at most one message every {Math.round(chat.limits.minGapMs / 100) / 10} seconds, and you cannot repeat yourself. Press Report on a message that breaks the rules; the owner
+        Be kind. Messages are plain text, and you can add one small picture. {chat.limits.picturesOn ? 'Pictures are kept for 7 days, and a new account waits an hour before it can send one here. ' : 'The owner has switched pictures off for now. '}Spam is slowed down: at most one message every {Math.round(chat.limits.minGapMs / 100) / 10} seconds, and you cannot repeat yourself. Press Report on a message that breaks the rules; the owner
         and the moderators can remove messages and stop players from writing.
       </p>
     </section>

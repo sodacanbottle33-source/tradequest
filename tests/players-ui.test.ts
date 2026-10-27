@@ -63,7 +63,12 @@ describe('Players screen', () => {
     const screen = code(src('shared', 'PlayersScreen.tsx'));
     expect(screen).not.toMatch(/cashCents|positions|holdings?\b|walletCents|api\.account|api\.trades|api\.limitOrders/);
     const types = code(src('shared', 'types.ts'));
-    const block = types.slice(types.indexOf('export type Relation'));
+    // The players' own types: from Relation to the end of the friends types (what follows is challenges, chats, usernames and so on).
+    const start = types.indexOf('export type Relation');
+    const end = types.indexOf('export interface ChallengeEntry');
+    expect(end).toBeGreaterThan(start);
+    const block = types.slice(start, end);
+    expect(block).toContain('export interface FriendsState');
     expect(block).not.toMatch(/cash|position|holding|trade/i);
   });
 

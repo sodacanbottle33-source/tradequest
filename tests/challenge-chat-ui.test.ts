@@ -18,12 +18,12 @@ function code(file: string): string {
 
 const me: User = { id: 1, username: 'alice', displayName: 'alice', role: 'player' };
 const can: ChatYou = { canWrite: true, reason: null, untilMs: null, message: null };
-const msg = (id: number, username = 'bob', text = `message ${id}`): ChatMessage => ({ id, username, displayName: username, role: 'player', text, createdMs: id * 1000 });
+const msg = (id: number, username = 'bob', text = `message ${id}`): ChatMessage => ({ id, username, displayName: username, role: 'player', text, createdMs: id * 1000, picture: null });
 
 /** A store that is signed in as Alice with an empty chat, without going to a server. */
 function signedIn(): SharedStore {
   const store = new SharedStore();
-  (store as unknown as { set(patch: object): void }).set({ user: me, chat: { messages: [], more: false, you: can, limits: { maxLength: 300, minGapMs: 1500 }, unread: 0 }, tick: 100 });
+  (store as unknown as { set(patch: object): void }).set({ user: me, chat: { messages: [], more: false, you: can, limits: { maxLength: 300, minGapMs: 1500, picturesOn: true }, unread: 0 }, tick: 100 });
   return store;
 }
 

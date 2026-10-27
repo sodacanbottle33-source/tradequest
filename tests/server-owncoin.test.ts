@@ -74,8 +74,8 @@ describe('coins the owner made earlier', () => {
         );
         db.run('INSERT INTO launch_rugs(trade_id, company_id, user_id, shares, received_cents, created_ms) VALUES (?, ?, 2, 5, 900, 8)', tradeId, company);
       }
-      expect(migrate(db)).toEqual([17, 18, 19, 20, 21, 22, 23, 24, 25]); // (25 adds the empty moderator and badge tables) (24 adds the empty company-picture table) (23 adds the Learn tables) (18 adds the empty money-pool table; an old launch never gets a pool; 19 adds the empty friends table; 20 the empty challenges and chat tables; 21 the empty private-chat tables)
-      expect(db.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(25);
+      expect(migrate(db)).toEqual([17, 18, 19, 20, 21, 22, 23, 24, 25, 26]); // (26 adds public groups, pictures and the username log) (25 adds the empty moderator and badge tables) (24 adds the empty company-picture table) (23 adds the Learn tables) (18 adds the empty money-pool table; an old launch never gets a pool; 19 adds the empty friends table; 20 the empty challenges and chat tables; 21 the empty private-chat tables)
+      expect(db.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(26);
       expect(db.all('SELECT * FROM coin_pools')).toEqual([]);
       // Nothing was lost or changed, and every old launch has paid no fee.
       expect(db.all('SELECT company_id, user_id, kind, request_id, seed_cents, spent_cents, stake_shares, price_cents, created_ms, fee_cents FROM launches ORDER BY company_id')).toEqual([

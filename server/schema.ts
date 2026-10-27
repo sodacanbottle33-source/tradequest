@@ -958,6 +958,59 @@ CREATE TABLE user_badges (
 CREATE INDEX user_badges_by_badge ON user_badges(badge);
 `,
   },
+  {
+    version: 26,
+    name: 'public groups, quick invite, pictures in chats, changing your username',
+    sql: `
+-- Public groups (server/messages.ts, docs/world.md §23). A group is 'private' (only invited friends can be in it, as before) or 'public' (it is listed
+-- and any player can join). The player who made the group chooses and can change it.
+ALTER TABLE conversations ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public'));
+CREATE INDEX conversations_public ON conversations(last_ms DESC) WHERE kind = 'group' AND visibility = 'public';
+
+-- A player the creator took out of a group may not walk back into it when it is public. (Only the player who made the group can invite him again.)
+CREATE TABLE group_removed (
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_ms      INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, user_id)
+) WITHOUT ROWID;
+
+-- Changing your username (server/rename.ts, docs/world.md §25): one row per change. It tells when the last change was (once every 7 days), what it cost,
+-- and which names are kept for their old owner for a while so nobody can copy a name somebody just left.
+CREATE TABLE username_changes (
+  id         INTEGER PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  old_name   TEXT NOT NULL COLLATE NOCASE,
+  new_name   TEXT NOT NULL COLLATE NOCASE,
+  changed_ms INTEGER NOT NULL,
+  cost_cents INTEGER NOT NULL CHECK (cost_cents >= 0)
+);
+CREATE INDEX username_changes_by_user ON username_changes(user_id, changed_ms DESC);
+CREATE INDEX username_changes_by_old_name ON username_changes(old_name, changed_ms);
+
+-- Pictures sent in chats (server/chatPictures.ts, docs/world.md §24). A picture belongs to one message. The bytes are kept only for a while (and only
+-- up to a total size); after that "data" is emptied and the message shows "picture expired". The bytes are what the browser made after shrinking.
+CREATE TABLE chat_message_pictures (
+  message_id INTEGER PRIMARY KEY REFERENCES chat_messages(id) ON DELETE CASCADE,
+  mime       TEXT NOT NULL CHECK (mime IN ('image/jpeg', 'image/png', 'image/webp')),
+  data       BLOB CHECK (data IS NULL OR length(data) BETWEEN 1 AND 131072),
+  created_ms INTEGER NOT NULL
+);
+CREATE INDEX chat_message_pictures_by_time ON chat_message_pictures(created_ms) WHERE data IS NOT NULL;
+
+CREATE TABLE private_message_pictures (
+  message_id INTEGER PRIMARY KEY REFERENCES private_messages(id) ON DELETE CASCADE,
+  mime       TEXT NOT NULL CHECK (mime IN ('image/jpeg', 'image/png', 'image/webp')),
+  data       BLOB CHECK (data IS NULL OR length(data) BETWEEN 1 AND 131072),
+  created_ms INTEGER NOT NULL
+);
+CREATE INDEX private_message_pictures_by_time ON private_message_pictures(created_ms) WHERE data IS NOT NULL;
+
+-- A reported private message keeps its own copy of the picture, so the owner can still look at it after the writer deleted the message or it expired.
+ALTER TABLE private_reports ADD COLUMN picture BLOB;
+ALTER TABLE private_reports ADD COLUMN picture_mime TEXT;
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

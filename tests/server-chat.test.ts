@@ -191,7 +191,7 @@ describe('who may read and write', () => {
     expect(view.limits.maxLength).toBe(CHAT_MAX_LENGTH);
     expect(view.more).toBe(false);
     // Nothing about a writer but a name and the role.
-    expect(Object.keys(view.messages[0]).sort()).toEqual(['createdMs', 'displayName', 'id', 'role', 'text', 'username']);
+    expect(Object.keys(view.messages[0]).sort()).toEqual(['createdMs', 'displayName', 'id', 'picture', 'role', 'text', 'username']);
   }, LONG);
 });
 
@@ -549,8 +549,8 @@ describe('storage', () => {
       }
       for (const id of [1, 2, 3]) d.run("INSERT INTO users(id, username, display_name, pw_hash, role, created_ms) VALUES (?, ?, ?, 'x', 'player', 1)", id, `u${id}`, `u${id}`);
       d.run("INSERT INTO matches(id, state, created_ms, duration_ticks, start_cash_cents) VALUES (7, 'lobby', 5, 180, 10000000)");
-      expect(migrate(d)).toEqual([20, 21, 22, 23, 24, 25]); // (25 adds the empty moderator and badge tables; 24 adds the empty company-picture table) (21 adds the empty private-chat tables)
-      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(25);
+      expect(migrate(d)).toEqual([20, 21, 22, 23, 24, 25, 26]); // (26 adds public groups, pictures and the username log; 25 adds the empty moderator and badge tables; 24 adds the empty company-picture table) (21 adds the empty private-chat tables)
+      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(26);
       expect(d.all('SELECT id, state, friends FROM matches')).toEqual([{ id: 7, state: 'lobby', friends: 0 }]);
       for (const table of ['challenges', 'chat_messages', 'chat_restrictions', 'chat_reports']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)?.n).toBe(0);
       expect(migrate(d)).toEqual([]);

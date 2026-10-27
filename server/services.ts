@@ -7,6 +7,7 @@ import type { Bankruptcies } from './bankruptcy';
 import type { Calls } from './calls';
 import type { Challenges } from './challenges';
 import type { Chat } from './chat';
+import type { ChatPictures } from './chatPictures';
 import type { Config } from './config';
 import type { Launches } from './launch';
 import type { Learn } from './learn';
@@ -19,6 +20,7 @@ import type { Leases } from './lease';
 import type { MatchService } from './lobby/service';
 import type { Logger } from './log';
 import type { Messages } from './messages';
+import type { Renames } from './rename';
 import type { CompanyPictures } from './companyPictures';
 import type { Profiles } from './profile';
 import type { NewsScheduler } from './news/scheduler';
@@ -59,8 +61,12 @@ export interface Services {
   readonly challenges: Challenges;
   /** The public chat room (server/chat.ts). */
   readonly chat: Chat;
-  /** Private chats: 1-to-1 and small groups, requests, blocking and reports (server/messages.ts). */
+  /** Pictures sent in the chats: rules, limits, expiry and the owner's switch (server/chatPictures.ts). */
+  readonly chatPictures: ChatPictures;
+  /** Private chats: 1-to-1 and groups (private or public), requests, blocking and reports (server/messages.ts). */
   readonly messages: Messages;
+  /** Changing your username (server/rename.ts). */
+  readonly renames: Renames;
   /** Profile pictures and who is online (server/profile.ts). */
   readonly profiles: Profiles;
   /** Pictures for stocks and memecoins (server/companyPictures.ts). */

@@ -5,12 +5,13 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'rea
 import { api } from './api';
 import { Avatar, OnlineDot, useOnlineWatch } from './Avatar';
 import { CallButton } from './CallBar';
+import { MessagePicture, PictureButton, PicturePreview, usePicturePick } from './ChatPicture';
 import { lengthOf, timeLabel, waitWords } from './chatUtil';
-import { friendsToInvite, membersLine } from './messagesUtil';
+import { filterFriends, friendsToInvite, membersLine, pickEverybody, togglePicked } from './messagesUtil';
 import { problemText } from './playersUtil';
 import { RoleBadge } from './RoleBadge';
 import { sharedStore, useShared } from './store';
-import type { PmMessage, PmThreadPage } from './types';
+import type { FriendEntry, PmMessage, PmThreadPage } from './types';
 
 type Thread = NonNullable<ReturnType<typeof useShared>['pmThread']>;
 
@@ -112,8 +113,70 @@ function Line({ message, mine, reported, onReport, onDelete }: { message: PmMess
           )}
         </span>
       </div>
-      <p className="chat-text">{message.text}</p>
+      {message.text !== '' && <p className="chat-text">{message.text}</p>}
+      {message.picture !== null && <MessagePicture kind="pm" messageId={message.id} state={message.picture} />}
     </li>
+  );
+}
+
+/**
+ * The quick invite: all the friends who are not in the group yet, as a list to tick (a search box when there are many), and one button that sends
+ * every invitation at once. Each friend still has to accept. The server refuses the whole batch if one of them cannot be invited, and says why.
+ */
+function InvitePanel({ choices, roomLeft, public: isPublic, busy, onSend, onClose }: { choices: readonly FriendEntry[]; roomLeft: number; public: boolean; busy: boolean; onSend: (usernames: string[]) => void; onClose: () => void }) {
+  const [picked, setPicked] = useState<readonly string[]>([]);
+  const [search, setSearch] = useState('');
+  const shown = filterFriends(choices, search);
+  const toggle = (username: string) => setPicked((old) => togglePicked(old, username, roomLeft));
+  const all = () => setPicked(pickEverybody(shown, roomLeft));
+  return (
+    <div className="pm-invite" role="group" aria-label="Invite friends" data-testid="pm-invite-panel">
+      <div className="row-between">
+        <strong>Invite friends</strong>
+        <button type="button" className="btn btn-small btn-ghost" onClick={onClose} data-testid="pm-invite-close">
+          Close
+        </button>
+      </div>
+      {choices.length === 0 ? (
+        <p className="hint" data-testid="pm-invite-empty">
+          {isPublic ? 'All your friends are in this group already, or you have none yet. Anybody can also find this group in Public groups and join.' : 'All your friends are in this group already, or you have none yet. Add friends from the Players tab.'}
+        </p>
+      ) : (
+        <>
+          {choices.length > 8 && (
+            <input className="qty-input" type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search your friends…" aria-label="Search your friends" autoComplete="off" data-testid="pm-invite-search" />
+          )}
+          <div className="people-actions">
+            <button type="button" className="btn btn-small btn-ghost" onClick={all} disabled={shown.length === 0} data-testid="pm-invite-all">
+              Pick everybody{shown.length > roomLeft ? ` (first ${roomLeft})` : ''}
+            </button>
+            <button type="button" className="btn btn-small btn-ghost" onClick={() => setPicked([])} disabled={picked.length === 0} data-testid="pm-invite-none">
+              Clear
+            </button>
+            <span className="muted">
+              {picked.length} picked · room for {roomLeft} more
+            </span>
+          </div>
+          <ul className="pm-invite-list">
+            {shown.map((f) => (
+              <li key={f.username}>
+                <label className="pm-pick-row">
+                  <input type="checkbox" checked={picked.includes(f.username)} onChange={() => toggle(f.username)} disabled={!picked.includes(f.username) && picked.length >= roomLeft} data-testid={`pm-invite-pick-${f.username}`} />
+                  <Avatar username={f.username} displayName={f.displayName} size={20} />
+                  <span>{f.displayName}</span>
+                </label>
+              </li>
+            ))}
+            {shown.length === 0 && <li className="hint">No friend has that name.</li>}
+          </ul>
+          <div className="people-actions">
+            <button type="button" className="btn btn-primary" disabled={busy || picked.length === 0} onClick={() => onSend([...picked])} data-testid="pm-invite-send">
+              {busy ? 'Sending…' : picked.length === 0 ? 'Send invitations' : `Send ${picked.length} ${picked.length === 1 ? 'invitation' : 'invitations'}`}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -127,7 +190,8 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
   const [reported, setReported] = useState<ReadonlySet<number>>(new Set());
   const [loadingMore, setLoadingMore] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
-  const [inviting, setInviting] = useState('');
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const pic = usePicturePick();
   const log = useRef<HTMLUListElement | null>(null);
   useOnlineWatch();
   const stick = useRef(true);
@@ -140,8 +204,10 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
     setError(null);
     setNote(null);
     setRenaming(null);
-    setInviting('');
+    setInviteOpen(false);
+    pic.clear();
     stick.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thread.id]);
 
   const count = thread.messages.length;
@@ -167,6 +233,9 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
   const length = lengthOf(text.trim());
   const isCreator = conv.kind === 'group' && conv.creator === me;
   const canWrite = conv.canWrite && you.canWrite;
+  // A picture can go to a friend or into a group (a message request is text only).
+  const canPicture = messages.limits.picturesOn && (conv.kind === 'group' || conv.friends);
+  const isPublic = conv.visibility === 'public';
   const wait = until !== null && tickMs > 0 ? waitWords(Math.max(0, until - tickMs)) : null;
 
   /** Runs one action: its words on success, the server's own words when it fails. */
@@ -189,13 +258,14 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const typed = text.trim();
-    if (typed === '' || sending) return;
+    if ((typed === '' && !pic.picture) || sending) return;
     setSending(true);
     setError(null);
     try {
-      const out = await api.messagesSend({ conversationId: thread.id, text: typed });
+      const out = await api.messagesSend({ conversationId: thread.id, text: typed, ...(pic.picture ? { picture: pic.picture } : {}) });
       sharedStore.noteSentPrivate(out);
       setText('');
+      pic.clear();
       stick.current = true;
     } catch (e) {
       setError(problemText(e));
@@ -271,7 +341,10 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
     conv.kind === 'group' ? (
       <>
         <h2>
-          {conv.title} <span className="h2-note">Group · {conv.members.length} {conv.members.length === 1 ? 'player' : 'players'}</span>
+          {conv.title}{' '}
+          <span className="h2-note">
+            {isPublic ? 'Public group' : 'Private group'} · {conv.members.length} {conv.members.length === 1 ? 'player' : 'players'}
+          </span>
         </h2>
         <p className="pm-members" data-testid="pm-members">
           {membersLine(conv, me)}
@@ -285,7 +358,8 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
     );
 
   const inviteChoices = conv.kind === 'group' && friends ? friendsToInvite(friends.friends, conv) : [];
-  const roomLeft = messages.limits.maxGroupMembers - conv.members.length - conv.invited.length;
+  const groupMax = isPublic ? messages.limits.maxPublicGroupMembers : messages.limits.maxGroupMembers;
+  const roomLeft = Math.max(0, groupMax - conv.members.length - conv.invited.length);
 
   return (
     <section className="card chat-card pm-thread" aria-label={`Conversation with ${conv.title}`} data-testid="pm-thread" data-conversation={conv.id}>
@@ -313,6 +387,11 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
               data-testid="pm-add-friend"
             >
               Add friend
+            </button>
+          )}
+          {conv.kind === 'group' && (
+            <button type="button" className="btn btn-small btn-primary pm-invite-button" disabled={roomLeft === 0} aria-expanded={inviteOpen} onClick={() => setInviteOpen((o) => !o)} title={roomLeft === 0 ? 'This group is full' : 'Invite your friends'} data-testid="pm-invite-button">
+              + Invite friends
             </button>
           )}
           {conv.kind === 'group' && <SureButton label="Leave group" question="Leave this group?" busy={busy} onYes={() => void leave()} testId="pm-leave" />}
@@ -361,29 +440,14 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
               </button>
             </span>
           ))}
-          {roomLeft > 0 && inviteChoices.length > 0 && (
-            <span className="people-actions">
-              <select className="qty-input" value={inviting} onChange={(e) => setInviting(e.target.value)} aria-label="Invite a friend" data-testid="pm-invite-select">
-                <option value="">Invite a friend…</option>
-                {inviteChoices.map((f) => (
-                  <option key={f.username} value={f.username}>
-                    {f.displayName}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="btn btn-small"
-                disabled={busy || inviting === ''}
-                onClick={() =>
-                  void run('Invitation sent.', async () => {
-                    await applyGroup(api.groupInvite(conv.id, inviting));
-                    setInviting('');
-                  })
-                }
-                data-testid="pm-invite"
-              >
-                Invite
+          {isCreator && (
+            <span className="people-actions pm-visibility" role="group" aria-label="Who can join">
+              <span className="muted">Who can join:</span>
+              <button type="button" className={isPublic ? 'btn btn-small btn-ghost' : 'btn btn-small btn-primary'} aria-pressed={!isPublic} disabled={busy} onClick={() => isPublic && void run('This group is private now: only friends you invite can join.', () => applyGroup(api.groupVisibility(conv.id, 'private')))} data-testid="pm-make-private">
+                Private
+              </button>
+              <button type="button" className={isPublic ? 'btn btn-small btn-primary' : 'btn btn-small btn-ghost'} aria-pressed={isPublic} disabled={busy} onClick={() => !isPublic && void run('This group is public now: anybody can find it in Public groups and join.', () => applyGroup(api.groupVisibility(conv.id, 'public')))} data-testid="pm-make-public">
+                Public
               </button>
             </span>
           )}
@@ -406,6 +470,22 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
         </div>
       )}
 
+      {conv.kind === 'group' && inviteOpen && (
+        <InvitePanel
+          key={conv.id}
+          choices={inviteChoices}
+          roomLeft={roomLeft}
+          public={isPublic}
+          busy={busy}
+          onClose={() => setInviteOpen(false)}
+          onSend={(usernames) =>
+            void run(`Invited ${usernames.length} ${usernames.length === 1 ? 'friend' : 'friends'}. They see the invitation in their Messages and join when they accept.`, async () => {
+              await applyGroup(api.groupInvite(conv.id, usernames));
+              setInviteOpen(false);
+            })
+          }
+        />
+      )}
       {thread.more && (
         <button type="button" className="btn btn-small btn-ghost" disabled={loadingMore} onClick={() => void earlier()} data-testid="pm-earlier">
           {loadingMore ? 'Loading…' : 'Show earlier messages'}
@@ -453,13 +533,20 @@ export function PmThreadView({ thread, onClose }: { thread: Thread; onClose: () 
         <span className={length > maxLength ? 'chat-count over' : 'chat-count'} aria-live="off" data-testid="pm-count">
           {length}/{maxLength}
         </span>
-        <button type="submit" className="btn btn-primary" disabled={!canWrite || sending || length === 0 || length > maxLength} data-testid="pm-send">
+        {canPicture && <PictureButton pick={pic} disabled={!canWrite || sending} testId="pm-picture" />}
+        <button type="submit" className="btn btn-primary" disabled={!canWrite || sending || (length === 0 && !pic.picture) || length > maxLength} data-testid="pm-send">
           {sending ? 'Sending…' : 'Send'}
         </button>
       </form>
+      <PicturePreview pick={pic} testId="pm-picture-preview" />
       <p className="hint">
         Only the {conv.kind === 'group' ? 'players in this group' : 'two of you'} can read this. The owner cannot; he sees only a message you press Report on, and the few before it. Messages are plain text, and the same
-        slow-down as in the chat room applies.
+        slow-down as in the chat room applies.{' '}
+        {!messages.limits.picturesOn
+          ? 'The owner has switched pictures off for now.'
+          : conv.kind === 'direct' && !conv.friends
+            ? 'Pictures can be sent to friends and in groups: become friends first.'
+            : 'You can add one small picture to a message; pictures are kept for 7 days.'}
       </p>
     </section>
   );

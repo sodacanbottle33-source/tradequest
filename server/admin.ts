@@ -23,7 +23,7 @@ import {
   type Shape,
   type Strength,
 } from '../src/world';
-import { START_CASH_CENTS, roleSql, type Auth, type BanInfo, type Role, type User } from './auth';
+import { NAME_KEPT_MS, START_CASH_CENTS, roleSql, type Auth, type BanInfo, type Role, type User } from './auth';
 import { autoPauseReason, type Halts, type PauseView } from './halts';
 import { MEME_SEEDS, scaleOf, unitsToCents, valueOf } from '../src/world';
 import { MAX_OWN_COMPANIES, makeEntry, stockOptions, type StockInput, type StockOptions } from './customStock';
@@ -62,7 +62,7 @@ export const ANNOUNCEMENT_MAX = 200;
 const ANNOUNCEMENT_KEY = 'announcement';
 
 /** Every kind of entry in the admin log. */
-export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin' | 'chat_delete' | 'chat_mute' | 'chat_ban' | 'chat_lift' | 'chat_dismiss' | 'pm_dismiss' | 'avatar_remove' | 'company_pic_set' | 'company_pic_remove' | 'kick' | 'mod_appoint' | 'mod_remove';
+export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin' | 'chat_delete' | 'chat_mute' | 'chat_ban' | 'chat_lift' | 'chat_dismiss' | 'pm_dismiss' | 'avatar_remove' | 'company_pic_set' | 'company_pic_remove' | 'kick' | 'mod_appoint' | 'mod_remove' | 'chat_pictures';
 
 export interface Announcement {
   readonly text: string;
@@ -118,6 +118,8 @@ export interface PlayerRow {
   readonly coinsCents: number;
   /** The ban in force right now, or null. */
   readonly banned: BanInfo | null;
+  /** Names he had in the last 30 days, newest first (he changed his username; the old name is kept for him that long). */
+  readonly formerNames: readonly string[];
 }
 
 /** A company the owner made. */
@@ -266,10 +268,13 @@ export class Admin {
     const rows = db.all<{ id: number; username: string; role: Role; created_ms: number; account_id: number; cash_cents: number; coins: number | null }>(
       `SELECT u.id, u.username, ${roleSql('u')} AS role, u.created_ms, a.id AS account_id, a.cash_cents, w.balance_cents AS coins
          FROM users u JOIN accounts a ON a.user_id = u.id AND a.kind = 'career' LEFT JOIN wallets w ON w.user_id = u.id
-        WHERE ? = '' OR u.username LIKE ? ESCAPE '\\' ORDER BY u.id LIMIT 200`,
+        WHERE ? = '' OR u.username LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM username_changes c WHERE c.user_id = u.id AND c.changed_ms > ? AND c.old_name LIKE ? ESCAPE '\\') ORDER BY u.id LIMIT 200`,
       q,
       `%${likeEscape(q)}%`,
+      this.d.now() - NAME_KEPT_MS,
+      `%${likeEscape(q)}%`,
     );
+    const former = this.formerNames(rows.map((r) => r.id));
     const players: PlayerRow[] = rows.map((r) => ({
       id: r.id,
       username: r.username,
@@ -279,6 +284,7 @@ export class Admin {
       netWorthCents: trading.view(r.account_id).netWorthCents,
       coinsCents: r.coins ?? 0,
       banned: this.d.auth.banOf(r.id),
+      formerNames: former.get(r.id) ?? [],
     }));
     const events = db
       .all<{ id: number; company_id: number | null; headline: string; direction: string; publish_tick: number; start_tick: number; end_tick: number; price_at_publish: number | null; price_at_end: number | null }>(
@@ -817,17 +823,38 @@ export class Admin {
   }
 
   /** The list the moderators see to find a player (no money, only who he is and whether he is banned): up to 30 matches, newest account first. */
-  staffPlayers(query: string): { players: { username: string; displayName: string; role: Role; createdMs: number; banned: BanInfo | null }[] } {
+  staffPlayers(query: string): { players: { username: string; displayName: string; role: Role; createdMs: number; banned: BanInfo | null; formerNames: readonly string[] }[] } {
     const q = query.trim().replace(/^@+/, '');
     const rows = this.d.db.all<{ username: string; display_name: string; role: Role; created_ms: number; id: number }>(
       `SELECT u.id, u.username, u.display_name, ${roleSql('u')} AS role, u.created_ms
          FROM users u
-        WHERE u.pw_hash <> 'bot' AND NOT EXISTS (SELECT 1 FROM bots b WHERE b.user_id = u.id) AND (? = '' OR u.username LIKE ? ESCAPE '\\')
+        WHERE u.pw_hash <> 'bot' AND NOT EXISTS (SELECT 1 FROM bots b WHERE b.user_id = u.id)
+          AND (? = '' OR u.username LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM username_changes c WHERE c.user_id = u.id AND c.changed_ms > ? AND c.old_name LIKE ? ESCAPE '\\'))
         ORDER BY u.id DESC LIMIT 30`,
       q,
       `%${likeEscape(q)}%`,
+      this.d.now() - NAME_KEPT_MS,
+      `%${likeEscape(q)}%`,
     );
-    return { players: rows.map((r) => ({ username: r.username, displayName: r.display_name, role: r.role, createdMs: r.created_ms, banned: this.d.auth.banOf(r.id) })) };
+    const former = this.formerNames(rows.map((r) => r.id));
+    return { players: rows.map((r) => ({ username: r.username, displayName: r.display_name, role: r.role, createdMs: r.created_ms, banned: this.d.auth.banOf(r.id), formerNames: former.get(r.id) ?? [] })) };
+  }
+
+  /** The names these players had in the last 30 days (newest first), for the lists the owner and the moderators use to find somebody. */
+  private formerNames(ids: readonly number[]): Map<number, string[]> {
+    const out = new Map<number, string[]>();
+    if (ids.length === 0) return out;
+    const rows = this.d.db.all<{ user_id: number; old_name: string }>(
+      `SELECT user_id, old_name FROM username_changes WHERE changed_ms > ? AND user_id IN (${ids.map(() => '?').join(',')}) ORDER BY changed_ms DESC, id DESC`,
+      this.d.now() - NAME_KEPT_MS,
+      ...ids,
+    );
+    for (const r of rows) {
+      const list = out.get(r.user_id) ?? [];
+      if (list.length < 5) list.push(r.old_name);
+      out.set(r.user_id, list);
+    }
+    return out;
   }
 
   // ---- shares and resets ---------------------------------------------------------------------------------------------

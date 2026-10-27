@@ -57,6 +57,8 @@ export class AuthError extends Error {
 }
 
 const USERNAME = /^[A-Za-z0-9_]{3,20}$/;
+/** A username a player left (server/rename.ts) is kept for him this long: nobody else can sign up with it meanwhile. */
+export const NAME_KEPT_MS = 30 * 86_400_000;
 
 function scrypt(password: string, salt: Buffer): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -158,6 +160,7 @@ export class Auth {
     const nowMs = this.now();
     const created = this.db.tx(() => {
       if (this.db.get('SELECT 1 FROM users WHERE username = ?', username)) throw new AuthError('username_taken', 'That username is taken.', 409);
+      if (this.db.get('SELECT 1 FROM username_changes WHERE old_name = ? AND changed_ms > ?', username, nowMs - NAME_KEPT_MS)) throw new AuthError('username_taken', 'That username is taken.', 409);
       const r = this.db.run('INSERT INTO users(username, display_name, pw_hash, role, created_ms) VALUES (?, ?, ?, ?, ?)', username, username, hash, role, nowMs);
       const id = r.lastInsertRowid;
       this.db.run("INSERT INTO accounts(user_id, kind, match_id, cash_cents, start_cash_cents, created_ms) VALUES (?, 'career', NULL, ?, ?, ?)", id, START_CASH_CENTS, START_CASH_CENTS, nowMs);

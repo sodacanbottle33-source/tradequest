@@ -10,7 +10,7 @@ import type { FriendEntry, MessagesView, PmConversation, PmMessage, PmPerson, Pm
 
 const me: User = { id: 1, username: 'alice', displayName: 'alice', role: 'player' };
 const person = (username: string, role: 'player' | 'owner' = 'player'): PmPerson => ({ username, displayName: username, role });
-const msg = (id: number, username = 'bob', text = `message ${id}`, conversationId = 5): PmMessage => ({ id, conversationId, username, displayName: username, role: 'player', text, createdMs: id * 1000 });
+const msg = (id: number, username = 'bob', text = `message ${id}`, conversationId = 5): PmMessage => ({ id, conversationId, username, displayName: username, role: 'player', text, createdMs: id * 1000, picture: null });
 const conv = (patch: Partial<PmConversation> = {}): PmConversation => ({
   id: 5,
   kind: 'direct',
@@ -19,6 +19,7 @@ const conv = (patch: Partial<PmConversation> = {}): PmConversation => ({
   members: [person('alice'), person('bob')],
   invited: [],
   creator: null,
+  visibility: 'private',
   last: null,
   lastMs: 0,
   unread: 0,
@@ -34,7 +35,7 @@ const view = (patch: Partial<MessagesView> = {}): MessagesView => ({
   blocked: [],
   unread: 0,
   you: { canWrite: true, reason: null, untilMs: null, message: null },
-  limits: { maxLength: 300, minGapMs: 1500, maxGroupMembers: 8, maxGroups: 20, maxGroupTitle: 40 },
+  limits: { maxLength: 300, minGapMs: 1500, maxGroupMembers: 8, maxGroups: 20, maxGroupTitle: 40, maxPublicGroupMembers: 30, picturesOn: true },
   ...patch,
 });
 const friend = (username: string): FriendEntry => ({ username, displayName: username, role: 'player', netWorthCents: null, rank: null, sinceMs: 0 });
@@ -228,9 +229,9 @@ describe('the screens', () => {
       expect([file, /\.innerHTML\s*=/.test(text)]).toEqual([file, false]);
     }
     const api = code(src('shared', 'api.ts'));
-    // The only private-chat reads are the player's own lists and conversations, and (for the owner) the reports.
+    // The only private-chat reads are the player's own lists and conversations, the list of PUBLIC groups (anybody may see those), and (for the owner) the reports.
     const gets = api.split('\n').filter((l) => l.includes("'GET'") && (l.includes('/api/messages') || l.includes('private-reports')));
-    expect(gets.map((l) => /\/api\/(admin\/private-reports|messages(\/thread)?)/.exec(l)?.[0]).sort()).toEqual(['/api/admin/private-reports', '/api/messages', '/api/messages/thread']);
+    expect(gets.map((l) => /\/api\/(admin\/private-reports|messages(\/groups\/public|\/thread)?)/.exec(l)?.[0]).sort()).toEqual(['/api/admin/private-reports', '/api/messages', '/api/messages/groups/public', '/api/messages/thread']);
   });
 
   it('MSGUI-14: the Messages tab, its badge, the "Message" buttons and the live events are all wired in', () => {
@@ -260,11 +261,15 @@ describe('the screens', () => {
     expect(view).toMatch(/\{conv\.kind === 'group' && \(\s*<div className="pm-admin"/);
     expect(view).toMatch(/\{isCreator && \(renaming === null/);
     expect(view).toMatch(/\{isCreator &&\s*\[\.\.\.conv\.members\.filter/);
-    expect(view).toContain('data-testid="pm-invite-select"');
+    // The quick invite: a button for every member that opens a tick-list of his own friends, and one request for all of them.
+    expect(view).toContain('data-testid="pm-invite-button"');
+    expect(view).toContain('data-testid="pm-invite-panel"');
+    expect(view).toContain('data-testid="pm-invite-send"');
+    expect(view).toContain('api.groupInvite(conv.id, usernames)');
     expect(view).toContain('data-testid="pm-member-hint"');
     // The server decides: the member's own friends only.
     const server = code(readFileSync(resolve(process.cwd(), 'server', 'messages.ts'), 'utf8'));
-    const invite = /invite\(me: User, conversationId: unknown, username: unknown\)[\s\S]*?\n  }\n/.exec(server)?.[0] ?? '';
+    const invite = /invite\(me: User, conversationId: unknown, who: unknown\)[\s\S]*?\n  }\n/.exec(server)?.[0] ?? '';
     expect(invite).toContain('this.memberGroup(me, conversationId)');
     expect(invite).not.toContain('ownGroup');
     expect(invite).toContain('this.checkCanInvite(me, friend, row.id)');

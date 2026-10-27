@@ -458,6 +458,8 @@ export interface AdminPlayer {
   readonly coinsCents: number;
   /** The ban in force right now, or null. */
   readonly banned: { reason: string; bannedMs: number; untilMs: number | null; kind?: 'ban' | 'kick' } | null;
+  /** The names he had in the last 30 days, newest first (he changed his username). */
+  readonly formerNames: readonly string[];
 }
 
 /** One line of the moderators' player search: names and whether the player is banned. No money (moderators never see that). */
@@ -467,6 +469,7 @@ export interface StaffPlayer {
   readonly role: Role;
   readonly createdMs: number;
   readonly banned: { reason: string; bannedMs: number; untilMs: number | null; kind?: 'ban' | 'kick' } | null;
+  readonly formerNames: readonly string[];
 }
 export interface StaffPlayers {
   readonly players: readonly StaffPlayer[];
@@ -909,13 +912,18 @@ export interface ChallengesState {
 
 export type ChallengeAction = 'send' | 'accept' | 'decline' | 'cancel';
 
+/** A message's picture: there is one ('ok'), it was there and has expired ('expired'), or none (null). */
+export type PictureState = 'ok' | 'expired';
+
 export interface ChatMessage {
   readonly id: number;
   readonly username: string;
   readonly displayName: string;
   readonly role: Role;
+  /** What the player typed (empty for a message that is only a picture). */
   readonly text: string;
   readonly createdMs: number;
+  readonly picture: PictureState | null;
 }
 
 /** Whether the player can write now, and if not, why and until when (the server's own words are in `message`). */
@@ -930,12 +938,13 @@ export interface ChatView {
   readonly messages: readonly ChatMessage[];
   readonly more: boolean;
   readonly you: ChatYou;
-  readonly limits: { readonly maxLength: number; readonly minGapMs: number };
+  readonly limits: { readonly maxLength: number; readonly minGapMs: number; readonly picturesOn: boolean };
 }
 
 export interface AdminChatReport {
   readonly messageId: number;
   readonly text: string;
+  readonly picture: PictureState | null;
   readonly username: string;
   readonly displayName: string;
   readonly createdMs: number;
@@ -959,6 +968,8 @@ export interface AdminChatRestriction {
 export interface AdminChatView {
   readonly reports: readonly AdminChatReport[];
   readonly restricted: readonly AdminChatRestriction[];
+  /** Pictures in chats are switched on (the owner can switch them off for everybody). */
+  readonly picturesOn: boolean;
 }
 
 // ---- private chats (one player, or a small group of friends) -------------------------------------------------------------------
@@ -977,6 +988,7 @@ export interface PmMessage {
   readonly role: Role;
   readonly text: string;
   readonly createdMs: number;
+  readonly picture: PictureState | null;
 }
 
 /** Whether the player can write at all right now (a brand-new account cannot yet). */
@@ -998,6 +1010,8 @@ export interface PmConversation {
   readonly invited: readonly PmPerson[];
   /** The username of the group's creator. */
   readonly creator: string | null;
+  /** A group: 'public' = listed, anybody can join; 'private' = invited friends only. */
+  readonly visibility: 'private' | 'public';
   readonly last: PmMessage | null;
   readonly lastMs: number;
   readonly unread: number;
@@ -1025,7 +1039,31 @@ export interface MessagesView {
   readonly blocked: readonly PmBlocked[];
   readonly unread: number;
   readonly you: PmYou;
-  readonly limits: { readonly maxLength: number; readonly minGapMs: number; readonly maxGroupMembers: number; readonly maxGroups: number; readonly maxGroupTitle: number };
+  readonly limits: {
+    readonly maxLength: number;
+    readonly minGapMs: number;
+    readonly maxGroupMembers: number;
+    readonly maxGroups: number;
+    readonly maxGroupTitle: number;
+    readonly maxPublicGroupMembers: number;
+    readonly picturesOn: boolean;
+  };
+}
+
+/** A line of the list of public groups. */
+export interface PublicGroup {
+  readonly id: number;
+  readonly title: string;
+  readonly memberCount: number;
+  readonly max: number;
+  readonly creator: PmPerson | null;
+  /** The player is a member already. */
+  readonly joined: boolean;
+}
+
+export interface PublicGroupsView {
+  readonly groups: readonly PublicGroup[];
+  readonly max: number;
 }
 
 export interface PmThreadPage {
@@ -1047,6 +1085,7 @@ export interface PrivateReportLine {
   readonly text: string;
   readonly createdMs: number;
   readonly reported: boolean;
+  readonly picture: boolean;
 }
 
 export interface PrivateReport {
@@ -1056,8 +1095,32 @@ export interface PrivateReport {
   readonly author: PmPerson;
   readonly reporters: number;
   readonly firstReportedMs: number;
+  /** The report has a copy of the reported picture for the owner to look at. */
+  readonly picture: boolean;
   readonly lines: readonly PrivateReportLine[];
   readonly authorOpenReports: number;
+}
+
+// ---- changing the username (server/rename.ts) ------------------------------------------------------------------------------
+
+export interface RenameStatus {
+  readonly costCents: number;
+  readonly waitMs: number;
+  readonly canChange: boolean;
+  /** Why not (null when he can). */
+  readonly reason: string | null;
+  readonly nextAllowedMs: number | null;
+  readonly cashCents: number;
+  readonly lastChangeMs: number | null;
+}
+
+export interface RenameResult {
+  readonly username: string;
+  readonly previous: string;
+  readonly costCents: number;
+  readonly cashCents: number;
+  readonly nextAllowedMs: number;
+  readonly user: { readonly id: number; readonly username: string; readonly displayName: string; readonly role: Role } | null;
 }
 
 export interface AdminPrivateView {

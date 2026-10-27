@@ -11,6 +11,7 @@ import { Auth, AuthError, SESSION_COOKIE } from './auth';
 import { Calls } from './calls';
 import { Challenges } from './challenges';
 import { Chat } from './chat';
+import { ChatPictures } from './chatPictures';
 import type { Config } from './config';
 import { CircuitBreaker } from './breaker';
 import { Liquidator, type PositionClosed } from './liquidation';
@@ -27,6 +28,7 @@ import { MatchService } from './lobby/service';
 import { Badges } from './badges';
 import { Learn } from './learn';
 import { Messages } from './messages';
+import { Renames } from './rename';
 import { Bankruptcies } from './bankruptcy';
 import { CompanyPictures } from './companyPictures';
 import { Profiles } from './profile';
@@ -321,8 +323,11 @@ export function createApp(options: AppOptions): App {
   matches.recover();
   const admin = new Admin({ db, auth, matches, hub, world, news: newsService, trading, halts, views, log, now });
   // The public chat room. Its moderation (delete, mute, ban, lift) goes through the owner's routes and is written to the admin log.
+  // Pictures sent in the chats (small, kept for a week, switched off by the owner if needed). Shared by the chat room and the private chats.
+  const chatPictures = new ChatPictures({ db, now });
   const chat = new Chat({
     db,
+    pictures: chatPictures,
     log,
     now,
     publish: (event, data) => hub.publishSignedIn(event, data),
@@ -332,6 +337,7 @@ export function createApp(options: AppOptions): App {
   // Private chats. Only the members of a conversation can read it; the owner sees only what players report (written to the admin log when closed).
   const messages = new Messages({
     db,
+    pictures: chatPictures,
     log,
     now,
     publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
@@ -342,6 +348,17 @@ export function createApp(options: AppOptions): App {
     },
     notifyChallenges: (userId) => hub.publishTo(userId, 'challenges', {}),
     audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
+  });
+  // Changing your username: $4,000 of Career cash, once a week (server/rename.ts).
+  const renames = new Renames({
+    db,
+    now,
+    log,
+    ownerUsername: config.ownerUsername,
+    publish: (event, data) => {
+      social.invalidate(); // the friends list and the boards keep names for up to 30 seconds: forget them so the new name shows at once
+      hub.publishSignedIn(event, data);
+    },
   });
   // Profile pictures (everybody sees them; the owner can remove any) and who is online.
   const profiles = new Profiles({
@@ -397,7 +414,9 @@ export function createApp(options: AppOptions): App {
     social,
     challenges,
     chat,
+    chatPictures,
     messages,
+    renames,
     profiles,
     companyPictures,
     badges,
@@ -592,7 +611,14 @@ export function createApp(options: AppOptions): App {
         if (!leases.acquire(SERVER_LEASE, SERVER_LEASE_MS)) log.error('server', 'Lost the server lock: another TradeQuest server has taken over this database. This one should be closed.');
       }, 10_000);
       leaseTimer.unref?.();
-      purgeTimer = setInterval(() => auth.purgeExpired(), 3_600_000);
+      purgeTimer = setInterval(() => {
+        auth.purgeExpired();
+        try {
+          chatPictures.prune(); // pictures older than a week expire
+        } catch (error) {
+          log.warn('chat', `The picture clean-up failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }, 3_600_000);
       purgeTimer.unref?.();
       // Badges: one look a few seconds after the start, then every 45 seconds.
       badgeFirst = setTimeout(sweepBadges, 5_000);
