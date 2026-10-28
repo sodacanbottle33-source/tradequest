@@ -1,6 +1,7 @@
 // The browser's only way to talk to the server. Every function returns what the server said, or throws an ApiError whose
 // message is the server's own explanation (shown to the player as it is).
 
+import type { Look } from './cosmeticCatalog';
 import type { CoachReply, LearnState, LessonResult, LessonView, TutorialReply } from '../learn/wire';
 import type {
   Account,
@@ -17,6 +18,9 @@ import type {
   AdminState,
   AdminStyle,
   BadgesView,
+  PlayerProfile,
+  ShopBuy,
+  ShopView,
   Book,
   CallSignal,
   CallsReply,
@@ -245,6 +249,13 @@ export const api = {
 
   // Achievement badges (any signed-in player): every badge, when you got it and how many players have it.
   badges: () => request<BadgesView>('GET', '/api/badges'),
+
+  // The Shop (any signed-in player): what you own and wear, buying (with Career cash, once), wearing, what everybody wears, and a player's profile card.
+  shop: () => request<ShopView>('GET', '/api/shop'),
+  buyItem: (item: string) => request<ShopBuy>('POST', '/api/shop/buy', { item }),
+  equipItem: (slot: string, item: string | null) => request<{ equipped: Look }>('POST', '/api/shop/equip', { slot, item }),
+  looks: () => request<{ looks: Record<string, Look> }>('GET', '/api/looks'),
+  playerProfile: (username: string) => request<PlayerProfile>('GET', `/api/player/${encodeURIComponent(username)}`),
 
   // Moderators and the owner (staff): the server answers 403 to an ordinary player, and refuses a moderator anything that touches the owner or another moderator.
   modPlayers: (q = '') => request<StaffPlayers>('GET', `/api/mod/players${q.trim() === '' ? '' : `?q=${enc(q.trim())}`}`),

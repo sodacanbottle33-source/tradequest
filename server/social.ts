@@ -66,6 +66,24 @@ export interface PlayerEntry {
   readonly badges: readonly string[];
 }
 
+/**
+ * A player's profile card (docs/world.md §29): what the player list already shows (name, role, net worth, place, how he stands to you, the badges he has
+ * earned, best first) and the day his account was made. His looks (name colour, glow, frame, title) come from the page's list of looks, not from here.
+ */
+export interface PlayerProfile {
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: Role;
+  readonly netWorthCents: number | null;
+  readonly rank: number | null;
+  /** How many players are ranked (so the page can say "#3 of 120"). */
+  readonly rankedCount: number;
+  readonly relation: Relation;
+  readonly memberSinceMs: number;
+  /** Every badge he has earned (highest tier first). */
+  readonly badges: readonly string[];
+}
+
 export interface PlayerPage {
   readonly players: readonly PlayerEntry[];
   /** How many players match the search (the page is a part of them). */
@@ -187,6 +205,8 @@ export interface SocialDeps {
   readonly notify?: (userId: number) => void;
   /** The best badges of some players (server/badges.ts); without it the list shows none. */
   readonly badgesOf?: (userIds: readonly number[]) => Map<number, string[]>;
+  /** Every badge one player has earned, best first (for the profile card); without it the card shows none. */
+  readonly allBadgesOf?: (userId: number) => string[];
 }
 
 function pair(a: number, b: number): [number, number] {
@@ -423,6 +443,23 @@ export class Social {
       }),
     );
     return { players, total: matching.length, offset: start, updatedMs: b.atMs };
+  }
+
+  /** The profile card of one player (a real player who is not banned; anybody else is "no such player"). */
+  profileOf(me: User, username: string): PlayerProfile {
+    const p = this.findPlayer(username);
+    const links = new Map(this.links(me.id).map((l) => [l.other, l]));
+    return {
+      username: p.username,
+      displayName: p.displayName,
+      role: p.role,
+      netWorthCents: p.netWorthCents,
+      rank: p.rank,
+      rankedCount: this.board().ranked.length,
+      relation: this.relationOf(me.id, p.id, links),
+      memberSinceMs: p.createdMs,
+      badges: this.d.allBadgesOf?.(p.id) ?? [],
+    };
   }
 
   /** The richest players. 'all' = everybody (at most BOARD_SIZE), 'friends' = you and your friends. */

@@ -8,6 +8,7 @@ import { newRequestId } from './adminUtil';
 import { MessagePicture, PictureButton, PicturePreview, usePicturePick } from './ChatPicture';
 import { MUTE_CHOICES, lengthOf, timeLabel, waitWords } from './chatUtil';
 import { problemText } from './playersUtil';
+import { PlayerName } from './PlayerName';
 import { RoleBadge } from './RoleBadge';
 import { sharedStore, useShared } from './store';
 import { Skeleton } from './Skeleton';
@@ -43,7 +44,7 @@ function Line({ message, mine, isOwner, isStaff, reported, onReport, onNote }: {
           <Avatar username={message.username} displayName={who} size={22} />
           <OnlineDot username={message.username} />
         </span>
-        <strong>{who}</strong>
+        <PlayerName username={message.username} name={who} />
         <RoleBadge role={message.role} />
         <span className="muted">{timeLabel(message.createdMs)}</span>
         <span className="chat-tools">

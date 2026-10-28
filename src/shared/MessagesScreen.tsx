@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
 import { Avatar, OnlineDot, useOnlineWatch } from './Avatar';
+import { PlayerName } from './PlayerName';
 import { lengthOf } from './chatUtil';
 import { lastLine, previewOf, requestTitle, whenLabel } from './messagesUtil';
 import { PmThreadView } from './PmThreadView';
@@ -535,7 +536,7 @@ export function MessagesScreen() {
                         <OnlineDot username={c.other.username} />
                       </span>
                     )}
-                    <strong>{c.title}</strong>
+                    {c.other ? <PlayerName username={c.other.username} name={c.title} link={false} /> : <strong>{c.title}</strong>}
                     {c.kind === 'group' && <span className="tag">{c.visibility === 'public' ? 'Public group' : 'Group'}</span>}
                     {c.requestState === 'waiting' && <span className="tag">Waiting for a reply</span>}
                     {c.unread > 0 && (

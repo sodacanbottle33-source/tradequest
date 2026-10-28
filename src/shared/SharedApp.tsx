@@ -25,12 +25,14 @@ import { PlayersScreen } from './PlayersScreen';
 import { Notices } from './Notices';
 import { EarningsScreen } from './EarningsScreen';
 import { Toasts } from './Toasts';
+import { ProfileCard } from './ProfileCard';
 import { ProfileMenu } from './ProfileMenu';
+import { ShopScreen } from './ShopScreen';
 import { BadgeUnlockLayer } from './BadgeUnlock';
 import { WinBurstLayer } from './WinBurst';
 import { sharedStore, useShared } from './store';
 
-type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'learn' | 'players' | 'chat' | 'messages' | 'account';
+type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'learn' | 'players' | 'chat' | 'messages' | 'shop' | 'account';
 const CAREER_TABS: [CareerTab, string][] = [
   ['market', 'Market'],
   ['coins', 'Memecoins'],
@@ -40,6 +42,7 @@ const CAREER_TABS: [CareerTab, string][] = [
   ['players', 'Players'],
   ['chat', 'Chat'],
   ['messages', 'Messages'],
+  ['shop', 'Shop'],
   ['account', 'My account'],
 ];
 
@@ -97,6 +100,12 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
     onMode('career');
   };
 
+  const goShop = () => {
+    setCareerTab('shop');
+    onMode('career');
+    window.scrollTo?.(0, 0);
+  };
+
   // The admin panel belongs to the owner. If the player is not the owner (logged out, or never was), leave it.
   const isOwner = s.user?.role === 'owner';
   useEffect(() => {
@@ -148,6 +157,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
       <Header mode={shown} onMode={onMode} subtitle={subtitle} hidden={locked ? ['career'] : []}>
         <ProfileMenu
           onAccount={goSignIn}
+          onShop={goShop}
           onAdmin={() => {
             onMode('admin');
             window.scrollTo?.(0, 0);
@@ -183,6 +193,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
       <CallBar />
       <WinBurstLayer />
       <BadgeUnlockLayer />
+      <ProfileCard onShop={goShop} />
 
       {s.health && s.health.stalled && (
         <p className="notice error" role="alert">
@@ -279,6 +290,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
         {shown === 'career' && careerTab === 'players' && <PlayersScreen />}
         {shown === 'career' && careerTab === 'chat' && <ChatScreen />}
         {shown === 'career' && careerTab === 'messages' && <MessagesScreen />}
+        {shown === 'career' && careerTab === 'shop' && <ShopScreen />}
         {shown === 'career' && careerTab === 'account' && <AccountScreen onOpen={openCompany} />}
         {shown === 'battle' && <LobbyScreen onGoSignIn={goSignIn} jump={matchJump} onJumpDone={() => setMatchJump(null)} />}
         {shown === 'news' && <NewsScreen onTicker={openCompany} />}

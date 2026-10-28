@@ -9,6 +9,7 @@ import { MessagePicture, PictureButton, PicturePreview, usePicturePick } from '.
 import { lengthOf, timeLabel, waitWords } from './chatUtil';
 import { filterFriends, friendsToInvite, membersLine, pickEverybody, togglePicked } from './messagesUtil';
 import { problemText } from './playersUtil';
+import { PlayerName } from './PlayerName';
 import { RoleBadge } from './RoleBadge';
 import { sharedStore, useShared } from './store';
 import type { FriendEntry, PmMessage, PmThreadPage } from './types';
@@ -58,7 +59,7 @@ function Line({ message, mine, reported, onReport, onDelete }: { message: PmMess
           <Avatar username={message.username} displayName={message.displayName} size={22} />
           <OnlineDot username={message.username} />
         </span>
-        <strong>{message.displayName}</strong>
+        <PlayerName username={message.username} name={message.displayName} />
         <RoleBadge role={message.role} />
         <span className="muted">{timeLabel(message.createdMs)}</span>
         <span className="chat-tools">

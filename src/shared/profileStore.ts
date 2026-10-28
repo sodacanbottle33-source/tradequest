@@ -4,19 +4,23 @@
 //   • avatars: username -> version of his picture. A player without a picture is not in it. The list is fetched once after signing in and
 //     kept fresh by the "avatar" event of the live stream. The picture itself is /api/avatar/<username>?v=<version>: a browser keeps it for
 //     good as long as the version stays the same.
+//   • looks: username -> what he wears (name colour, glow, picture frame, title; docs/world.md §29). A player who wears nothing is not in it. The list is fetched
+//     once after signing in and kept fresh by the "looks" event of the live stream.
 //   • online: the usernames that have a page open, fetched while a screen that shows the dots is open (every 20 seconds).
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
+import { cleanLook, lookIsEmpty, type Look } from './cosmeticCatalog';
 
 export interface ProfileState {
   readonly avatars: Readonly<Record<string, number>>;
+  readonly looks: Readonly<Record<string, Look>>;
   readonly online: ReadonlySet<string>;
 }
 
 /** How often the online list is fetched while a screen shows it. */
 export const ONLINE_POLL_MS = 20_000;
 
-const EMPTY: ProfileState = { avatars: {}, online: new Set() };
+const EMPTY: ProfileState = { avatars: {}, looks: {}, online: new Set() };
 
 /** The address of a player's picture. */
 export function avatarUrl(username: string, version: number): string {
@@ -51,6 +55,12 @@ class ProfileStore {
     } catch {
       // the pictures are a nicety: the initials show instead
     }
+    try {
+      const out = await api.looks();
+      if (this.signedIn) this.set({ looks: Object.fromEntries(Object.entries(out.looks).map(([name, look]) => [name, cleanLook(look)]).filter(([, look]) => !lookIsEmpty(look as Look))) });
+    } catch {
+      // looks are a nicety too: names show plainly
+    }
     if (this.watchers > 0) void this.pollOnline();
   }
 
@@ -70,24 +80,41 @@ class ProfileStore {
     this.set({ avatars: next });
   }
 
-  /** A player changed his username: his picture and his online dot move to the new name. */
+  /** The live stream says what a player wears now (null = nothing). Anything the page does not know is ignored, so an old or made-up id draws nothing. */
+  onLooks(d: { username: string; look: Look | null }): void {
+    if (!this.signedIn) return;
+    const next = { ...this.state.looks };
+    const look = d.look === null ? null : cleanLook(d.look);
+    if (look === null || lookIsEmpty(look)) delete next[d.username];
+    else next[d.username] = look;
+    this.set({ looks: next });
+  }
+
+  /** A player changed his username: his picture, his looks and his online dot move to the new name. */
   onRenamed(from: string, to: string): void {
     if (!this.signedIn) return;
     const key = Object.keys(this.state.avatars).find((k) => k.toLowerCase() === from.toLowerCase());
+    const lookKey = Object.keys(this.state.looks).find((k) => k.toLowerCase() === from.toLowerCase());
     const online = [...this.state.online].find((k) => k.toLowerCase() === from.toLowerCase());
-    if (key === undefined && online === undefined) return;
+    if (key === undefined && lookKey === undefined && online === undefined) return;
     const avatars = { ...this.state.avatars };
     if (key !== undefined) {
       const version = avatars[key] as number;
       delete avatars[key];
       avatars[to] = version;
     }
+    const looks = { ...this.state.looks };
+    if (lookKey !== undefined) {
+      const look = looks[lookKey] as Look;
+      delete looks[lookKey];
+      looks[to] = look;
+    }
     const names = new Set(this.state.online);
     if (online !== undefined) {
       names.delete(online);
       names.add(to);
     }
-    this.set({ avatars, online: names });
+    this.set({ avatars, looks, online: names });
   }
 
   private async pollOnline(): Promise<void> {

@@ -15,6 +15,8 @@ import { sharedStore, useShared } from './store';
 interface Props {
   /** Go to Career → My account. */
   onAccount: () => void;
+  /** Go to Career → Shop. */
+  onShop: () => void;
   /** Open the admin panel (offered to the owner only). */
   onAdmin: () => void;
   /** Open the moderators' page (offered to moderators only). */
@@ -143,7 +145,7 @@ function AuthDialog({ mode, onClose }: { mode: 'login' | 'register'; onClose: ()
   );
 }
 
-export function ProfileMenu({ onAccount, onAdmin, onMod, onLoggedOut }: Props) {
+export function ProfileMenu({ onAccount, onShop, onAdmin, onMod, onLoggedOut }: Props) {
   const { user } = useShared();
   const [open, setOpen] = useState(false);
   const [dialog, setDialog] = useState<'login' | 'register' | null>(null);
@@ -242,6 +244,12 @@ export function ProfileMenu({ onAccount, onAdmin, onMod, onLoggedOut }: Props) {
                 </div>
                 {user && <RoleBadge role={user.role} testId={isOwner ? 'owner-badge' : 'mod-badge'} />}
               </div>
+              <button type="button" role="menuitem" className="menu-item" onClick={choose(() => sharedStore.openProfile(user.username))} data-testid="menu-profile">
+                My profile
+              </button>
+              <button type="button" role="menuitem" className="menu-item" onClick={choose(onShop)} data-testid="menu-shop">
+                Shop
+              </button>
               <button type="button" role="menuitem" className="menu-item" onClick={choose(onAccount)} data-testid="menu-account">
                 My account
               </button>

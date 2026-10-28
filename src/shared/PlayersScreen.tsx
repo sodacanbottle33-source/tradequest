@@ -12,6 +12,7 @@ import { ChallengeButton, useChallengeActions } from './Challenges';
 import { clockTime, formatCents } from './format';
 import { problemText, relationLabel, shownText, standingText } from './playersUtil';
 import { RoleBadge } from './RoleBadge';
+import { PlayerName } from './PlayerName';
 import { Skeleton } from './Skeleton';
 import { sharedStore, useShared } from './store';
 import type { BoardScope, FriendAction, FriendEntry, Leaderboard, PlayerEntry, Relation, Role, WeeklyBoard } from './types';
@@ -47,7 +48,7 @@ function Who({ name, username, role, you, badges }: { name: string; username: st
         <Avatar username={username} displayName={name} size={24} />
         <OnlineDot username={username} />
       </span>
-      <strong>{name}</strong>
+      <PlayerName username={username} name={name} />
       {you && <span className="muted"> (you)</span>}
       <RoleBadge role={role} />
       <BadgeRow ids={badges} />

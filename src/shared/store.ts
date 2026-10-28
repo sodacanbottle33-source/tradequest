@@ -9,6 +9,7 @@ import { describeNotice, type ToastText } from './positionNotice';
 import { browserVoiceDeps, VoiceSession } from './voice';
 import { badgeById } from './badgeCatalog';
 import { playBadgeShow } from './badgeShow';
+import type { Look } from './cosmeticCatalog';
 import { logoStore } from './logoStore';
 import { profileStore } from './profileStore';
 import type { Account, Announcement, BanNotice, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
@@ -84,6 +85,8 @@ export interface SharedState {
   readonly pmThread: PmThread | null;
   /** A player another screen asked the Messages screen to write to ("Message" next to a name). */
   readonly pmCompose: string | null;
+  /** The player whose profile card is open (a click on a name), or null. */
+  readonly profileFor: string | null;
   /** The voice call this page shows, if there is one (null when there is none, and when signed out). */
   readonly call: CallState | null;
   /** A short line about a call that just ended or could not start ("Bob did not answer."), until it is closed. */
@@ -127,6 +130,7 @@ const INITIAL: SharedState = {
   pmOpen: null,
   pmThread: null,
   pmCompose: null,
+  profileFor: null,
   call: null,
   callNote: null,
   callStream: null,
@@ -294,6 +298,8 @@ export class SharedStore {
     es.addEventListener('user_renamed', (e) => this.onUserRenamed(JSON.parse((e as MessageEvent<string>).data) as { from: string; to: string }));
     // A player set or removed his profile picture.
     es.addEventListener('avatar', (e) => profileStore.onAvatar(JSON.parse((e as MessageEvent<string>).data) as { username: string; v: number | null }));
+    // A player put on, changed or took off something from the Shop (his name colour, glow, picture frame or title).
+    es.addEventListener('looks', (e) => profileStore.onLooks(JSON.parse((e as MessageEvent<string>).data) as { username: string; look: Look | null }));
     // A launcher or the owner set or removed the picture of a stock or memecoin.
     es.addEventListener('company_picture', (e) => logoStore.onPicture(JSON.parse((e as MessageEvent<string>).data) as { ticker: string; v: number | null }));
     // Private chats: a new message in one of your conversations, or something about them changed (a request, an invitation, a read mark...).
@@ -717,6 +723,15 @@ export class SharedStore {
     if (this.state.pmCompose !== null) this.set({ pmCompose: null });
   }
 
+  /** A click on a player's name (Players, Chat, Messages...): his profile card opens. */
+  openProfile(username: string): void {
+    if (this.state.user) this.set({ profileFor: username });
+  }
+
+  closeProfile(): void {
+    if (this.state.profileFor !== null) this.set({ profileFor: null });
+  }
+
   async refreshAccount(): Promise<void> {
     await this.refreshPrivate(false);
   }
@@ -743,7 +758,7 @@ export class SharedStore {
     if (isOffline(error)) this.set({ conn: 'offline', problem: (error as ApiError).message });
     else if (error instanceof ApiError && error.status === 401 && this.state.user) {
       // The session ended. If the owner banned this account, say so instead of just showing a login form.
-      this.set({ user: null, career: null, friends: null, challenges: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, limits: [], match: null });
+      this.set({ user: null, career: null, friends: null, challenges: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, profileFor: null, limits: [], match: null });
       this.calls.reset();
       profileStore.stop();
       void this.recheckMe();
@@ -781,7 +796,7 @@ export class SharedStore {
     } finally {
       this.calls.reset();
       profileStore.stop();
-      this.set({ user: null, banned: null, career: null, friends: null, challenges: null, challengeNote: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, limits: [], match: null, walletCents: 0, toasts: [] });
+      this.set({ user: null, banned: null, career: null, friends: null, challenges: null, challengeNote: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, profileFor: null, limits: [], match: null, walletCents: 0, toasts: [] });
       for (const t of this.toastTimers.values()) clearTimeout(t);
       this.toastTimers.clear();
       if (this.started) this.openStream();

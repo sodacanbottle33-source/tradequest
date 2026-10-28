@@ -1011,6 +1011,32 @@ ALTER TABLE private_reports ADD COLUMN picture BLOB;
 ALTER TABLE private_reports ADD COLUMN picture_mime TEXT;
 `,
   },
+  {
+    version: 27,
+    name: 'the Shop: things to wear',
+    sql: `
+-- The Shop (server/cosmetics.ts, docs/world.md §29). The list of things to buy, with their kind, rarity and price, is in the program (src/shared/cosmeticCatalog.ts),
+-- so adding one never needs a migration. A player owns a thing for good once he bought it (the price he paid is kept as a record); the money is gone.
+CREATE TABLE user_cosmetics (
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item        TEXT NOT NULL CHECK (length(item) BETWEEN 1 AND 40),
+  bought_ms   INTEGER NOT NULL,
+  price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
+  PRIMARY KEY (user_id, item)
+) WITHOUT ROWID;
+
+-- What a player wears now: at most one thing in each place (name colour, name glow, picture frame, title). A place left empty is NULL.
+-- A player who wears nothing has no row.
+CREATE TABLE user_looks (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  color      TEXT,
+  glow       TEXT,
+  frame      TEXT,
+  title      TEXT,
+  updated_ms INTEGER NOT NULL
+);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

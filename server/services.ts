@@ -21,6 +21,7 @@ import type { MatchService } from './lobby/service';
 import type { Logger } from './log';
 import type { Messages } from './messages';
 import type { Renames } from './rename';
+import type { Shop } from './cosmetics';
 import type { CompanyPictures } from './companyPictures';
 import type { Profiles } from './profile';
 import type { NewsScheduler } from './news/scheduler';
@@ -67,6 +68,8 @@ export interface Services {
   readonly messages: Messages;
   /** Changing your username (server/rename.ts). */
   readonly renames: Renames;
+  /** The Shop: things to wear, bought with Career cash, and what each player wears (server/cosmetics.ts). */
+  readonly shop: Shop;
   /** Profile pictures and who is online (server/profile.ts). */
   readonly profiles: Profiles;
   /** Pictures for stocks and memecoins (server/companyPictures.ts). */

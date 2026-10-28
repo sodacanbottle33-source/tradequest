@@ -1,5 +1,6 @@
 // What the TradeQuest server sends (see server/routes and docs/world.md §8). The browser only displays these; it never decides
 // a price, a fill, a balance, who is in a lobby or who won.
+import type { Look } from './cosmeticCatalog';
 
 /** What a player is: an ordinary player, a moderator the owner chose (docs/world.md §21), or the owner. */
 export type Role = 'player' | 'moderator' | 'owner';
@@ -1195,6 +1196,34 @@ export interface BadgeLine {
   readonly id: string;
   readonly earnedMs: number | null;
   readonly owners: number;
+}
+
+/** What the Shop page shows about the player (docs/world.md §29): his Career cash, what he owns and wears, and which of the badges some things need he has. */
+export interface ShopView {
+  readonly cashCents: number;
+  readonly owned: readonly string[];
+  readonly equipped: Look;
+  readonly badges: readonly string[];
+}
+
+/** The answer to a purchase: the new Shop view plus what was bought and what it cost. */
+export interface ShopBuy extends ShopView {
+  readonly item: string;
+  readonly priceCents: number;
+}
+
+/** A player's profile card (docs/world.md §29). What he wears comes from the page's list of looks. */
+export interface PlayerProfile {
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: Role;
+  readonly netWorthCents: number | null;
+  readonly rank: number | null;
+  readonly rankedCount: number;
+  readonly relation: Relation;
+  readonly memberSinceMs: number;
+  /** Every badge he earned, highest tier first. */
+  readonly badges: readonly string[];
 }
 
 export interface BadgesView {

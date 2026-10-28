@@ -55,6 +55,12 @@ export function registerSocialRoutes(router: Router, s: Services): void {
     return social.weekly(user, scope);
   });
 
+  /** One player's profile card: what the list shows, plus every badge he earned and the day he joined. */
+  router.get('/api/player/:username', (ctx) => {
+    const user = ctx.requireUser();
+    return guard(() => social.profileOf(user, ctx.params.username ?? ''));
+  });
+
   router.get('/api/friends', (ctx) => social.friends(ctx.requireUser()));
 
   const act = (path: string, run: (user: Parameters<typeof social.friends>[0], name: string) => Relation | void): void => {

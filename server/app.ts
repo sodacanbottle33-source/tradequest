@@ -29,6 +29,7 @@ import { Badges } from './badges';
 import { Learn } from './learn';
 import { Messages } from './messages';
 import { Renames } from './rename';
+import { Shop } from './cosmetics';
 import { Bankruptcies } from './bankruptcy';
 import { CompanyPictures } from './companyPictures';
 import { Profiles } from './profile';
@@ -50,6 +51,7 @@ import { registerLearnRoutes } from './routes/learn';
 import { registerBadgeRoutes } from './routes/badges';
 import { registerCompanyPictureRoutes } from './routes/companyPictures';
 import { registerProfileRoutes } from './routes/profile';
+import { registerShopRoutes } from './routes/shop';
 import { registerCallRoutes } from './routes/calls';
 import { registerMessageRoutes } from './routes/messages';
 import { registerSocialRoutes } from './routes/social';
@@ -297,6 +299,7 @@ export function createApp(options: AppOptions): App {
     trading,
     now,
     badgesOf: (ids) => badges.best(ids),
+    allBadgesOf: (id) => badges.earnedBy(id),
     notify: (userId) => {
       hub.publishTo(userId, 'friends', {});
       calls.recheck(userId);
@@ -360,6 +363,17 @@ export function createApp(options: AppOptions): App {
       hub.publishSignedIn(event, data);
     },
   });
+  // The Shop: things to wear, bought with Career cash (the money is gone, so spending lowers net worth and rank at once: the kept ranking is forgotten).
+  const shop = new Shop({
+    db,
+    now,
+    log,
+    publish: (event, data) => hub.publishSignedIn(event, data),
+    spent: () => social.invalidate(),
+    refreshBadges: (userId) => {
+      badges.sweep(userId);
+    },
+  });
   // Profile pictures (everybody sees them; the owner can remove any) and who is online.
   const profiles = new Profiles({
     db,
@@ -417,6 +431,7 @@ export function createApp(options: AppOptions): App {
     chatPictures,
     messages,
     renames,
+    shop,
     profiles,
     companyPictures,
     badges,
@@ -447,6 +462,7 @@ export function createApp(options: AppOptions): App {
   registerChatRoutes(router, services);
   registerMessageRoutes(router, services);
   registerProfileRoutes(router, services);
+  registerShopRoutes(router, services);
   registerCompanyPictureRoutes(router, services);
   registerBadgeRoutes(router, services);
   registerLearnRoutes(router, services);

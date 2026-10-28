@@ -214,6 +214,14 @@ export class Badges {
     return { badges: BADGES.map((b) => ({ id: b.id, earnedMs: mine.get(b.id) ?? null, owners: owners.get(b.id) ?? 0 })), players };
   }
 
+  /** Every badge one player has earned, highest tier first (for the profile card). */
+  earnedBy(userId: number): string[] {
+    return bestBadges(
+      this.d.db.all<{ badge: string }>('SELECT badge FROM user_badges WHERE user_id = ?', userId).map((r) => r.badge),
+      BADGES.length,
+    );
+  }
+
   /** The best badges (at most three, best first) of each of these players, for the Players list. A player with none is not in the answer. */
   best(userIds: readonly number[]): Map<number, string[]> {
     const out = new Map<number, string[]>();
