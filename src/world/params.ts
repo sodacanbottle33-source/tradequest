@@ -31,6 +31,13 @@ export const MIN_PRICE = 100; // $1.00 in cents
 export const MAX_PRICE = 100_000_000;
 /** Deviation of the traded price from the fundamental value can never exceed this fraction. */
 export const DEVIATION_CAP = 0.35;
+/**
+ * Calmer stocks. From the tick `calmFrom` of a world (stored with it: `calm_from_tick`, 0 in a world made after this change, the first tick
+ * after the upgrade in an older one) the FAST jitter of every stock (the noise, momentum and order-flow terms around its fundamental value;
+ * not the market or sector noise, not the slow trend, not the news) is multiplied by this. Memecoins keep theirs. Without a `calmFrom` a
+ * simulation is exactly what it always was, so the engine version stays 4 and nothing that already happened is recomputed differently.
+ */
+export const STOCK_JITTER_CALM = 0.5;
 
 // ---- random draws -----------------------------------------------------------------------------------------------
 /** Uniform draws consumed per stock per tick: four 6-draw normals + one plain uniform. */

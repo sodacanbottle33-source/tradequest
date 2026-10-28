@@ -52,6 +52,11 @@ export const RETENTION_C10_TICKS = 90_000;
 export const CATCHUP_CHUNK_TICKS = TICKS_PER_HOUR;
 /** The meta key that says the thirty memecoins were added to this world. */
 export const MEMECOINS_SEEDED = 'memecoins_seeded';
+/**
+ * The tick from which stocks have calmer fast jitter (src/world/params.ts `STOCK_JITTER_CALM`). A world made after that change has 0; an older
+ * world gets the first tick after the moment it was first started by this program, so everything that happened before stays as it was.
+ */
+export const CALM_FROM_TICK = 'calm_from_tick';
 /** A company added to the catalog later starts trading this many ticks after the server notices it. */
 export const LISTING_DELAY_TICKS = 600;
 /** A company the owner makes while the server runs starts trading this many ticks from now (rounded up to the next candle). */
@@ -168,6 +173,8 @@ export class WorldRuntime {
   effects = new EffectBook();
   genesisMs = 0;
   private worldSeed = 0;
+  /** The tick from which stocks are calmer (see {@link CALM_FROM_TICK}). */
+  calmFrom = 0;
   /** Tick of the last committed state. */
   savedTick = 0;
   private hour!: Rollup;
@@ -267,15 +274,16 @@ export class WorldRuntime {
 
     // Simulation state.
     const row = db.get<{ tick: number; state: string }>('SELECT tick, state FROM world_state WHERE id = 1');
+    this.calmFrom = this.readCalmFrom(firstBoot, clockTick);
     if (row) {
       const saved = JSON.parse(row.state) as SavedState;
-      this.sim = WorldSim.restore(this.worldSeed, catalog, saved.sim);
+      this.sim = WorldSim.restore(this.worldSeed, catalog, saved.sim, this.calmFrom);
       this.hour.loadState(saved.hour);
       this.day.loadState(saved.day);
       this.savedTick = row.tick;
       log.info('world', `Loaded the saved world at tick ${row.tick}; the clock is at tick ${clockTick} (${clockTick - row.tick} ticks to catch up).`);
     } else {
-      this.sim = new WorldSim(this.worldSeed, catalog);
+      this.sim = new WorldSim(this.worldSeed, catalog, this.calmFrom);
       this.savedTick = 0;
       this.writeState(0);
     }
@@ -295,6 +303,24 @@ export class WorldRuntime {
     if (target - this.sim.tick > 3 * TICKS_PER_HOUR) log.info('world', `Catching up ${target - this.sim.tick} ticks (about ${Math.round((target - this.sim.tick) / TICKS_PER_DAY * 10) / 10} days of market time)…`);
     this.advanceTo(target, Infinity);
     log.info('world', `World ready at tick ${this.sim.tick} (${n} companies, ${this.listedCount()} trading). Catch-up took ${Math.round(performance.now() - started)} ms.`);
+  }
+
+  /**
+   * The tick from which stocks are calmer. A brand-new world has it from the start (0). A world that was running before this existed gets the
+   * tick after "now" the first time it is started, and keeps that number for good, so a restart, a crash or a long stop replays every tick
+   * the same way and nothing in the past is recomputed.
+   */
+  private readCalmFrom(firstBoot: boolean, clockTick: number): number {
+    const stored = this.meta(CALM_FROM_TICK);
+    if (stored !== undefined) {
+      const value = Number(stored);
+      if (!/^\d+$/.test(stored) || !Number.isSafeInteger(value)) throw new Error(`The saved calm tick "${stored}" is not a tick`);
+      return value;
+    }
+    const value = firstBoot ? 0 : clockTick + 1;
+    this.setMeta(CALM_FROM_TICK, String(value));
+    if (!firstBoot) this.log.info('world', `Calmer stock prices start at tick ${value}; everything before it stays exactly as it was.`);
+    return value;
   }
 
   // ---- companies made by the owner -----------------------------------------------------------------------------------
@@ -414,7 +440,7 @@ export class WorldRuntime {
 
     // The simulation again, from its own state, with room for one more company (which is not listed yet).
     const before = this.sim.snapshot();
-    const sim = WorldSim.restore(this.worldSeed, catalog, before);
+    const sim = WorldSim.restore(this.worldSeed, catalog, before, this.calmFrom);
     sim.volume.set(this.sim.volume);
     for (const [coinId, tick] of this.sim.deadFrom()) sim.setDeadFrom(coinId, tick);
     const after = sim.snapshot();

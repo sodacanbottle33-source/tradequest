@@ -111,6 +111,13 @@ The **Memecoins** tab in Career lists 30 invented coins (WOOF, HOPP, MEOW, …) 
 - The lowest price of the 30 built-in coins (and of every stock) is $1.00; a built-in coin that "rugs" ends up sitting there. Coins that players **launch** are different: they are priced far below a dollar, like real memecoins (see *Launch your own coin or stock* below), and a rug pulled coin falls to $0.00000000000001 and is frozen.
 - Coins never pause by themselves (the automatic pause rule is for stocks; the owner's own pause and Stop trading tools still work on them) and they are not in the owner's "make a company" form.
 
+## Calmer stocks
+
+Stock prices used to jitter a lot with no news behind it: small companies swung 20 % or more in a day about one day in five, from random noise alone. Now the fast random jitter of every **stock** is **halved** (memecoins keep their wild moves). The slow trend, the news and the size of what news does are unchanged, so a big day now almost always has a big story behind it.
+
+* A new world is calm from its first tick. A world that was already running becomes calm from the moment this version first starts it; everything before that (prices, candles, charts) stays exactly as it was. The moment is stored in the database (`meta.calm_from_tick`) and never changes.
+* Nothing to set and nothing to run: no new setting, no schema step, and the price-engine version is still 4. Details and the measurements in `docs/world.md` §26.
+
 ## Price animations
 
 The charts and prices have some life, like pump.fun. It is only how things look: nothing here changes a price or places an order.

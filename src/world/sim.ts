@@ -7,6 +7,7 @@
 // prices — on any machine, after any restart. See docs/world.md §5 for the equations and the reasons for each term.
 
 import { deriveSeed, hashUniformAt, normal6At } from '../engine/rng';
+import { sqrtN } from './catalog';
 import * as params from './params';
 import { SECTOR_IDS, sectorIndex } from './params';
 import type { EffectBook } from './effects';
@@ -34,6 +35,7 @@ const {
   SIGMA_MARKET_SLOW,
   SIGMA_SECTOR_FAST,
   SIGMA_SECTOR_SLOW,
+  STOCK_JITTER_CALM,
   THETA_D,
   THETA_M,
   THETA_MARKET,
@@ -54,6 +56,11 @@ export class WorldSim {
   readonly worldSeed: number;
   readonly companies: readonly Company[];
   readonly n: number;
+  /**
+   * The first tick from which stocks (not coins) have their fast jitter multiplied by {@link STOCK_JITTER_CALM}. Infinity (the default) means
+   * never: the simulation is then exactly what it was before this existed. The server stores the number with the world.
+   */
+  readonly calmFrom: number;
   /** The last tick that has been simulated. Tick 0 is the first price of every company that is listed at genesis. */
   tick = 0;
 
@@ -84,6 +91,15 @@ export class WorldSim {
   S = 0;
   readonly sectorS: Float64Array;
 
+  /** The jitter size of every company before and from `calmFrom` (the same numbers for a coin), and the momentum size that goes with each. */
+  private readonly jitterNow: Float64Array;
+  private readonly jitterCalm: Float64Array;
+  private readonly momentumNow: Float64Array;
+  private readonly momentumCalm: Float64Array;
+  /** The size of a normal one-tick move, the yardstick for "a big move" (it shrinks with the jitter, so the volatility regime stays where it was). */
+  private readonly tickNow: Float64Array;
+  private readonly tickCalm: Float64Array;
+
   private readonly stockSeed: Uint32Array;
   private readonly daySeed: Uint32Array;
   private readonly marketSeed: number;
@@ -98,9 +114,11 @@ export class WorldSim {
   private readonly transient: Float64Array;
   private readonly permanent: Float64Array;
 
-  constructor(worldSeed: number, companies: readonly Company[]) {
+  constructor(worldSeed: number, companies: readonly Company[], calmFrom: number = Infinity) {
     if (!Number.isInteger(worldSeed) || worldSeed < 0 || worldSeed > 0xffffffff) throw new Error(`Bad world seed ${worldSeed}`);
+    if (calmFrom !== Infinity && (!Number.isInteger(calmFrom) || calmFrom < 0)) throw new Error(`Bad calm tick ${calmFrom}`);
     this.worldSeed = worldSeed;
+    this.calmFrom = calmFrom;
     this.companies = companies;
     this.n = companies.length;
     const n = this.n;
@@ -120,6 +138,12 @@ export class WorldSim {
     this.transient = new Float64Array(n);
     this.permanent = new Float64Array(n);
     this.sectorS = new Float64Array(SECTOR_IDS.length);
+    this.jitterNow = new Float64Array(n);
+    this.jitterCalm = new Float64Array(n);
+    this.momentumNow = new Float64Array(n);
+    this.momentumCalm = new Float64Array(n);
+    this.tickNow = new Float64Array(n);
+    this.tickCalm = new Float64Array(n);
     this.stockSeed = new Uint32Array(n);
     this.daySeed = new Uint32Array(n);
     this.sectorOf = new Int16Array(n);
@@ -131,6 +155,14 @@ export class WorldSim {
       if (c.id !== i) throw new Error(`Company ${c.ticker} has id ${c.id} at position ${i}`);
       this.stockSeed[i] = deriveSeed(worldSeed, i);
       this.sectorOf[i] = sectorIndex(c.sector);
+      const calm = c.sector === 'meme' ? 1 : STOCK_JITTER_CALM;
+      this.jitterNow[i] = c.sigmaD;
+      this.jitterCalm[i] = c.sigmaD * calm;
+      this.momentumNow[i] = c.sigmaM;
+      this.momentumCalm[i] = c.sigmaM * calm;
+      // sigmaTick² = sigmaD² + (market noise)² + (sector noise)²; only the first part shrinks.
+      this.tickNow[i] = c.sigmaTick;
+      this.tickCalm[i] = calm === 1 ? c.sigmaTick : sqrtN(c.sigmaTick * c.sigmaTick - (1 - calm * calm) * c.sigmaD * c.sigmaD);
       const scale = c.priceScale ?? 1;
       if (scale !== 1) {
         this.minP[i] = COIN_MIN_UNITS;
@@ -217,6 +249,10 @@ export class WorldSim {
     effects.apply(t, this.S, this.V, this.transient, this.permanent);
 
     const base = 1 + idx * DRAWS_PER_TICK;
+    const calm = t >= this.calmFrom;
+    const jitter = calm ? this.jitterCalm : this.jitterNow;
+    const momentum = calm ? this.momentumCalm : this.momentumNow;
+    const yardstick = calm ? this.tickCalm : this.tickNow;
     for (let i = 0; i < this.n; i += 1) {
       if (this.listed[i] !== 1) continue; // not listed yet, or dead (frozen)
       const c = this.companies[i] as Company;
@@ -249,13 +285,14 @@ export class WorldSim {
 
       // Volatility regime: big moves make the next ones bigger; it relaxes toward 1.
       const prevP = this.P[i] as number;
-      const shock = Math.min((this.R[i] as number) / c.sigmaTick, 3);
+      const shock = Math.min((this.R[i] as number) / (yardstick[i] as number), 3);
       const V = clamp((this.V[i] as number) + THETA_V * (1 - (this.V[i] as number)) + SHOCK_V * (shock - 0.8), V_MIN, V_MAX);
 
       // Short-term price: momentum, order flow, market and sector noise, the transient part of news.
-      const M = (this.M[i] as number) * (1 - THETA_M) + c.sigmaM * V * zM;
+      const sigD = jitter[i] as number;
+      const M = (this.M[i] as number) * (1 - THETA_M) + (momentum[i] as number) * V * zM;
       const Q = clamp((this.Q[i] as number) * (1 - THETA_Q) + FLOW_NOISE * zQ, -4, 4);
-      let D = (this.D[i] as number) * (1 - THETA_D) + c.sigmaD * V * zD + M + FLOW_PRESSURE * c.sigmaD * Q;
+      let D = (this.D[i] as number) * (1 - THETA_D) + sigD * V * zD + M + FLOW_PRESSURE * sigD * Q;
       D += c.beta * mkFast + c.sectorBeta * (secFast[sec] as number) + trans;
       D = clamp(D, -DEVIATION_CAP, DEVIATION_CAP);
 
@@ -264,7 +301,7 @@ export class WorldSim {
       // Volume: the usual daily rhythm, busier when volatile or when news is moving the price.
       const activity = 0.5 + 0.5 * V;
       const news = Math.abs(trans) + Math.abs(perm);
-      const newsBoost = 1 + 0.5 * Math.min(6, news / c.sigmaTick);
+      const newsBoost = 1 + 0.5 * Math.min(6, news / (yardstick[i] as number));
       const volume = (c.avgDailyVolume / TICKS_PER_DAY) * activity * (0.5 + uV) * newsBoost;
 
       this.F[i] = F;
@@ -378,9 +415,9 @@ export class WorldSim {
     };
   }
 
-  static restore(worldSeed: number, companies: readonly Company[], snap: WorldSnapshot): WorldSim {
+  static restore(worldSeed: number, companies: readonly Company[], snap: WorldSnapshot, calmFrom: number = Infinity): WorldSim {
     if (snap.version !== WORLD_ENGINE_VERSION) throw new Error(`Snapshot is from engine version ${snap.version}, this is ${WORLD_ENGINE_VERSION}`);
-    const sim = new WorldSim(worldSeed, companies);
+    const sim = new WorldSim(worldSeed, companies, calmFrom);
     sim.tick = snap.tick;
     sim.S = snap.market.S;
     snap.market.sector.forEach((v, s) => {

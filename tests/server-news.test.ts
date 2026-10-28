@@ -439,7 +439,7 @@ describe('news moves real prices — once', () => {
     const ticks = [...wantTicks].filter((t) => t <= finalTick).sort((x, y) => x - y);
 
     const replay = (withNews: boolean): Map<number, number[]> => {
-      const sim = new WorldSim(MARKS_SEED, companies);
+      const sim = new WorldSim(MARKS_SEED, companies, run.world.calmFrom); // the same calmer stocks the server has
       const book = new EffectBook(withNews ? events.flatMap((e) => effectsOf(e, companies)) : []);
       const out = new Map<number, number[]>();
       let k = 0;
