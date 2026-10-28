@@ -111,6 +111,10 @@ The **Memecoins** tab in Career lists 30 invented coins (WOOF, HOPP, MEOW, …) 
 - The lowest price of the 30 built-in coins (and of every stock) is $1.00; a built-in coin that "rugs" ends up sitting there. Coins that players **launch** are different: they are priced far below a dollar, like real memecoins (see *Launch your own coin or stock* below), and a rug pulled coin falls to $0.00000000000001 and is frozen.
 - Coins never pause by themselves (the automatic pause rule is for stocks; the owner's own pause and Stop trading tools still work on them) and they are not in the owner's "make a company" form.
 
+## Quote of the day
+
+A small card at the top of the **Market** tab shows a short motivation line and a **tip of the day** about trading. It is the same for everybody on the same calendar day (the day on your own clock) and changes at your midnight. There are **366 original quotes** (one for every day of a leap year) and **120 tips**, so no quote repeats within a year. **Copy** puts the quote, the tip and "- TradeQuest" on your clipboard to send to a friend. **X** hides the card until tomorrow (the game remembers only the day you closed it, in your own browser). It is not shown on the Memecoins tab, on a company page, or inside a 1v1 match. It needs no server and no setting. The words are in `src/shared/dailyQuoteData.ts`; to add or change a line, edit that file (every line must be short, original and unique: the test `daily-quote-ui` checks it). Details: `docs/world.md` §27.
+
 ## Calmer stocks
 
 Stock prices used to jitter a lot with no news behind it: small companies swung 20 % or more in a day about one day in five, from random noise alone. Now the fast random jitter of every **stock** is **halved** (memecoins keep their wild moves). The slow trend, the news and the size of what news does are unchanged, so a big day now almost always has a big story behind it.

@@ -9,6 +9,7 @@ import { careerLocked, modeShown } from './careerLock';
 import { ChallengeBanner } from './Challenges';
 import { ChatScreen } from './ChatScreen';
 import { CompanyView } from './CompanyView';
+import { DailyQuoteCard } from './DailyQuoteCard';
 import { clockTime } from './format';
 import { LaunchScreen } from './LaunchScreen';
 import { LearnScreen } from './LearnScreen';
@@ -262,7 +263,14 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
       )}
 
       <main className="shared-main">
-        {shown === 'career' && (careerTab === 'market' || careerTab === 'coins') && (ticker ? <CompanyView ticker={ticker} onBack={() => setTicker(null)} onTicker={openCompany} /> : <MarketScreen key={careerTab} kind={careerTab === 'coins' ? 'coins' : 'stocks'} onOpen={openCompany} selected={ticker} />)}
+        {shown === 'career' && (careerTab === 'market' || careerTab === 'coins') && (ticker ? (
+            <CompanyView ticker={ticker} onBack={() => setTicker(null)} onTicker={openCompany} />
+          ) : (
+            <>
+              {careerTab === 'market' && <DailyQuoteCard />}
+              <MarketScreen key={careerTab} kind={careerTab === 'coins' ? 'coins' : 'stocks'} onOpen={openCompany} selected={ticker} />
+            </>
+          ))}
         {shown === 'career' && careerTab === 'earnings' && <EarningsScreen onOpen={openCompany} />}
         {shown === 'career' && careerTab === 'launch' && <LaunchScreen onOpen={openCompany} />}
         {shown === 'career' && careerTab === 'learn' && <LearnScreen />}
