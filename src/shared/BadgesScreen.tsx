@@ -6,6 +6,7 @@ import { BADGE_GROUPS, BADGES, TIER_NAMES, badgeById } from './badgeCatalog';
 import { BadgeIcon } from './BadgeIcon';
 import { earnedText, haveText, rarityText } from './badgeUtil';
 import { problemText } from './playersUtil';
+import { Skeleton } from './Skeleton';
 import { useShared } from './store';
 import type { BadgesView } from './types';
 
@@ -45,7 +46,12 @@ export function BadgesScreen() {
           {error}
         </p>
       )}
-      {view === null && !error && <p className="hint">Loading your badges…</p>}
+      {view === null && !error && (
+        <>
+          <p className="hint">Loading your badges…</p>
+          <Skeleton rows={4} />
+        </>
+      )}
       {view !== null && (
         <>
           <p className="badges-have" data-testid="badges-have">
@@ -62,12 +68,14 @@ export function BadgesScreen() {
                 {BADGES.filter((b) => b.group === g.id).map((b) => {
                   const line = lines.get(b.id);
                   const got = line?.earnedMs != null;
+                  const hidden = !got && b.secret === true;
                   return (
-                    <li key={b.id} className={got ? 'badge-card got' : 'badge-card'} data-testid={`badge-${b.id}`} data-earned={got ? 'yes' : 'no'}>
+                    <li key={b.id} className={`${got ? 'badge-card got' : 'badge-card'}${b.secret === true ? ' secret' : ''}`} data-testid={`badge-${b.id}`} data-earned={got ? 'yes' : 'no'} data-secret={b.secret === true ? 'yes' : 'no'}>
                       <BadgeIcon id={b.id} locked={!got} large />
                       <div className="badge-info">
-                        <strong>{b.name}</strong> <span className={`badge-tier tier-${b.tier}`}>{TIER_NAMES[b.tier]}</span>
-                        <div className="badge-how">{b.how}</div>
+                        <strong>{hidden ? 'Secret badge' : b.name}</strong> <span className={`badge-tier tier-${b.tier}`}>{TIER_NAMES[b.tier]}</span>
+                        {got && b.secret === true && <span className="badge-secret-tag"> Secret!</span>}
+                        <div className="badge-how">{hidden ? `Hint: ${b.hint ?? 'Keep playing to find it.'}` : b.how}</div>
                         <div className="muted badge-meta">
                           {got && line?.earnedMs != null ? `Earned ${earnedText(line.earnedMs)}` : 'Not earned yet'} · {rarityText(line?.owners ?? 0, view.players)}
                         </div>

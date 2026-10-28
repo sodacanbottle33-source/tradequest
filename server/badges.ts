@@ -7,6 +7,7 @@
 // anyway (trades, friendships, launches, Learn progress, match results...), so no other part of the game has to know about badges.
 
 import { TUTORIAL_STEPS } from '../src/learn/tutorial';
+import { STOCK_SECTOR_IDS } from '../src/world/params';
 import { BADGES, bestBadges } from '../src/shared/badgeCatalog';
 import type { Db } from './sqlite';
 
@@ -17,6 +18,8 @@ export interface BadgeDeps {
   readonly publishTo: (userId: number, event: string, data: unknown) => void;
   /** How far a Career account is above its start (cents; negative when below): the same number the account page shows as profit. */
   readonly profitOf: (accountId: number) => number;
+  /** The sector of a company (for the sector badges), or undefined when it is not known. Without it the two sector badges are simply never given. */
+  readonly sectorOf?: (companyId: number) => string | undefined;
 }
 
 /** One line of the Badges page. */
@@ -78,17 +81,48 @@ const RULES: Record<string, Rule> = {
   first_match: () => "SELECT DISTINCT user_id FROM match_players WHERE result IN ('win', 'loss', 'tie')",
   first_win: () => `SELECT DISTINCT user_id ${wonMatches}`,
   wins_5: () => `SELECT user_id ${wonMatches} GROUP BY user_id HAVING COUNT(*) >= 5`,
+  // ---- the second batch (docs/world.md §28)
+  trades_1000: () => `SELECT a.user_id ${careerTrades} GROUP BY a.user_id HAVING COUNT(*) >= 1000`,
+  winners_10: () => `SELECT a.user_id ${careerTrades} AND t.realized_cents > 0 GROUP BY a.user_id HAVING COUNT(*) >= 10`,
+  home_run: () => `SELECT DISTINCT a.user_id ${careerTrades} AND t.realized_cents >= ${HOME_RUN_CENTS}`,
+  // A long position that is still open, that was first bought at least a week ago, and that was never sold from (not even a little). A company that went bankrupt does not count.
+  hold_7d: (now) =>
+    `SELECT DISTINCT a.user_id FROM positions p JOIN accounts a ON a.id = p.account_id
+      WHERE a.kind = 'career' AND p.short = 0
+        AND EXISTS (SELECT 1 FROM trades b WHERE b.account_id = p.account_id AND b.company_id = p.company_id AND b.side = 'buy' AND b.short = 0 AND b.created_ms <= ${now - 7 * DAY_MS})
+        AND NOT EXISTS (SELECT 1 FROM trades s WHERE s.account_id = p.account_id AND s.company_id = p.company_id AND s.side = 'sell' AND s.short = 0)
+        AND NOT EXISTS (SELECT 1 FROM bankruptcies bk WHERE bk.company_id = p.company_id)`,
+  trade_days_7: () => `SELECT a.user_id ${careerTrades} GROUP BY a.user_id HAVING COUNT(DISTINCT t.created_ms / ${DAY_MS}) >= 7`,
+  // A long buy of a company that went bankrupt after that buy.
+  lesson_learned: () =>
+    `SELECT DISTINCT a.user_id ${careerTrades} AND t.side = 'buy' AND t.short = 0 AND EXISTS (SELECT 1 FROM bankruptcies bk WHERE bk.company_id = t.company_id AND bk.declared_ms > t.created_ms)`,
+  launch_3: () => 'SELECT user_id FROM launches GROUP BY user_id HAVING COUNT(*) >= 3',
+  fan_club: () => `SELECT l.user_id ${buyersOfLaunched} GROUP BY l.company_id, l.user_id HAVING COUNT(DISTINCT a.user_id) >= 25`,
+  friends_25: () => `SELECT user_id FROM (${accepted}) GROUP BY user_id HAVING COUNT(*) >= 25`,
+  chatterbox: () => 'SELECT user_id FROM chat_messages WHERE deleted_ms IS NULL GROUP BY user_id HAVING COUNT(*) >= 100',
+  lessons_100: () => 'SELECT user_id FROM learn_progress WHERE lessons_done >= 100',
+  wins_25: () => `SELECT user_id ${wonMatches} GROUP BY user_id HAVING COUNT(*) >= 25`,
 };
+
+/** One closed trade with at least this much profit is a Home Run: $500 (the same size the game calls a huge win). */
+export const HOME_RUN_CENTS = 50_000;
 
 /** The profit badges: how far above the start (cents) the Career account has to be. */
 const PROFIT_BADGES: readonly (readonly [string, number])[] = [
   ['profit_1k', 100_000],
   ['profit_10k', 1_000_000],
   ['profit_100k', 10_000_000],
+  ['profit_1m', 100_000_000],
+];
+
+/** The sector badges: how many different stock sectors (memecoins do not count) a player has bought. Done in code because a company's sector is not in the database. */
+const SECTOR_BADGES: readonly (readonly [string, number])[] = [
+  ['sectors_5', 5],
+  ['all_sectors', STOCK_SECTOR_IDS.length],
 ];
 
 /** Every badge id that has a rule here (a test checks this against the catalog, so a badge can never be listed without one). */
-export const RULE_IDS: readonly string[] = [...Object.keys(RULES), ...PROFIT_BADGES.map(([id]) => id)];
+export const RULE_IDS: readonly string[] = [...Object.keys(RULES), ...PROFIT_BADGES.map(([id]) => id), ...SECTOR_BADGES.map(([id]) => id)];
 
 export class Badges {
   constructor(private readonly d: BadgeDeps) {}
@@ -132,6 +166,31 @@ export class Badges {
           if (profit < need) continue;
           if (db.get('SELECT 1 AS x FROM user_badges WHERE user_id = ? AND badge = ?', acc.user_id, id) !== undefined) continue;
           give(acc.user_id, id);
+        }
+      }
+      // The sector badges: the different sectors of the companies a player has bought (long buys in the Career account). Only players who still lack one of them are looked at.
+      const sectorOf = this.d.sectorOf;
+      if (sectorOf !== undefined) {
+        const lackingSector = SECTOR_BADGES.map(([id]) => `NOT EXISTS (SELECT 1 FROM user_badges b WHERE b.user_id = a.user_id AND b.badge = '${id}')`).join(' OR ');
+        const bought = db.all<{ user_id: number; company_id: number }>(
+          `SELECT DISTINCT a.user_id, t.company_id FROM trades t JOIN accounts a ON a.id = t.account_id JOIN users u ON u.id = a.user_id
+            WHERE a.kind = 'career' AND t.side = 'buy' AND t.short = 0 AND ${REAL} AND (${lackingSector})${onlyUserId === undefined ? '' : ' AND a.user_id = ?'}`,
+          ...(onlyUserId === undefined ? [] : [onlyUserId]),
+        );
+        const sectors = new Map<number, Set<string>>();
+        for (const row of bought) {
+          const sector = sectorOf(row.company_id);
+          if (sector === undefined || sector === 'meme') continue;
+          const set = sectors.get(row.user_id) ?? new Set<string>();
+          set.add(sector);
+          sectors.set(row.user_id, set);
+        }
+        for (const [userId, set] of sectors) {
+          for (const [id, need] of SECTOR_BADGES) {
+            if (set.size < need) continue;
+            if (db.get('SELECT 1 AS x FROM user_badges WHERE user_id = ? AND badge = ?', userId, id) !== undefined) continue;
+            give(userId, id);
+          }
         }
       }
     });

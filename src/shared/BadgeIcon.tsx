@@ -5,10 +5,14 @@ import { BADGES_SHOWN, TIER_NAMES, badgeById } from './badgeCatalog';
 export function BadgeIcon({ id, locked = false, large = false }: { id: string; locked?: boolean; large?: boolean }) {
   const def = badgeById(id);
   if (!def) return null; // a badge this version of the page does not know about
-  const cls = `badge-icon tier-${def.tier}${locked ? ' locked' : ''}${large ? ' large' : ''}`;
+  // A secret badge that is not earned yet shows as a "?" medal: its name and its way to get it stay hidden, only the hint is shown.
+  const hidden = locked && def.secret === true;
+  const cls = `badge-icon tier-${def.tier}${locked ? ' locked' : ''}${large ? ' large' : ''}${hidden ? ' secret' : ''}`;
+  const label = hidden ? `Secret badge, ${TIER_NAMES[def.tier]}, not earned yet` : `${def.name}, ${TIER_NAMES[def.tier]} badge${locked ? ', not earned yet' : ''}`;
+  const title = hidden ? `Secret badge (${TIER_NAMES[def.tier]}): ${def.hint ?? 'Keep playing to find it.'}` : `${def.name} (${TIER_NAMES[def.tier]}): ${def.how}`;
   return (
-    <span className={cls} role="img" aria-label={`${def.name}, ${TIER_NAMES[def.tier]} badge${locked ? ', not earned yet' : ''}`} title={`${def.name} (${TIER_NAMES[def.tier]}): ${def.how}`} data-badge={id}>
-      <span aria-hidden="true">{def.icon}</span>
+    <span className={cls} role="img" aria-label={label} title={title} data-badge={id}>
+      <span aria-hidden="true">{hidden ? '❓' : def.icon}</span>
     </span>
   );
 }

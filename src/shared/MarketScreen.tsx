@@ -2,7 +2,9 @@
 import { memo, useMemo, useState } from 'react';
 import { CompanyLogo } from './CompanyLogo';
 import { formatBps, formatCap, formatCount, SECTOR_NAMES, toneOf } from './format';
+import { MOOD_ICON, MOOD_TEXT, moodOf } from './marketMood';
 import { FlashPrice } from './PriceFx';
+import { Skeleton } from './Skeleton';
 import { useShared } from './store';
 import type { OverviewRow } from './types';
 
@@ -24,13 +26,21 @@ const Row = memo(function Row({ coins, row, price, selected, onOpen }: RowProps)
   const changeBps = live && row.open24h > 0 ? Math.round(((price - row.open24h) / row.open24h) * 10_000) : row.changeBps;
   // Market cap = price × shares outstanding. The list does not carry the share count, so it is scaled from the server's figure.
   const cap = live && row.price > 0 ? Math.round((row.marketCapCents / row.price) * price) : row.marketCapCents;
+  // A flame, an ice cube or a crown for the companies that are moving a lot (looks only).
+  const mood = moodOf({ live, coins, halted: row.halted, bankrupt: row.bankrupt, changeBps, price, high24h: row.high24h });
+  const rowClass = [selected ? 'row-selected' : '', mood ? `row-${mood}` : ''].filter(Boolean).join(' ');
   return (
-    <tr className={selected ? 'row-selected' : undefined} data-ticker={row.ticker}>
+    <tr className={rowClass === '' ? undefined : rowClass} data-ticker={row.ticker} data-mood={mood ?? undefined}>
       <td>
         <CompanyLogo ticker={row.ticker} size={24} className="logo-inline" />
         <button type="button" className="link-btn company-link" onClick={() => onOpen(row.ticker)}>
           <strong>{row.ticker}</strong>
-        </button>{' '}
+        </button>
+        {mood && (
+          <span className={`mood mood-${mood}`} role="img" aria-label={MOOD_TEXT[mood]} title={MOOD_TEXT[mood]} data-testid={`mood-${row.ticker}`}>
+            {MOOD_ICON[mood]}
+          </span>
+        )}{' '}
         <span className="muted company-name">{row.name}</span>
         {row.halted && <span className="badge-halted">{row.autoPause ? 'Paused' : 'Halted'}</span>}
         {row.bankrupt && <span className="badge-bankrupt" data-testid={`bankrupt-${row.ticker}`}>Bankrupt</span>}
@@ -128,9 +138,12 @@ export function MarketScreen({ onOpen, selected, kind = 'stocks', hideLaunched =
         </p>
       )}
       {companies.length === 0 && (
-        <p className="hint" role="status">
-          {conn === 'online' ? `Loading the ${coins ? 'coins' : 'companies'}…` : 'Waiting for the server…'}
-        </p>
+        <>
+          <p className="hint" role="status">
+            {conn === 'online' ? `Loading the ${coins ? 'coins' : 'companies'}…` : 'Waiting for the server…'}
+          </p>
+          {conn === 'online' && <Skeleton rows={5} />}
+        </>
       )}
       {companies.length > 0 && (
         <div className="table-wrap">

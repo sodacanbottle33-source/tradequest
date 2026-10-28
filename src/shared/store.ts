@@ -8,6 +8,7 @@ import { describeLimitEvent } from './limitText';
 import { describeNotice, type ToastText } from './positionNotice';
 import { browserVoiceDeps, VoiceSession } from './voice';
 import { badgeById } from './badgeCatalog';
+import { playBadgeShow } from './badgeShow';
 import { logoStore } from './logoStore';
 import { profileStore } from './profileStore';
 import type { Account, Announcement, BanNotice, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
@@ -352,6 +353,8 @@ export class SharedStore {
     if (named.length === 0) return;
     const text = named.map((b) => `${b.icon} ${b.name}`).join(' · ');
     this.showToast('', { tone: 'good', title: named.length === 1 ? 'New badge' : `${named.length} new badges`, text: `${text}. See them in Players → Badges.` }, TOAST_MS);
+    // The medal pop and sparkles (src/shared/BadgeUnlock.tsx). Looks only: the pop-up above is the record of what was earned.
+    playBadgeShow(named.map((b) => b.id));
   }
 
   /** The owner made this player a moderator (or took it away). */

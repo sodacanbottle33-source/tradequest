@@ -15,6 +15,7 @@ import { formatBps, formatCents, formatCount, formatShares, parsePriceInput, par
 import { GOOD_FOR_CHOICES, describeOrder, limitDirection } from './limitText';
 import { OpenOrders } from './OpenOrders';
 import { sharedStore, useShared } from './store';
+import { FillCheck } from './FillCheck';
 import { celebrateTrade } from './winCelebration';
 import type { Account, Estimate, GoodFor, LimitEstimate, LimitResult, OrderResult, Position } from './types';
 
@@ -902,13 +903,14 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
             </p>
           )}
           {result && (
-            <p className="notice ok" role="status" data-testid="order-result">
+            <p className="notice ok fill-ok" role="status" data-testid="order-result" key={result}>
+              <FillCheck />
               {result}
             </p>
           )}
           <button
             type="submit"
-            className={`btn btn-wide ${mode === 'buy' || mode === 'cover' ? 'btn-buy' : 'btn-sell'}`}
+            className={`btn btn-wide ${mode === 'buy' || mode === 'cover' ? 'btn-buy' : 'btn-sell'}${busy ? ' is-busy' : ''}`}
             disabled={busy || qty === null || qty < 1 || exitProblem !== null || limitProblem !== null || needLimit}
             data-testid={`submit-${kind}`}
             aria-label={`${label} order`}

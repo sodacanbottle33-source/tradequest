@@ -9,6 +9,7 @@ import { bidFrom, formatBps, formatCap, formatCents, formatCount, SECTOR_NAMES, 
 import { NewsList } from './NewsList';
 import { CompanyPrice } from './PriceFx';
 import { sharedStore, useShared } from './store';
+import { Skeleton } from './Skeleton';
 import { TradePanel } from './TradePanel';
 import type { Account, Book, CompanyDetail, NewsItem, OrderResult } from './types';
 
@@ -134,6 +135,7 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
           ← All companies
         </button>
         <p className="hint">Loading {ticker}…</p>
+        <Skeleton rows={4} />
       </section>
     );
   }

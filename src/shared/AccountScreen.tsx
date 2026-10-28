@@ -6,6 +6,7 @@ import { AuthPanel } from './AuthPanel';
 import { CompanyLogo } from './CompanyLogo';
 import { formatBps, formatCents, formatShares, toneOf } from './format';
 import { OpenOrders } from './OpenOrders';
+import { Skeleton } from './Skeleton';
 import { sharedStore, useShared } from './store';
 import type { Trade } from './types';
 import { UsernamePanel } from './UsernamePanel';
@@ -32,6 +33,7 @@ export function AccountScreen({ onOpen }: { onOpen: (ticker: string) => void }) 
   // Looks only: net worth rolls to its new value, and cash flashes when a trade changes it.
   const netShown = useTween(career?.netWorthCents ?? 0, 450, user?.id ?? '');
   const cashPulse = usePulse(career?.cashCents ?? 0, user?.id ?? '');
+  const cashShown = useTween(career?.cashCents ?? 0, 450, user?.id ?? '');
 
   const tradeCount = career ? career.positions.length : 0;
   useEffect(() => {
@@ -64,7 +66,12 @@ export function AccountScreen({ onOpen }: { onOpen: (ticker: string) => void }) 
             Sign out
           </button>
         </div>
-        {!career && <p className="hint">Loading your account…</p>}
+        {!career && (
+          <>
+            <p className="hint">Loading your account…</p>
+            <Skeleton rows={3} />
+          </>
+        )}
         {career && (
           <dl className="stats">
             <div className="stat">
@@ -76,7 +83,7 @@ export function AccountScreen({ onOpen }: { onOpen: (ticker: string) => void }) 
             <div className="stat">
               <dt>Cash</dt>
               <dd data-testid="career-cash">
-                <span className={`price-roll ${pulseClass(cashPulse, 'flash')}`.trim()}>{formatCents(career.cashCents)}</span>
+                <span className={`price-roll ${pulseClass(cashPulse, 'flash')}`.trim()}>{formatCents(Math.round(cashShown))}</span>
               </dd>
             </div>
             {career.reservedCents > 0 && (

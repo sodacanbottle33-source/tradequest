@@ -10,6 +10,7 @@ import { MUTE_CHOICES, lengthOf, timeLabel, waitWords } from './chatUtil';
 import { problemText } from './playersUtil';
 import { RoleBadge } from './RoleBadge';
 import { sharedStore, useShared } from './store';
+import { Skeleton } from './Skeleton';
 import type { ChatMessage } from './types';
 
 function Line({ message, mine, isOwner, isStaff, reported, onReport, onNote }: { message: ChatMessage; mine: boolean; isOwner: boolean; isStaff: boolean; reported: boolean; onReport: (id: number) => void; onNote: (text: string) => void }) {
@@ -202,6 +203,7 @@ export function ChatScreen() {
     return (
       <section className="card" aria-label="Chat">
         <p className="hint">Loading the chat…</p>
+        <Skeleton rows={4} />
       </section>
     );
   }

@@ -39,7 +39,11 @@ describe('Badge screens', () => {
     expect(icon).toMatch(/slice\(0, BADGES_SHOWN\)/);
     expect(BADGES_SHOWN).toBe(3);
     expect(icon).toMatch(/locked \? ' locked' : ''/);
-    expect(icon).toMatch(/title=\{`\$\{def\.name\} \(\$\{TIER_NAMES\[def\.tier\]\}\): \$\{def\.how\}`\}/);
+    expect(icon).toContain('`${def.name} (${TIER_NAMES[def.tier]}): ${def.how}`');
+    expect(icon).toMatch(/title=\{title\}/);
+    // A secret badge that is not earned yet never shows its name or how to get it, only the hint.
+    expect(icon).toMatch(/const hidden = locked && def\.secret === true/);
+    expect(icon).toContain('`Secret badge (${TIER_NAMES[def.tier]}): ${def.hint');
     expect(icon).toMatch(/if \(!def\) return null/); // a badge this page does not know is skipped, not drawn broken
     const css = readFileSync(src('styles.css'), 'utf8');
     for (const cls of ['.badge-icon.tier-1', '.badge-icon.tier-4', '.badge-icon.locked', '.badge-grid', '.badge-card.got', '.badge-mod']) expect(css).toContain(cls);

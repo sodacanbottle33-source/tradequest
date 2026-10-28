@@ -26,6 +26,7 @@ import { Notices } from './Notices';
 import { EarningsScreen } from './EarningsScreen';
 import { Toasts } from './Toasts';
 import { ProfileMenu } from './ProfileMenu';
+import { BadgeUnlockLayer } from './BadgeUnlock';
 import { WinBurstLayer } from './WinBurst';
 import { sharedStore, useShared } from './store';
 
@@ -181,6 +182,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
       <Toasts />
       <CallBar />
       <WinBurstLayer />
+      <BadgeUnlockLayer />
 
       {s.health && s.health.stalled && (
         <p className="notice error" role="alert">

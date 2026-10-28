@@ -2388,15 +2388,28 @@ code {
   .burst-flash,
   .win-burst .piece,
   .fx-shake,
-  .call-bar.incoming {
+  .call-bar.incoming,
+  .badge-show .bs-card,
+  .bs-pop,
+  .bs-ring,
+  .bs-shine,
+  .bs-glow,
+  .bs-qmark,
+  .bs-spark {
     animation: none !important;
   }
+  /* The badge show (below, "The badge unlock show") keeps its card in reduced motion, without the pop, rings, shine, tint, "?" flip and sparkles. */
   .burst-origin,
   .win-burst .piece,
   .burst-flash,
   .live-ring,
   .live-ping,
-  .float-move {
+  .float-move,
+  .bs-origin,
+  .bs-ring,
+  .bs-shine,
+  .bs-glow,
+  .bs-qmark {
     display: none;
   }
   .live-dot-y {
@@ -3900,4 +3913,305 @@ code {
   .dq-quote {
     font-size: 16px;
   }
+}
+
+/* ---------- Secret badges on the Badges page ---------- */
+.badge-icon.secret {
+  border-style: dashed;
+}
+.badge-card.secret:not(.got) {
+  border-style: dashed;
+}
+.badge-secret-tag {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ---------- The badge unlock show (src/shared/BadgeUnlock.tsx, badgeShow.ts) ---------- */
+/* A medal pops in with sparkles when the server says a badge was earned. Bronze and silver: a small card at the bottom. Gold and diamond: a big
+   card in the middle with a shine (diamond also tints the screen edges). It never blocks a click. */
+.badge-show {
+  position: fixed;
+  z-index: 88;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  --out: calc(var(--ms) - 450ms);
+}
+.badge-show.small {
+  bottom: 18px;
+}
+.badge-show.big {
+  top: 0;
+  bottom: 0;
+  align-items: center;
+  padding-bottom: 8vh;
+}
+.bs-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: calc(100vw - 24px);
+  padding: 10px 18px 10px 12px;
+  border-radius: 14px;
+  border: 2px solid var(--ring-c, #b7791f);
+  background: var(--panel);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.badge-show.tier-1 { --ring-c: #b7791f; }
+.badge-show.tier-2 { --ring-c: #c0c8d4; }
+.badge-show.tier-3 { --ring-c: #f5b83d; }
+.badge-show.tier-4 { --ring-c: #5eead4; }
+.badge-show.tier-3 .bs-card { box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5), 0 0 28px rgba(245, 184, 61, 0.45); }
+.badge-show.tier-4 .bs-card { box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5), 0 0 34px rgba(94, 234, 212, 0.55); }
+.badge-show.big .bs-card {
+  flex-direction: column;
+  gap: 12px;
+  min-width: 250px;
+  padding: 22px 34px 20px;
+  text-align: center;
+}
+.bs-medal {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  flex: none;
+}
+.badge-show.big .bs-medal {
+  width: 96px;
+  height: 96px;
+}
+.bs-pop {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+}
+.badge-show.big .bs-pop .badge-icon {
+  width: 92px;
+  height: 92px;
+  font-size: 46px;
+  border-width: 5px;
+}
+.bs-ring {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: 50%;
+  border: 2px solid var(--ring-c);
+  opacity: 0;
+}
+.bs-shine {
+  position: absolute;
+  z-index: 0;
+  left: -60%;
+  top: -60%;
+  width: 220%;
+  height: 220%;
+  border-radius: 50%;
+  background: conic-gradient(transparent 0 8%, rgba(245, 184, 61, 0.55) 12%, transparent 18% 34%, rgba(255, 255, 255, 0.45) 38%, transparent 44% 60%, rgba(94, 234, 212, 0.5) 64%, transparent 70% 100%);
+  -webkit-mask: radial-gradient(circle, #000 26%, transparent 62%);
+  mask: radial-gradient(circle, #000 26%, transparent 62%);
+  opacity: 0.8;
+}
+.bs-qmark {
+  position: absolute;
+  z-index: 4;
+  font-size: 30px;
+}
+.badge-show.big .bs-qmark { font-size: 56px; }
+.bs-text {
+  min-width: 0;
+}
+.bs-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.badge-show.secret .bs-label {
+  background: linear-gradient(90deg, #f5b83d, #5eead4);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.bs-name {
+  font-size: 18px;
+  font-weight: 800;
+}
+.badge-show.big .bs-name { font-size: 26px; }
+.bs-how {
+  max-width: 300px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.bs-origin {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+.bs-spark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--size);
+  height: var(--size);
+  margin: calc(var(--size) / -2) 0 0 calc(var(--size) / -2);
+  opacity: 0;
+  background: #f5b83d;
+}
+.bs-spark.shape-0 { clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%); }
+.bs-spark.shape-1 { border-radius: 50%; }
+.bs-spark.shape-2 { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+.bs-spark.tone-1 { background: #ffffff; }
+.bs-spark.tone-2 { background: #5eead4; }
+.bs-glow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(ellipse at 50% 42%, transparent 35%, rgba(94, 234, 212, 0.3) 100%);
+}
+@keyframes bs-card-in { from { opacity: 0; transform: translateY(26px) scale(0.92); } }
+@keyframes bs-card-out { to { opacity: 0; transform: translateY(14px) scale(0.96); } }
+@keyframes bs-big-in { from { opacity: 0; transform: scale(0.4) rotate(-4deg); } }
+@keyframes bs-big-out { to { opacity: 0; transform: translateY(-16px) scale(0.92); } }
+@keyframes bs-pop {
+  0% { opacity: 0; transform: scale(0.2) rotate(-30deg); }
+  55% { opacity: 1; transform: scale(1.22) rotate(8deg); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes bs-ring { 0% { opacity: 0.9; transform: scale(1); } 100% { opacity: 0; transform: scale(2.6); } }
+@keyframes bs-spin { to { transform: rotate(360deg); } }
+@keyframes bs-q {
+  0% { opacity: 1; transform: scale(1); }
+  70% { opacity: 1; transform: scale(1.4) rotate(12deg); }
+  100% { opacity: 0; transform: scale(2); }
+}
+@keyframes bs-spark {
+  0% { opacity: 0; transform: translate(0, 0) rotate(0) scale(0.2); }
+  12% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), calc(var(--dy) + 24px)) rotate(var(--rot)) scale(1); }
+}
+.badge-show.small .bs-card { animation: bs-card-in 0.45s cubic-bezier(0.2, 1.3, 0.4, 1) both, bs-card-out 0.4s ease-in var(--out) forwards; }
+.badge-show.big .bs-card { animation: bs-big-in 0.6s cubic-bezier(0.2, 1.5, 0.4, 1) both, bs-big-out 0.45s ease-in var(--out) forwards; }
+.bs-pop { animation: bs-pop 0.7s cubic-bezier(0.2, 1, 0.3, 1) 0.15s both; }
+.badge-show.secret .bs-pop { animation-delay: 0.6s; }
+.bs-qmark { animation: bs-q 0.6s ease-in 0.1s both; }
+.bs-ring { animation: bs-ring 1.1s ease-out 0.25s 2; }
+.bs-shine { animation: bs-spin 7s linear infinite; }
+.bs-glow { animation: vignette 2.4s ease-out forwards; }
+.bs-spark { animation: bs-spark var(--time) cubic-bezier(0.15, 0.7, 0.3, 1) var(--delay) forwards; }
+@media (max-width: 560px) {
+  .badge-show.big .bs-card { min-width: 0; padding: 18px 22px 16px; }
+  .badge-show.big .bs-name { font-size: 22px; }
+}
+
+/* ---------- Trade moments, loading shimmer, smooth screens and market marks ---------- */
+/* The check mark next to the answer to an order that went through (src/shared/FillCheck.tsx). */
+.notice.fill-ok {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fill-check {
+  flex: none;
+}
+.fill-check circle,
+.fill-check path {
+  stroke: var(--up);
+}
+.btn.is-busy {
+  position: relative;
+}
+.btn.is-busy::after {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-left: 8px;
+  vertical-align: -1px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+}
+
+/* Grey bars that shimmer while a screen waits for its data (src/shared/Skeleton.tsx). */
+.skeleton {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 4px;
+}
+.skeleton-bar {
+  display: block;
+  height: 14px;
+  border-radius: 7px;
+  background: linear-gradient(90deg, var(--panel-2) 25%, rgba(255, 255, 255, 0.09) 50%, var(--panel-2) 75%);
+  background-size: 200% 100%;
+}
+.skeleton-bar:nth-child(3n + 1) { width: 92%; }
+.skeleton-bar:nth-child(3n + 2) { width: 78%; }
+.skeleton-bar:nth-child(3n) { width: 64%; }
+
+/* Marks in the market list (src/shared/marketMood.ts): a flame (up a lot), an ice cube (down a lot), a crown (at a 24-hour high). */
+.mood {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 13px;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: help;
+}
+.market-table tr.row-hot td:first-child { box-shadow: inset 3px 0 0 var(--up); }
+.market-table tr.row-cold td:first-child { box-shadow: inset 3px 0 0 var(--down); }
+.market-table tr.row-high td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.market-table tr.row-hot { background-color: rgba(34, 197, 94, 0.07); }
+.market-table tr.row-cold { background-color: rgba(239, 68, 68, 0.07); }
+.market-table tr.row-high { background-color: rgba(245, 184, 61, 0.09); }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* The check draws itself: the ring first, then the tick, and the answer glows green for a moment. */
+  .fill-check circle { stroke-dasharray: 63; stroke-dashoffset: 63; animation: fc-draw 0.45s ease-out forwards; }
+  .fill-check path { stroke-dasharray: 20; stroke-dashoffset: 20; animation: fc-draw 0.3s ease-out 0.35s forwards; }
+  .notice.fill-ok { animation: fill-glow 0.9s ease-out both; }
+  @keyframes fc-draw { to { stroke-dashoffset: 0; } }
+  @keyframes fill-glow {
+    0% { opacity: 0; transform: translateY(5px) scale(0.98); background: rgba(34, 197, 94, 0.32); }
+    35% { opacity: 1; transform: none; }
+    100% { background: var(--panel); }
+  }
+  /* A button gives a little when it is pressed, and a busy one shows a spinner. */
+  .btn { transition: transform 0.08s ease, filter 0.15s ease, opacity 0.15s ease; }
+  .btn:active:not(:disabled) { transform: translateY(1px) scale(0.985); }
+  .btn.is-busy::after { animation: btn-spin 0.7s linear infinite; }
+  @keyframes btn-spin { to { transform: rotate(360deg); } }
+  /* Loading bars shimmer. */
+  .skeleton-bar { animation: skeleton-shimmer 1.3s linear infinite; }
+  @keyframes skeleton-shimmer { to { background-position: -200% 0; } }
+  /* A screen fades and rises in when you switch to it (the Account and Launch screens already have their own, card by card). */
+  @keyframes screen-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .shared-main > :not(.account-layout):not(.launch-layout) { animation: screen-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .shared-main > :not(.account-layout):not(.launch-layout):nth-child(2) { animation-delay: 60ms; }
+  .shared-main > :not(.account-layout):not(.launch-layout):nth-child(n + 3) { animation-delay: 110ms; }
+  /* The marks bounce in; a hot or cold company breathes softly. */
+  .mood { animation: mood-in 0.5s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+  .mood-hot { animation: mood-in 0.5s cubic-bezier(0.2, 1.6, 0.4, 1) both, mood-flicker 1.6s ease-in-out 0.5s infinite; }
+  @keyframes mood-in { from { opacity: 0; transform: scale(0.2) rotate(-25deg); } }
+  @keyframes mood-flicker { 50% { transform: scale(1.18) rotate(-5deg); } }
+  .market-table tr.row-hot { animation: row-breathe-up 3.2s ease-in-out infinite; }
+  .market-table tr.row-cold { animation: row-breathe-down 3.2s ease-in-out infinite; }
+  .market-table tr.row-high { animation: row-breathe-gold 3.2s ease-in-out infinite; }
+  @keyframes row-breathe-up { 50% { background-color: rgba(34, 197, 94, 0.15); } }
+  @keyframes row-breathe-down { 50% { background-color: rgba(239, 68, 68, 0.15); } }
+  @keyframes row-breathe-gold { 50% { background-color: rgba(245, 184, 61, 0.2); } }
 }

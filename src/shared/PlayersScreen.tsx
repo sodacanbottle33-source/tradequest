@@ -12,6 +12,7 @@ import { ChallengeButton, useChallengeActions } from './Challenges';
 import { clockTime, formatCents } from './format';
 import { problemText, relationLabel, shownText, standingText } from './playersUtil';
 import { RoleBadge } from './RoleBadge';
+import { Skeleton } from './Skeleton';
 import { sharedStore, useShared } from './store';
 import type { BoardScope, FriendAction, FriendEntry, Leaderboard, PlayerEntry, Relation, Role, WeeklyBoard } from './types';
 
@@ -172,7 +173,12 @@ function BoardPanel({ isOwner }: { isOwner: boolean }) {
           {actions.error}
         </p>
       )}
-      {!board && !error && <p className="hint">Loading the leaderboard…</p>}
+      {!board && !error && (
+        <>
+          <p className="hint">Loading the leaderboard…</p>
+          <Skeleton rows={5} />
+        </>
+      )}
       {board && (
         <>
           <p className="board-me" data-testid="board-standing">

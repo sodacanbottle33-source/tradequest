@@ -291,7 +291,7 @@ export function createApp(options: AppOptions): App {
     publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
   });
   // Achievement badges: a sweep gives them out every little while (see start() below), and a player's own page asks for a fresh look when he opens it.
-  const badges = new Badges({ db, now, publishTo: (userId, event, data) => hub.publishTo(userId, event, data), profitOf: (accountId) => trading.view(accountId).profitCents });
+  const badges = new Badges({ db, now, publishTo: (userId, event, data) => hub.publishTo(userId, event, data), profitOf: (accountId) => trading.view(accountId).profitCents, sectorOf: (companyId) => world.companies[companyId]?.sector });
   const social = new Social({
     db,
     trading,
