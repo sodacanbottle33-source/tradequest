@@ -13,7 +13,7 @@ function code(file: string): string {
     .replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
-const player = (over: Partial<MatchPlayer> = {}): MatchPlayer => ({ userId: 1, name: 'alice', bot: false, ready: true, you: true, forfeited: false, finalValueCents: null, profitCents: null, result: null, rewardCents: null, ...over });
+const player = (over: Partial<MatchPlayer> = {}): MatchPlayer => ({ userId: 1, name: 'alice', bot: false, ready: true, you: true, forfeited: false, finalValueCents: null, profitCents: null, result: null, rewardCents: null, rank: null, ...over });
 const match = (phase: Match['phase'], players: MatchPlayer[] = [player(), player({ userId: 2, name: 'bob', you: false })]): Match => ({
   id: 1,
   phase,
@@ -35,6 +35,7 @@ const match = (phase: Match['phase'], players: MatchPlayer[] = [player(), player
   cancelReason: null,
   canTrade: phase === 'live',
   friendMatch: false,
+  ranked: false,
 });
 
 describe('when Career is closed', () => {
