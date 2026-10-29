@@ -6,21 +6,24 @@
 //     good as long as the version stays the same.
 //   • looks: username -> what he wears (name colour, glow, picture frame, title; docs/world.md §29). A player who wears nothing is not in it. The list is fetched
 //     once after signing in and kept fresh by the "looks" event of the live stream.
+//   • gear: what the player himself has on his own screen (candle colours and shape, chart background and effect, win style; docs/world.md §30). Only his: the server
+//     tells nobody else, and the page asks for it once after signing in and hears about changes (made on another page of his) by the "gear" event.
 //   • online: the usernames that have a page open, fetched while a screen that shows the dots is open (every 20 seconds).
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
-import { cleanLook, lookIsEmpty, type Look } from './cosmeticCatalog';
+import { cleanGear, cleanLook, EMPTY_GEAR, lookIsEmpty, type Gear, type Look } from './cosmeticCatalog';
 
 export interface ProfileState {
   readonly avatars: Readonly<Record<string, number>>;
   readonly looks: Readonly<Record<string, Look>>;
+  readonly gear: Gear;
   readonly online: ReadonlySet<string>;
 }
 
 /** How often the online list is fetched while a screen shows it. */
 export const ONLINE_POLL_MS = 20_000;
 
-const EMPTY: ProfileState = { avatars: {}, looks: {}, online: new Set() };
+const EMPTY: ProfileState = { avatars: {}, looks: {}, gear: EMPTY_GEAR, online: new Set() };
 
 /** The address of a player's picture. */
 export function avatarUrl(username: string, version: number): string {
@@ -61,7 +64,25 @@ class ProfileStore {
     } catch {
       // looks are a nicety too: names show plainly
     }
+    try {
+      const out = await api.gear();
+      if (this.signedIn) this.set({ gear: cleanGear(out.gear) });
+    } catch {
+      // the chart simply keeps its plain look
+    }
     if (this.watchers > 0) void this.pollOnline();
+  }
+
+  /** The Shop page learned what he has on his own screen now (after a purchase or after wearing something). */
+  setGear(gear: Gear): void {
+    if (!this.signedIn) return;
+    this.set({ gear: cleanGear(gear) });
+  }
+
+  /** The live stream says what this player has on his own screen now (null = nothing): he changed it on another page of his. */
+  onGear(d: { gear: Gear | null }): void {
+    if (!this.signedIn) return;
+    this.set({ gear: d.gear === null ? EMPTY_GEAR : cleanGear(d.gear) });
   }
 
   /** Called when the player signs out: forget everything. */

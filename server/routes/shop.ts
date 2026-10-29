@@ -1,4 +1,4 @@
-// The Shop (docs/world.md §29). Every route needs a signed-in player. The page only asks; what a thing costs, who may buy it and what a player wears are all decided
+// The Shop (docs/world.md §29, §30). Every route needs a signed-in player. The page only asks; what a thing costs, who may buy it and what a player wears are all decided
 // in server/cosmetics.ts. What everybody wears is one list that every signed-in page keeps (like the profile pictures).
 
 import { HttpError } from '../http';
@@ -48,6 +48,9 @@ export function registerShopRoutes(router: Router, s: Services): void {
     const b = await ctx.body();
     return guard(() => shop.equip(user, b.slot, b.item));
   });
+
+  /** What the player himself has on his own screen (candles, chart, win style). Nobody can ask for another player's. */
+  router.get('/api/gear', (ctx) => ({ gear: shop.gearOf(ctx.requireUser().id) }));
 
   /** What everybody wears: username -> the things in each place. A player who wears nothing is not in it. */
   router.get('/api/looks', (ctx) => {

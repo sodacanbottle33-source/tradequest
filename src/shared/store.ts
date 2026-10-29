@@ -9,10 +9,11 @@ import { describeNotice, type ToastText } from './positionNotice';
 import { browserVoiceDeps, VoiceSession } from './voice';
 import { badgeById } from './badgeCatalog';
 import { playBadgeShow } from './badgeShow';
-import type { Look } from './cosmeticCatalog';
+import type { Gear, Look } from './cosmeticCatalog';
+import { billboardStore } from './billboardStore';
 import { logoStore } from './logoStore';
 import { profileStore } from './profileStore';
-import type { Account, Announcement, BanNotice, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
+import type { Account, Announcement, BanNotice, BillboardSlotView, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
 
 /** A pop-up about a position the market closed by itself. */
 export interface Toast extends ToastText {
@@ -268,6 +269,8 @@ export class SharedStore {
       void this.refreshMessages();
       // The pictures of stocks and memecoins are for everybody, also a visitor who is not signed in.
       void logoStore.load();
+      // So is the billboard (a signed-in player's answer also has his cash and his launched companies).
+      void billboardStore.load();
       if (this.state.user) {
         void this.calls.reconcile();
         void profileStore.start();
@@ -300,6 +303,10 @@ export class SharedStore {
     es.addEventListener('avatar', (e) => profileStore.onAvatar(JSON.parse((e as MessageEvent<string>).data) as { username: string; v: number | null }));
     // A player put on, changed or took off something from the Shop (his name colour, glow, picture frame or title).
     es.addEventListener('looks', (e) => profileStore.onLooks(JSON.parse((e as MessageEvent<string>).data) as { username: string; look: Look | null }));
+    // A player put on, changed or took off something for his own screen on another page of his (candle colours, chart, win style). Only his own pages hear this.
+    es.addEventListener('gear', (e) => profileStore.onGear(JSON.parse((e as MessageEvent<string>).data) as { gear: Gear | null }));
+    // Somebody booked a place on the billboard (or added hours): the three places, for everybody.
+    es.addEventListener('billboard', (e) => billboardStore.onEvent(JSON.parse((e as MessageEvent<string>).data) as { slots: BillboardSlotView[] }));
     // A launcher or the owner set or removed the picture of a stock or memecoin.
     es.addEventListener('company_picture', (e) => logoStore.onPicture(JSON.parse((e as MessageEvent<string>).data) as { ticker: string; v: number | null }));
     // Private chats: a new message in one of your conversations, or something about them changed (a request, an invitation, a read mark...).
@@ -761,6 +768,7 @@ export class SharedStore {
       this.set({ user: null, career: null, friends: null, challenges: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, profileFor: null, limits: [], match: null });
       this.calls.reset();
       profileStore.stop();
+      billboardStore.clearMine();
       void this.recheckMe();
     }
   }
@@ -796,6 +804,7 @@ export class SharedStore {
     } finally {
       this.calls.reset();
       profileStore.stop();
+      billboardStore.clearMine();
       this.set({ user: null, banned: null, career: null, friends: null, challenges: null, challengeNote: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, profileFor: null, limits: [], match: null, walletCents: 0, toasts: [] });
       for (const t of this.toastTimers.values()) clearTimeout(t);
       this.toastTimers.clear();

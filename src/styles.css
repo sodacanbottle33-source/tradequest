@@ -221,16 +221,16 @@ h2 {
   stroke-width: 1.2;
 }
 .candle.up .wick {
-  stroke: var(--up);
+  stroke: var(--candle-up, var(--up));
 }
 .candle.up .body {
-  fill: var(--up);
+  fill: var(--candle-up, var(--up));
 }
 .candle.down .wick {
-  stroke: var(--down);
+  stroke: var(--candle-down, var(--down));
 }
 .candle.down .body {
-  fill: var(--down);
+  fill: var(--candle-down, var(--down));
 }
 .candle.is-history {
   opacity: 0.38;
@@ -820,12 +820,12 @@ h2 {
 }
 .live-svg .candle.up .wick,
 .live-svg .candle.up .body {
-  fill: var(--up);
+  fill: var(--candle-up, var(--up));
   stroke: none;
 }
 .live-svg .candle.down .wick,
 .live-svg .candle.down .body {
-  fill: var(--down);
+  fill: var(--candle-down, var(--down));
   stroke: none;
 }
 .candle.forming .body {
@@ -879,10 +879,10 @@ h2 {
   vertical-align: -1px;
 }
 .live-legend .legend-up::before {
-  background: var(--up);
+  background: var(--candle-up, var(--up));
 }
 .live-legend .legend-down::before {
-  background: var(--down);
+  background: var(--candle-down, var(--down));
 }
 .live-legend .legend-flat::before {
   background: var(--flat);
@@ -4453,6 +4453,379 @@ code {
   .shop-item:hover { transform: translateY(-2px); }
   .modal.profile-card { animation: card-pop 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
   @keyframes card-pop { from { opacity: 0; transform: translateY(8px) scale(0.97); } }
+}
+
+/* ---------- The Shop, part 2: things for your own screen, and the billboard (docs/world.md §30; src/shared/cosmeticCatalog.ts, GearSamples.tsx, BillboardStrip.tsx, BillboardBooking.tsx, WinBurst.tsx) ---------- */
+/* Looks only, and only on the player's own screen. A price chart is `.company-chart` plus up to four of the classes below (a candle colour set, a shape, a background and an effect);
+   the real chart and the little charts in the Shop use the same classes, so a picture in the Shop is what the chart will look like. Colours come through two variables
+   (`--candle-up`, `--candle-down`) that fall back to the normal green and red. Every animation sits in the no-preference block at the end of this part. */
+.company-chart.gear-sample {
+  width: 168px;
+  max-width: 100%;
+  margin: 0 auto;
+}
+.gear-sample .chart-frame {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  outline: none;
+}
+.gear-sample .chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.shop-slot-candles .shop-sample-box,
+.shop-slot-shape .shop-sample-box,
+.shop-slot-backdrop .shop-sample-box,
+.shop-slot-effect .shop-sample-box {
+  padding: 8px;
+}
+.shop-screen-only {
+  margin-top: 4px;
+}
+
+/* Candle colours: the rising colour and the falling colour. */
+.cos-cc_ocean { --candle-up: #38bdf8; --candle-down: #fb923c; }
+.cos-cc_mono { --candle-up: #f1f5f9; --candle-down: #64748b; }
+.cos-cc_pastel { --candle-up: #86efac; --candle-down: #fda4af; }
+.cos-cc_neon { --candle-up: #00ffa3; --candle-down: #ff2d95; }
+.cos-cc_goldsilver { --candle-up: #f5b83d; --candle-down: #cbd5e1; }
+.cos-cc_sunset { --candle-up: #fbbf24; --candle-down: #c026d3; }
+.cos-cc_aurora { --candle-up: #34d399; --candle-down: #a78bfa; }
+.cos-cc_rainbow { --candle-up: #22c55e; --candle-down: #ef4444; }
+/* Rainbow: every candle takes its colours from two registered colour variables that the animation (below) moves round; each candle starts at another point of the cycle.
+   Without animation (reduced motion) they stay at the normal green and red. */
+@property --rb-up { syntax: '<color>'; inherits: true; initial-value: #22c55e; }
+@property --rb-down { syntax: '<color>'; inherits: true; initial-value: #ef4444; }
+.company-chart.cos-cc_rainbow .live-svg .candle {
+  --candle-up: var(--rb-up);
+  --candle-down: var(--rb-down);
+}
+.live-svg .candle:nth-child(6n + 2) { --rd: -1s; }
+.live-svg .candle:nth-child(6n + 3) { --rd: -2s; }
+.live-svg .candle:nth-child(6n + 4) { --rd: -3s; }
+.live-svg .candle:nth-child(6n + 5) { --rd: -4s; }
+.live-svg .candle:nth-child(6n) { --rd: -5s; }
+.live-svg .candle:nth-child(5n + 2) { --sd: -0.7s; }
+.live-svg .candle:nth-child(5n + 3) { --sd: -1.4s; }
+.live-svg .candle:nth-child(5n + 4) { --sd: -2.1s; }
+.live-svg .candle:nth-child(5n) { --sd: -2.8s; }
+.cos-cc_diamond { --candle-up: #67e8f9; --candle-down: #c4b5fd; }
+.cos-cc_royal { --candle-up: #fcd34d; --candle-down: #7c3aed; }
+/* The two legendary sets have a bright edge, like a cut stone. */
+.company-chart.cos-cc_diamond .live-svg .candle .body,
+.company-chart.cos-cc_royal .live-svg .candle .body {
+  stroke: rgba(255, 255, 255, 0.75);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+.company-chart.cos-cc_royal .live-svg .candle .body {
+  stroke: #fde68a;
+}
+
+/* Candle shapes. `scale` is the single-property form of a transform: it works together with the candle's own placement. */
+.company-chart.cos-sh_hollow .live-svg .candle.up .body {
+  fill: transparent;
+  stroke: var(--candle-up, var(--up));
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+.company-chart.cos-sh_slim .live-svg .candle .body {
+  scale: 0.5 1;
+}
+.company-chart.cos-sh_rounded .live-svg .candle.up .body {
+  stroke: var(--candle-up, var(--up));
+}
+.company-chart.cos-sh_rounded .live-svg .candle.down .body {
+  stroke: var(--candle-down, var(--down));
+}
+.company-chart.cos-sh_rounded .live-svg .candle .body {
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.company-chart.cos-sh_boldwick .live-svg .candle .wick {
+  scale: 2.8 1;
+}
+.company-chart.cos-sh_boldwick .live-svg .candle .body {
+  scale: 0.75 1;
+}
+.company-chart.cos-sh_ghost .live-svg .candle .body {
+  fill-opacity: 0.25;
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+.company-chart.cos-sh_ghost .live-svg .candle.up .body { stroke: var(--candle-up, var(--up)); }
+.company-chart.cos-sh_ghost .live-svg .candle.down .body { stroke: var(--candle-down, var(--down)); }
+.company-chart.cos-sh_ghost .live-svg .candle .wick {
+  opacity: 0.8;
+}
+.company-chart.cos-sh_crystal .live-svg .candle .body {
+  clip-path: polygon(0 14%, 50% 0, 100% 14%, 100% 86%, 50% 100%, 0 86%);
+  filter: brightness(1.15) saturate(1.2);
+}
+
+/* Chart backgrounds, behind the candles (the grid and the numbers stay on top). */
+.company-chart.cos-bg_midnight .chart-frame {
+  background: linear-gradient(180deg, #0c1d44 0%, #08122a 100%);
+}
+.company-chart.cos-bg_paper .chart-frame {
+  background-color: #0d1a15;
+  background-image: linear-gradient(rgba(120, 200, 160, 0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(120, 200, 160, 0.12) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.company-chart.cos-bg_matrix .chart-frame {
+  background-color: #021209;
+  background-image: linear-gradient(rgba(0, 255, 120, 0.07) 50%, transparent 50%), radial-gradient(ellipse at 50% 120%, rgba(0, 255, 120, 0.18), transparent 60%);
+  background-size: 100% 4px, 100% 100%;
+}
+.company-chart.cos-bg_dusk .chart-frame {
+  background: linear-gradient(180deg, #170d2e 0%, #3b1850 55%, #6b2b3a 100%);
+}
+.company-chart.cos-bg_galaxy .chart-frame,
+.company-chart.cos-bg_lights .chart-frame,
+.company-chart.cos-bg_vault .chart-frame {
+  position: relative;
+  isolation: isolate;
+}
+.company-chart.cos-bg_galaxy .chart-frame {
+  background: radial-gradient(ellipse at 75% 15%, rgba(124, 58, 237, 0.4), transparent 55%), radial-gradient(ellipse at 15% 85%, rgba(14, 165, 233, 0.28), transparent 55%), #060716;
+}
+.company-chart.cos-bg_galaxy .chart-frame::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(2px 2px at 12% 22%, #fff, transparent), radial-gradient(1.6px 1.6px at 28% 68%, #cfe3ff, transparent), radial-gradient(2.2px 2.2px at 44% 14%, #fff, transparent),
+    radial-gradient(1.6px 1.6px at 58% 52%, #e9d5ff, transparent), radial-gradient(2px 2px at 71% 78%, #fff, transparent), radial-gradient(1.6px 1.6px at 86% 36%, #cfe3ff, transparent),
+    radial-gradient(2px 2px at 93% 88%, #fff, transparent), radial-gradient(1.6px 1.6px at 6% 56%, #fff, transparent), radial-gradient(1.4px 1.4px at 36% 40%, #fff, transparent),
+    radial-gradient(1.8px 1.8px at 80% 12%, #fff, transparent), radial-gradient(1.4px 1.4px at 18% 90%, #cfe3ff, transparent);
+}
+.company-chart.cos-bg_lights .chart-frame {
+  background: linear-gradient(115deg, #06142a 0%, #0b4a3f 26%, #26307f 55%, #4d1f72 78%, #06142a 100%);
+  background-size: 260% 260%;
+}
+.company-chart.cos-bg_vault .chart-frame {
+  background: linear-gradient(145deg, #2c2008 0%, #17120a 48%, #3a2a0b 100%);
+  box-shadow: inset 0 0 0 1px rgba(245, 184, 61, 0.55);
+}
+.company-chart.cos-bg_vault .chart-frame::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: repeating-linear-gradient(45deg, rgba(245, 184, 61, 0.06) 0 2px, transparent 2px 14px);
+}
+
+/* Chart effects. */
+.company-chart.cos-fx_glow .live-svg .candle.up { filter: drop-shadow(0 0 3.5px var(--candle-up, var(--up))); }
+.company-chart.cos-fx_glow .live-svg .candle.down { filter: drop-shadow(0 0 3.5px var(--candle-down, var(--down))); }
+.company-chart.cos-fx_pulse .live-svg .candle.forming { filter: brightness(1.25) drop-shadow(0 0 5px var(--accent)); }
+.company-chart.cos-fx_neon .live-svg .mark-line {
+  stroke: #22d3ee;
+  stroke-width: 1.5px;
+  stroke-dasharray: none;
+  filter: drop-shadow(0 0 3px #22d3ee) drop-shadow(0 0 8px #22d3ee);
+}
+.company-chart.cos-fx_neon .live-svg .mark-tag { fill: #0e7490; }
+.company-chart.cos-fx_neon .live-svg .live-core { filter: drop-shadow(0 0 5px #22d3ee); }
+.company-chart.cos-fx_flame .live-svg .candle.forming { filter: drop-shadow(0 -3px 5px #f97316) drop-shadow(0 -7px 9px rgba(239, 68, 68, 0.75)); }
+.company-chart.cos-fx_sparkle .live-svg .candle .body {
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Win styles: the colours of the big number, and the little pictures that fly instead of coloured bits. */
+.piece.glyph {
+  width: auto;
+  height: auto;
+  margin: -0.6em 0 0 -0.6em;
+  background: none;
+  border-radius: 0;
+  clip-path: none;
+  font-size: calc(var(--size) * 2.4);
+  line-height: 1;
+}
+.burst-origin.origin-1 { left: 22%; top: 34%; }
+.burst-origin.origin-2 { left: 78%; top: 34%; }
+/* The big number is gradient text (see .burst-x: a gradient clipped to the letters), so a style changes the gradient and the glow, not "color". */
+.win-burst.ws-gold .win-x { color: #fbbf24; background-image: linear-gradient(180deg, #fef3c7, #fbbf24 55%, #d97706); filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.45)) drop-shadow(0 0 18px rgba(251, 191, 36, 0.85)); }
+.win-burst.ws-candy .win-x { color: #f9a8d4; background-image: linear-gradient(180deg, #fbcfe8, #f472b6 55%, #a78bfa); filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.45)) drop-shadow(0 0 18px rgba(244, 114, 182, 0.85)); }
+.win-burst.ws-stars .win-x { color: #fde68a; background-image: linear-gradient(180deg, #fffbeb, #fde68a 50%, #fbbf24); filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.45)) drop-shadow(0 0 18px rgba(253, 230, 138, 0.85)); }
+.win-burst.ws-neon .win-x { color: #ffffff; background-image: linear-gradient(180deg, #ffffff, #a5f3fc 50%, #f0abfc); filter: drop-shadow(0 0 6px #22d3ee) drop-shadow(0 0 16px #ff2d95); }
+.win-burst.ws-diamond .win-x { color: #e0f2fe; background-image: linear-gradient(180deg, #ffffff, #bae6fd 50%, #67e8f9); filter: drop-shadow(0 0 8px #67e8f9) drop-shadow(0 0 20px #a5f3fc); }
+.win-burst.ws-royal .win-x { color: #fde68a; background-image: linear-gradient(180deg, #fef3c7, #fde68a 40%, #a78bfa); filter: drop-shadow(0 0 8px #a78bfa) drop-shadow(0 0 20px #7c3aed); }
+.win-sample {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.win-dots {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 5px;
+  max-width: 100%;
+  min-height: 24px;
+}
+.win-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--color);
+}
+.win-dots.ws-neon .win-dot { box-shadow: 0 0 6px var(--color); }
+.win-glyph {
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* The billboard: three places at the top of the Market and Memecoins tabs. */
+.billboard {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.billboard-head h3 {
+  margin: 0 0 8px;
+}
+.bb-slots {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.bb-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  min-width: 0;
+  min-height: 92px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.bb-slot.bb-taken {
+  border-color: rgba(245, 184, 61, 0.55);
+  background: linear-gradient(160deg, rgba(245, 184, 61, 0.1), var(--panel-2) 60%);
+}
+.bb-slot.bb-mine {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.bb-slot.bb-free {
+  align-items: flex-start;
+  justify-content: center;
+  border-style: dashed;
+}
+.bb-empty-title {
+  font-weight: 600;
+}
+.bb-empty-price {
+  font-size: 13px;
+}
+.bb-open {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.bb-open:hover .bb-ticker {
+  text-decoration: underline;
+}
+.bb-open:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.bb-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.bb-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.bb-quote {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 13px;
+}
+.bb-change {
+  font-size: 12px;
+}
+.bb-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.bb-yours {
+  font-weight: 600;
+  color: var(--primary);
+}
+.billboard-booking .bb-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.bb-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+@media (max-width: 760px) {
+  .bb-slots {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The animations of this part. A player who asked for less motion keeps the still looks above. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes gear-aurora { 0%, 100% { filter: hue-rotate(-30deg); } 50% { filter: hue-rotate(36deg); } }
+  @keyframes gear-rainbow { 0%, 100% { --rb-up: #22c55e; --rb-down: #ef4444; } 33% { --rb-up: #06b6d4; --rb-down: #f97316; } 66% { --rb-up: #6366f1; --rb-down: #eab308; } }
+  @keyframes gear-lights { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+  @keyframes gear-twinkle { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+  @keyframes gear-beat { 0%, 100% { filter: brightness(1) drop-shadow(0 0 0 transparent); } 40% { filter: brightness(1.55) drop-shadow(0 0 7px var(--accent)); } }
+  @keyframes gear-flame {
+    0%, 100% { filter: drop-shadow(0 -3px 5px #f97316) drop-shadow(0 -7px 9px rgba(239, 68, 68, 0.75)); }
+    33% { filter: drop-shadow(0 -5px 6px #fbbf24) drop-shadow(0 -10px 12px rgba(249, 115, 22, 0.8)); }
+    66% { filter: drop-shadow(0 -2px 4px #f97316) drop-shadow(0 -5px 8px rgba(239, 68, 68, 0.6)); }
+  }
+  @keyframes gear-sparkle { 0%, 70%, 100% { stroke: rgba(255, 255, 255, 0.55); stroke-width: 1px; } 80% { stroke: #ffffff; stroke-width: 2.4px; } }
+  .company-chart.cos-cc_aurora .live-svg .scroll-layer { animation: gear-aurora 8s ease-in-out infinite; }
+  .company-chart.cos-cc_rainbow .live-svg .candle { animation: gear-rainbow 6s linear var(--rd, 0s) infinite; }
+  .company-chart.cos-bg_lights .chart-frame { animation: gear-lights 16s ease-in-out infinite; }
+  .company-chart.cos-bg_galaxy .chart-frame::before { animation: gear-twinkle 3.2s ease-in-out infinite; }
+  .company-chart.cos-fx_pulse .live-svg .candle.forming { animation: gear-beat 1.2s ease-in-out infinite; }
+  .company-chart.cos-fx_flame .live-svg .candle.forming { animation: gear-flame 1.1s ease-in-out infinite; }
+  .company-chart.cos-fx_sparkle .live-svg .candle .body { animation: gear-sparkle 3.4s ease-in-out var(--sd, 0s) infinite; }
 }
 
 /* ---------- Trade moments, loading shimmer, smooth screens and market marks ---------- */

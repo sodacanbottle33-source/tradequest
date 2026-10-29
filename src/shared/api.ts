@@ -1,7 +1,7 @@
 // The browser's only way to talk to the server. Every function returns what the server said, or throws an ApiError whose
 // message is the server's own explanation (shown to the player as it is).
 
-import type { Look } from './cosmeticCatalog';
+import type { Gear, Look } from './cosmeticCatalog';
 import type { CoachReply, LearnState, LessonResult, LessonView, TutorialReply } from '../learn/wire';
 import type {
   Account,
@@ -18,6 +18,8 @@ import type {
   AdminState,
   AdminStyle,
   BadgesView,
+  BillboardBook,
+  BillboardView,
   PlayerProfile,
   ShopBuy,
   ShopView,
@@ -253,8 +255,13 @@ export const api = {
   // The Shop (any signed-in player): what you own and wear, buying (with Career cash, once), wearing, what everybody wears, and a player's profile card.
   shop: () => request<ShopView>('GET', '/api/shop'),
   buyItem: (item: string) => request<ShopBuy>('POST', '/api/shop/buy', { item }),
-  equipItem: (slot: string, item: string | null) => request<{ equipped: Look }>('POST', '/api/shop/equip', { slot, item }),
+  equipItem: (slot: string, item: string | null) => request<{ equipped: Look; gear: Gear }>('POST', '/api/shop/equip', { slot, item }),
   looks: () => request<{ looks: Record<string, Look> }>('GET', '/api/looks'),
+  // What you have on your own screen (candles, chart, win style). Only yours: nobody can ask for another player's.
+  gear: () => request<{ gear: Gear }>('GET', '/api/gear'),
+  // The billboard: anybody can look (also a visitor); a signed-in player gets his cash and the companies he launched, and can book a place for one of them.
+  billboard: () => request<BillboardView>('GET', '/api/billboard'),
+  bookBillboard: (slot: number, ticker: string, hours: number) => request<BillboardBook>('POST', '/api/billboard/book', { slot, ticker, hours }),
   playerProfile: (username: string) => request<PlayerProfile>('GET', `/api/player/${encodeURIComponent(username)}`),
 
   // Moderators and the owner (staff): the server answers 403 to an ordinary player, and refuses a moderator anything that touches the owner or another moderator.

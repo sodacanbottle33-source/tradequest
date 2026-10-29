@@ -29,6 +29,7 @@ import { Badges } from './badges';
 import { Learn } from './learn';
 import { Messages } from './messages';
 import { Renames } from './rename';
+import { Billboard } from './billboard';
 import { Shop } from './cosmetics';
 import { Bankruptcies } from './bankruptcy';
 import { CompanyPictures } from './companyPictures';
@@ -51,6 +52,7 @@ import { registerLearnRoutes } from './routes/learn';
 import { registerBadgeRoutes } from './routes/badges';
 import { registerCompanyPictureRoutes } from './routes/companyPictures';
 import { registerProfileRoutes } from './routes/profile';
+import { registerBillboardRoutes } from './routes/billboard';
 import { registerShopRoutes } from './routes/shop';
 import { registerCallRoutes } from './routes/calls';
 import { registerMessageRoutes } from './routes/messages';
@@ -369,10 +371,20 @@ export function createApp(options: AppOptions): App {
     now,
     log,
     publish: (event, data) => hub.publishSignedIn(event, data),
+    publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
     spent: () => social.invalidate(),
     refreshBadges: (userId) => {
       badges.sweep(userId);
     },
+  });
+  // The billboard: three places that show a company its launcher paid for with Career cash (gone, like the Shop). Everybody, signed in or not, sees it.
+  const billboard = new Billboard({
+    db,
+    now,
+    log,
+    publish: (event, data) => hub.publish(event, data),
+    spent: () => social.invalidate(),
+    isBanned: (userId) => auth.banOf(userId) !== null,
   });
   // Profile pictures (everybody sees them; the owner can remove any) and who is online.
   const profiles = new Profiles({
@@ -432,6 +444,7 @@ export function createApp(options: AppOptions): App {
     messages,
     renames,
     shop,
+    billboard,
     profiles,
     companyPictures,
     badges,
@@ -463,6 +476,7 @@ export function createApp(options: AppOptions): App {
   registerMessageRoutes(router, services);
   registerProfileRoutes(router, services);
   registerShopRoutes(router, services);
+  registerBillboardRoutes(router, services);
   registerCompanyPictureRoutes(router, services);
   registerBadgeRoutes(router, services);
   registerLearnRoutes(router, services);

@@ -31,7 +31,7 @@ export interface Reply {
 }
 
 /** Call once at the top of a test file: it closes every server the test started after each test. */
-export function liveRig(prefix: string, owner = 'boss') {
+export function liveRig(prefix: string, owner = 'boss', companies = '12') {
   const running: Running[] = [];
   const dirs: string[] = [];
   const streams: AbortController[] = [];
@@ -56,7 +56,7 @@ export function liveRig(prefix: string, owner = 'boss') {
     const dir = mkdtempSync(join(tmpdir(), `tq-${prefix}-`));
     dirs.push(dir);
     const clock = new Clock();
-    const config = loadConfig({ TQ_DATA_DIR: dir, TQ_COMPANIES: '12', TQ_WARMUP_DAYS: '1', TQ_PORT: '8787', TQ_OWNER: owner });
+    const config = loadConfig({ TQ_DATA_DIR: dir, TQ_COMPANIES: companies, TQ_WARMUP_DAYS: '1', TQ_PORT: '8787', TQ_OWNER: owner });
     const app = createApp({ config, log: new Logger({ sink: null, now: clock.now }), worldSeed: 777, now: clock.now, flowGain: 0 });
     const server = createServer(app.handler);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

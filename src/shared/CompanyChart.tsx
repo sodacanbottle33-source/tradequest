@@ -5,6 +5,8 @@ import type { LiveCandle } from '../engine';
 import { LiveChart } from '../ui/LiveChart';
 import { api } from './api';
 import { CANDLE_TICKS, candleIndexOf, foldMore, missedTicks, toChartCandles, type FoldState } from './candles';
+import { chartClasses } from './cosmeticCatalog';
+import { useProfiles } from './profileStore';
 import { useShared } from './store';
 import type { Resolution, ServerCandle } from './types';
 
@@ -21,6 +23,8 @@ interface Props {
 
 export function CompanyChart({ ticker, name, price }: Props) {
   const { tick, tickMs } = useShared();
+  // What the player bought for his own chart in the Shop (candle colours, shape, background, effect; docs/world.md §30): only classes on the wrapper, the numbers are untouched.
+  const { gear } = useProfiles();
   const [res, setRes] = useState<Resolution>('c10');
   const [loaded, setLoaded] = useState<{ ticker: string; res: Resolution; candles: readonly ServerCandle[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +92,7 @@ export function CompanyChart({ ticker, name, price }: Props) {
   }, [tick, tickMs, res]);
 
   return (
-    <div className="company-chart">
+    <div className={['company-chart', chartClasses(gear)].filter(Boolean).join(' ')} data-testid="company-chart">
       <div className="segmented res-tabs" role="group" aria-label="Candle size">
         {(Object.keys(RES_LABEL) as Resolution[]).map((r) => (
           <button key={r} type="button" className={r === res ? 'seg active' : 'seg'} aria-pressed={r === res} onClick={() => setRes(r)}>

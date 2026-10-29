@@ -1,6 +1,6 @@
 // What the TradeQuest server sends (see server/routes and docs/world.md §8). The browser only displays these; it never decides
 // a price, a fill, a balance, who is in a lobby or who won.
-import type { Look } from './cosmeticCatalog';
+import type { Gear, Look } from './cosmeticCatalog';
 
 /** What a player is: an ordinary player, a moderator the owner chose (docs/world.md §21), or the owner. */
 export type Role = 'player' | 'moderator' | 'owner';
@@ -1203,6 +1203,8 @@ export interface ShopView {
   readonly cashCents: number;
   readonly owned: readonly string[];
   readonly equipped: Look;
+  /** What he has on his own screen (candle colours and shape, chart background and effect, win style): only he is ever told (docs/world.md §30). */
+  readonly gear: Gear;
   readonly badges: readonly string[];
 }
 
@@ -1230,4 +1232,41 @@ export interface BadgesView {
   readonly badges: readonly BadgeLine[];
   /** How many real players there are, so the page can say "12% of players". */
   readonly players: number;
+}
+
+// ---- the billboard (docs/world.md §30) ------------------------------------------------------------------------------------------
+
+/** What one billboard place shows: a company a player launched, who booked it and until when. */
+export interface BillboardRental {
+  readonly ticker: string;
+  readonly name: string;
+  readonly byUsername: string;
+  readonly byName: string;
+  readonly startsMs: number;
+  readonly endsMs: number;
+}
+
+export interface BillboardSlotView {
+  readonly slot: number;
+  readonly rental: BillboardRental | null;
+}
+
+/** What a signed-in player may do: his Career cash and the living companies he launched. */
+export interface BillboardMine {
+  readonly cashCents: number;
+  readonly launched: readonly { readonly ticker: string; readonly name: string; readonly kind: 'stock' | 'coin' }[];
+}
+
+/** The billboard as the server answers (also pushed to every page, without `mine`, when something changes). */
+export interface BillboardView {
+  readonly slots: readonly BillboardSlotView[];
+  readonly serverMs: number;
+  readonly centsPerHour: number;
+  readonly hours: readonly number[];
+  readonly maxHoursAhead: number;
+  readonly mine: BillboardMine | null;
+}
+
+export interface BillboardBook extends BillboardView {
+  readonly booked: { readonly slot: number; readonly ticker: string; readonly hours: number; readonly priceCents: number; readonly extended: boolean; readonly endsMs: number };
 }

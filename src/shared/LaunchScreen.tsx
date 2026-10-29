@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, api } from './api';
 import { dollarsToCents, newRequestId } from './adminUtil';
 import { AuthPanel } from './AuthPanel';
+import { BillboardBooking } from './BillboardBooking';
 import { CompanyLogo } from './CompanyLogo';
 import { CompanyPictureTools, LaunchPicturePicker, sendLaunchPicture } from './CompanyPictureTools';
 import { formatCap, formatCents, formatCount, toneOf } from './format';
@@ -154,6 +155,8 @@ export function LaunchScreen({ onOpen }: { onOpen: (ticker: string) => void }) {
           ))}
         </section>
       )}
+
+      <BillboardBooking onOpen={onOpen} refreshKey={mine.length} />
 
       <section className="card" aria-label="New launch">
         <div className="seg-group" role="tablist" aria-label="What to launch">

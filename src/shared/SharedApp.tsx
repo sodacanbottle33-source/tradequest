@@ -9,6 +9,7 @@ import { careerLocked, modeShown } from './careerLock';
 import { ChallengeBanner } from './Challenges';
 import { ChatScreen } from './ChatScreen';
 import { CompanyView } from './CompanyView';
+import { BillboardStrip } from './BillboardStrip';
 import { DailyQuoteCard } from './DailyQuoteCard';
 import { clockTime } from './format';
 import { LaunchScreen } from './LaunchScreen';
@@ -280,6 +281,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
             <CompanyView ticker={ticker} onBack={() => setTicker(null)} onTicker={openCompany} />
           ) : (
             <>
+              <BillboardStrip onOpen={openCompany} onBook={() => setCareerTab('launch')} />
               {careerTab === 'market' && <DailyQuoteCard />}
               <MarketScreen key={careerTab} kind={careerTab === 'coins' ? 'coins' : 'stocks'} onOpen={openCompany} selected={ticker} />
             </>

@@ -28,6 +28,11 @@ export interface Win {
   readonly level: 1 | 2 | 3;
   /** Makes the confetti scatter the same way for the same win. */
   readonly seed: number;
+  /**
+   * A win style (src/shared/winStyles.ts) to play this party in. Without it the page uses the one the player wears (the Shop, docs/world.md §30); the Shop sets it
+   * to let a player try a style on before he buys it.
+   */
+  readonly style?: string;
 }
 
 /** True for a trade that closes (part of) a position, so it has a result: a sale of shares, or the cover of a short. */

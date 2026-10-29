@@ -38,7 +38,7 @@ describe('what is for sale', () => {
     expect(new Set(COSMETICS.map((c) => `${c.slot}:${c.name}`)).size).toBe(COSMETICS.length);
     const count = (slot: string) => COSMETICS.filter((c) => c.slot === slot).length;
     expect([count('color'), count('glow'), count('frame'), count('title')]).toEqual([8, 5, 10, 13]);
-    const letter: Record<string, string> = { color: 'c_', glow: 'g_', frame: 'f_', title: 't_' };
+    const letter: Record<string, string> = { color: 'c_', glow: 'g_', frame: 'f_', title: 't_', candles: 'cc_', shape: 'sh_', backdrop: 'bg_', effect: 'fx_', win: 'ws_' };
     for (const c of COSMETICS) {
       expect(c.id.startsWith(letter[c.slot] as string)).toBe(true);
       expect([1, 2, 3, 4]).toContain(c.rarity);
@@ -84,7 +84,7 @@ describe('buying', () => {
     expect((await equip(r, undefined, 'color', 'c_sky')).status).toBe(401);
     expect((await call(r, '/api/looks')).status).toBe(401);
     expect((await call(r, '/api/player/alice')).status).toBe(401);
-    expect(await view(r, alice)).toEqual({ cashCents: 100_000, owned: [], equipped: {}, badges: [] });
+    expect(await view(r, alice)).toEqual({ cashCents: 100_000, owned: [], equipped: {}, gear: {}, badges: [] });
     expect(await looks(r, alice)).toEqual({});
   }, LONG);
 
@@ -193,7 +193,7 @@ describe('wearing', () => {
     const money = cash(r, 'alice');
     // Back to the first colour: free.
     const back = await equip(r, alice, 'color', 'c_sky');
-    expect([back.status, back.json]).toEqual([200, { equipped: { color: 'c_sky', title: 't_dip' } }]);
+    expect([back.status, back.json]).toEqual([200, { equipped: { color: 'c_sky', title: 't_dip' }, gear: {} }]);
     expect(cash(r, 'alice')).toBe(money);
     // Refusals.
     const refusals: [unknown, unknown, number, string][] = [
@@ -278,7 +278,7 @@ describe('money and rank', () => {
     // The owner resets the Career account: cash goes back to $1,000; the things stay.
     const reset = await call(r, '/api/admin/reset', { method: 'POST', cookie: boss, body: { requestId: requestId(), username: 'alicia' } });
     expect(reset.status).toBe(200);
-    expect(await view(r, alice)).toEqual({ cashCents: 100_000, owned: ['c_rose', 't_bull'], equipped: { color: 'c_rose', title: 't_bull' }, badges: [] });
+    expect(await view(r, alice)).toEqual({ cashCents: 100_000, owned: ['c_rose', 't_bull'], equipped: { color: 'c_rose', title: 't_bull' }, gear: {}, badges: [] });
   }, LONG);
 
   it('SHOP-12: a computer player never buys or wears anything', async () => {
@@ -330,7 +330,7 @@ describe('the profile card', () => {
 });
 
 describe('what an old database keeps', () => {
-  it('SHOP-14: version 27 adds two empty tables; an item can be owned once; a look needs a player; deleting a player deletes both', () => {
+  it('SHOP-14: version 27 adds two empty tables (and 28 adds the next ones); an item can be owned once; a look needs a player; deleting a player deletes both', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tq-shop-mig-'));
     const d = new Db(join(dir, 'old.sqlite'));
     try {
@@ -341,7 +341,7 @@ describe('what an old database keeps', () => {
         }
       });
       d.run("INSERT INTO users(username, display_name, pw_hash, role, created_ms) VALUES ('a', 'a', 'x', 'player', 1)");
-      expect(migrate(d)).toEqual([27]);
+      expect(migrate(d)).toEqual([27, 28]);
       for (const t of ['user_cosmetics', 'user_looks']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n).toBe(0);
       d.run("INSERT INTO user_cosmetics(user_id, item, bought_ms, price_cents) VALUES (1, 'c_sky', 5, 200000)");
       expect(() => d.run("INSERT INTO user_cosmetics(user_id, item, bought_ms, price_cents) VALUES (1, 'c_sky', 6, 200000)")).toThrow();

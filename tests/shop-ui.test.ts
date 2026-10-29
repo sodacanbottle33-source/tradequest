@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BADGES } from '../src/shared/badgeCatalog';
-import { COSMETICS, SLOTS, cleanLook, frameClass, nameClasses, priceOf, priceText, titleOf } from '../src/shared/cosmeticCatalog';
+import { COSMETICS, SLOTS, cleanLook, frameClass, isGearSlot, nameClasses, priceOf, priceText, titleOf } from '../src/shared/cosmeticCatalog';
 import { profileStore } from '../src/shared/profileStore';
 import { boughtText, joinedText, lockReason, rankText } from '../src/shared/shopUtil';
 import { SharedStore } from '../src/shared/store';
@@ -35,7 +35,8 @@ describe('The Shop screen', () => {
     expect(screen).toMatch(/api\.equipItem\(slot, item\)/);
     expect(screen).toMatch(/\[userId, badgesVersion\]/); // a badge earned while the Shop is open unlocks its things
     expect(screen).toContain('SLOTS.map');
-    expect(screen).toMatch(/COSMETICS\.filter\(\(c\) => c\.slot === slot\.id\)/);
+    expect(screen).toContain('GEAR_SLOTS.map'); // the things for your own screen (candles, chart, win styles) are sections of the same page
+    expect(screen).toMatch(/COSMETICS\.filter\(\(c\) => c\.slot === slotId\)/);
     expect(screen).toMatch(/if \(!user\) return <AuthPanel \/>/);
     expect(screen).not.toMatch(/localStorage|sessionStorage|Math\.random/);
     // The cash and what is owned come from the server's answer, never from a sum made on the page.
@@ -47,7 +48,7 @@ describe('The Shop screen', () => {
     expect(screen).toMatch(/onClick=\{\(\) => setConfirming\(def\.id\)\}/);
     expect(screen).toMatch(/Confirm \{priceText\(priceOf\(def\)\)\}/);
     expect(screen).toMatch(/if \(busy\) return;/);
-    expect(screen).toMatch(/setView\(\{ cashCents: out\.cashCents, owned: out\.owned, equipped: out\.equipped, badges: out\.badges \}\)/);
+    expect(screen).toMatch(/setView\(\{ cashCents: out\.cashCents, owned: out\.owned, equipped: out\.equipped, gear: out\.gear, badges: out\.badges \}\)/);
     expect(screen).toContain('void sharedStore.refreshAccount()'); // the money in the header and the rank move at once
     expect(screen).toMatch(/problemText\(e\)/); // the server's refusal is shown in words
     expect(screen).toMatch(/data-testid=\{`shop-buy-\$\{def\.id\}`\}/);
@@ -212,6 +213,7 @@ describe('The styles', () => {
     for (const c of COSMETICS) {
       if (c.slot === 'frame') expect(css, c.id).toContain(`.pfp-frame.cos-${c.id}`);
       else if (c.slot === 'title') continue; // a title is only words under the name
+      else if (isGearSlot(c.slot)) continue; // things for your own screen are checked in tests/gear-ui.test.ts (GEARUI-n)
       else expect(css, c.id).toContain(`.pname.cos-${c.id}`);
     }
     for (const cls of ['.pfp-frame', '.pname-wrap', '.ptitle', '.shop-grid', '.shop-item', '.rar-chip', '.profile-card', '.profile-top', '.profile-facts']) expect(css, cls).toContain(cls);

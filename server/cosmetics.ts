@@ -1,7 +1,8 @@
-// The Shop: things to wear (docs/world.md §29).
+// The Shop: things to wear (docs/world.md §29) and things for your own screen (§30).
 //
 // A player can buy things that change how he looks to other players: the colour of his name, a glow around it, a ring around his picture and a title under
-// his name. The list, with the kind, the rarity and the price of each, is src/shared/cosmeticCatalog.ts. The rules here:
+// his name. He can also buy things only HE sees: the colours and shape of the candles, the background and an effect on his price chart, and the style of the party
+// after a win. The list, with the kind, the rarity and the price of each, is src/shared/cosmeticCatalog.ts. The rules here:
 //   • The price comes out of the cash of his Career account and is gone (like the cost of a new username). Spending therefore lowers his net worth, so it lowers his
 //     place on the leaderboard and his growth on the weekly board. Nothing here gives money back and nothing is ever refunded.
 //   • A thing is bought once and owned for good (money reset by the owner does not take it away). Buying it again is refused, so a double click cannot charge twice.
@@ -10,9 +11,10 @@
 //   • It is all looks: nothing here changes a price, an order, a ranking rule or what a player can trade.
 //   • Only real players buy. Computer players never do, and the page never decides who owns what: it only asks, and shows what the server answers.
 // Everybody who is signed in sees what everybody wears (GET /api/looks, kept fresh by the "looks" event of the live stream), like the profile pictures.
+// What a player has on his own screen is told to nobody but him (GET /api/gear, and the "gear" event of the live stream to his own other pages).
 
 import { badgeById } from '../src/shared/badgeCatalog';
-import { COSMETICS, cleanLook, cosmeticById, isSlot, priceOf, priceText, type Look, type Slot } from '../src/shared/cosmeticCatalog';
+import { ALL_SLOT_IDS, COSMETICS, cleanGear, cleanLook, cosmeticById, gearIsEmpty, isGearSlot, isSlot, priceOf, priceText, type Gear, type GearSlot, type Look, type Slot } from '../src/shared/cosmeticCatalog';
 import type { User } from './auth';
 import type { Logger } from './log';
 import type { Db } from './sqlite';
@@ -34,17 +36,21 @@ export interface ShopDeps {
   readonly log: Logger;
   /** Tells every signed-in page what one player wears now. */
   readonly publish: (event: string, data: unknown) => void;
+  /** Tells the pages of ONE player (his phone and his laptop) what he has on his own screen now. Nobody else hears it. */
+  readonly publishTo?: (userId: number, event: string, data: unknown) => void;
   /** Told after a player spent money, so the leaderboards forget their kept ranking and show the new net worth at once. */
   readonly spent?: (userId: number) => void;
   /** Gives the player any badge he has just earned (the badge sweep otherwise runs every 45 seconds), so a thing that needs a badge is not refused for a slow sweep. */
   readonly refreshBadges?: (userId: number) => void;
 }
 
-/** What the Shop page shows about the player: his cash, what he owns, what he wears, and which of the badges some things need he already has. */
+/** What the Shop page shows about the player: his cash, what he owns, what he wears (and has on his own screen), and which of the badges some things need he already has. */
 export interface ShopView {
   readonly cashCents: number;
   readonly owned: readonly string[];
   readonly equipped: Look;
+  /** What he has on his own screen (candles, chart, win style). Only he is ever told. */
+  readonly gear: Gear;
   /** The badges (ids) the player has among the ones Legendary things need. */
   readonly badges: readonly string[];
 }
@@ -62,6 +68,19 @@ interface LookRow {
   glow: string | null;
   frame: string | null;
   title: string | null;
+}
+
+interface GearRow {
+  candles: string | null;
+  shape: string | null;
+  backdrop: string | null;
+  effect: string | null;
+  win: string | null;
+}
+
+function gearOfRow(row: GearRow | undefined): Gear {
+  if (!row) return {};
+  return cleanGear({ candles: row.candles ?? undefined, shape: row.shape ?? undefined, backdrop: row.backdrop ?? undefined, effect: row.effect ?? undefined, win: row.win ?? undefined });
 }
 
 function lookOfRow(row: LookRow | undefined): Look {
@@ -85,6 +104,11 @@ export class Shop {
     return lookOfRow(this.d.db.get<LookRow>('SELECT color, glow, frame, title FROM user_looks WHERE user_id = ?', userId));
   }
 
+  /** What a player has on his own screen. */
+  gearOf(userId: number): Gear {
+    return gearOfRow(this.d.db.get<GearRow>('SELECT candles, shape, backdrop, effect, win FROM user_gear WHERE user_id = ?', userId));
+  }
+
   /** Everybody who wears anything: username -> what he wears. */
   looks(): Record<string, Look> {
     const rows = this.d.db.all<LookRow & { username: string }>(
@@ -103,7 +127,7 @@ export class Shop {
     const owned = db.all<{ item: string }>('SELECT item FROM user_cosmetics WHERE user_id = ? ORDER BY bought_ms, item', me.id).map((r) => r.item);
     const marks = NEEDED_BADGES.map(() => '?').join(', ');
     const have = db.all<{ badge: string }>(`SELECT badge FROM user_badges WHERE user_id = ? AND badge IN (${marks})`, me.id, ...NEEDED_BADGES).map((r) => r.badge);
-    return { cashCents: this.accountOf(me.id)?.cash ?? 0, owned: owned.filter((id) => cosmeticById(id) !== undefined), equipped: this.lookOf(me.id), badges: have };
+    return { cashCents: this.accountOf(me.id)?.cash ?? 0, owned: owned.filter((id) => cosmeticById(id) !== undefined), equipped: this.lookOf(me.id), gear: this.gearOf(me.id), badges: have };
   }
 
   /** Buys one thing and puts it on. Everything is checked again inside one transaction, so two clicks at once can never charge twice. */
@@ -137,23 +161,26 @@ export class Shop {
       const paid = this.d.db.run('UPDATE accounts SET cash_cents = cash_cents - ? WHERE id = ? AND cash_cents >= ?', price, account.id, price);
       if (paid.changes !== 1) throw new ShopError('not_enough_cash', 'Your cash changed while you were buying. Try again.', 409);
       this.d.db.run('INSERT INTO user_cosmetics(user_id, item, bought_ms, price_cents) VALUES (?, ?, ?, ?)', me.id, def.id, now, price);
-      this.wear(me.id, def.slot, def.id, now);
+      if (isGearSlot(def.slot)) this.wearGear(me.id, def.slot, def.id, now);
+      else this.wear(me.id, def.slot, def.id, now);
     });
     this.d.log.info('account', `${me.username} bought "${def.name}" in the Shop for ${priceText(price)}.`);
     this.d.spent?.(me.id);
-    this.announce(me);
+    if (isGearSlot(def.slot)) this.announceGear(me);
+    else this.announce(me);
     return { ...this.view(me), item: def.id, priceCents: price };
   }
 
   /** Puts a thing he owns on (or takes the place's thing off when `rawItem` is null). Free. */
-  equip(me: User, rawSlot: unknown, rawItem: unknown): { equipped: Look } {
-    if (!isSlot(rawSlot)) throw new ShopError('bad_request', 'slot must be color, glow, frame or title.', 400);
-    const slot: Slot = rawSlot;
+  equip(me: User, rawSlot: unknown, rawItem: unknown): { equipped: Look; gear: Gear } {
+    const known = typeof rawSlot === 'string' ? ALL_SLOT_IDS.find((id) => id === rawSlot) : undefined;
+    if (known === undefined) throw new ShopError('bad_request', `slot must be one of: ${ALL_SLOT_IDS.join(', ')}.`, 400);
+    const slot = known;
     const now = this.d.now();
     this.d.db.tx(() => {
       if (this.isBot(me.id)) throw new ShopError('cannot_buy', 'Computer players do not shop.', 403);
       if (rawItem === null || rawItem === undefined || rawItem === '') {
-        this.wear(me.id, slot, null, now);
+        this.put(me.id, slot, null, now);
         return;
       }
       if (typeof rawItem !== 'string') throw new ShopError('bad_request', 'item must be the id of something you own, or null to take it off.', 400);
@@ -163,10 +190,17 @@ export class Shop {
       if (!this.d.db.get('SELECT 1 AS x FROM user_cosmetics WHERE user_id = ? AND item = ?', me.id, def.id)) {
         throw new ShopError('not_owned', `You do not own ${def.name} yet. Buy it in the Shop first.`, 403);
       }
-      this.wear(me.id, slot, def.id, now);
+      this.put(me.id, slot, def.id, now);
     });
-    this.announce(me);
-    return { equipped: this.lookOf(me.id) };
+    if (isGearSlot(slot)) this.announceGear(me);
+    else this.announce(me);
+    return { equipped: this.lookOf(me.id), gear: this.gearOf(me.id) };
+  }
+
+  /** Writes one place, whichever group it belongs to. */
+  private put(userId: number, slot: Slot | GearSlot, item: string | null, now: number): void {
+    if (isGearSlot(slot)) this.wearGear(userId, slot, item, now);
+    else if (isSlot(slot)) this.wear(userId, slot, item, now);
   }
 
   /** Writes the one place of a player's look (inside a transaction). A player who then wears nothing has no row. */
@@ -180,6 +214,25 @@ export class Shop {
       now,
     );
     this.d.db.run('DELETE FROM user_looks WHERE user_id = ? AND color IS NULL AND glow IS NULL AND frame IS NULL AND title IS NULL', userId);
+  }
+
+  /** Writes the one place of a player's own-screen gear (inside a transaction). A player who then has nothing on has no row. */
+  private wearGear(userId: number, slot: GearSlot, item: string | null, now: number): void {
+    // `slot` is one of five fixed words (checked by isGearSlot / the catalog), never text from a player, so it is safe in the statement.
+    this.d.db.run(
+      `INSERT INTO user_gear(user_id, ${slot}, updated_ms) VALUES (?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET ${slot} = excluded.${slot}, updated_ms = excluded.updated_ms`,
+      userId,
+      item,
+      now,
+    );
+    this.d.db.run('DELETE FROM user_gear WHERE user_id = ? AND candles IS NULL AND shape IS NULL AND backdrop IS NULL AND effect IS NULL AND win IS NULL', userId);
+  }
+
+  /** Tells the pages of this one player what he has on his own screen now. (Never the others: it is for his eyes only.) */
+  private announceGear(me: User): void {
+    const gear = this.gearOf(me.id);
+    this.d.publishTo?.(me.id, 'gear', { gear: gearIsEmpty(gear) ? null : gear });
   }
 
   /** Tells every page what this player wears now (null = nothing). */

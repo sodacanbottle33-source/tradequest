@@ -1037,6 +1037,41 @@ CREATE TABLE user_looks (
 );
 `,
   },
+  {
+    version: 28,
+    name: 'the Shop: things for your own screen, and the billboard',
+    sql: `
+-- Things for a player's OWN screen (server/cosmetics.ts, docs/world.md §30): the colours and shape of the candles, the background and an effect on the price chart,
+-- and the style of the party after a win. They are bought like the other Shop things (user_cosmetics above), and what is on now is kept here: at most one thing in
+-- each place, an empty place is NULL, a player with nothing on has no row. Nobody else is ever told what a player has on here.
+CREATE TABLE user_gear (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  candles    TEXT,
+  shape      TEXT,
+  backdrop   TEXT,
+  effect     TEXT,
+  win        TEXT,
+  updated_ms INTEGER NOT NULL
+);
+
+-- The billboard (server/billboard.ts, docs/world.md §30): a player pays Career cash to show a company he launched in one of three places for some hours. One row per
+-- booking; a booking that continues an earlier one of the same player starts when that one ends. price_cents is what he paid (gone, like a Shop purchase).
+CREATE TABLE billboard_rentals (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  slot       INTEGER NOT NULL CHECK (slot BETWEEN 1 AND 3),
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  company_id INTEGER NOT NULL REFERENCES companies(id),
+  starts_ms  INTEGER NOT NULL,
+  ends_ms    INTEGER NOT NULL,
+  hours      INTEGER NOT NULL CHECK (hours > 0),
+  price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
+  created_ms INTEGER NOT NULL,
+  CHECK (ends_ms > starts_ms)
+);
+CREATE INDEX billboard_by_slot ON billboard_rentals(slot, ends_ms);
+CREATE INDEX billboard_by_user ON billboard_rentals(user_id, ends_ms);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {
