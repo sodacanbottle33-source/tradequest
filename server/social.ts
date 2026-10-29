@@ -328,10 +328,14 @@ export class Social {
       for (const l of links.values()) if (l.status === 'accepted') keep.add(l.other);
       view = b.ranked.filter((p) => keep.has(p.id));
     }
+    // Cash the game gave away (daily goals) is not growth: it is taken off the gain, so a small account cannot top the board with it.
+    const given = this.gifts(week, week + WEEK_MS);
     const scored = view
       .map((p) => {
         const start = marks.get(p.id);
-        return start === undefined || start < WEEKLY_MIN_START_CENTS ? null : { p, gainCents: (p.netWorthCents as number) - start, gainPct: Math.round((((p.netWorthCents as number) - start) / start) * 10_000) / 100 };
+        if (start === undefined || start < WEEKLY_MIN_START_CENTS) return null;
+        const gain = (p.netWorthCents as number) - start - (given.get(p.id) ?? 0);
+        return { p, gainCents: gain, gainPct: Math.round((gain / start) * 10_000) / 100 };
       })
       .filter((x): x is { p: Person; gainCents: number; gainPct: number } => x !== null);
     // Best percentage first; the same percentage: the bigger gain, then the older account, then the lower id, so the order never flickers.
@@ -344,16 +348,39 @@ export class Social {
     return { scope, weekStartMs: week, endsMs: week + WEEK_MS, rows, total: scored.length, size: BOARD_SIZE, me: mine, minStartCents: WEEKLY_MIN_START_CENTS, lastWeek: this.lastWeek(b, week, marks), updatedMs: b.atMs };
   }
 
+  /** Cash the game gave each player between two moments (daily goals). */
+  private gifts(fromMs: number, toMs: number): Map<number, number> {
+    return new Map(this.d.db.all<{ user_id: number; s: number }>('SELECT user_id, SUM(cents) AS s FROM cash_gifts WHERE ms >= ? AND ms < ? GROUP BY user_id', fromMs, toMs).map((r) => [r.user_id, r.s] as const));
+  }
+
+  /**
+   * Writes down Career cash the game gave a player (a reward, not a trade): the weekly board does not count it as growth, and the leaderboards forget their kept ranking so the
+   * new net worth shows at once.
+   */
+  gave(userId: number, cents: number, reason: string): void {
+    this.d.db.run('INSERT INTO cash_gifts(user_id, ms, cents, reason) VALUES (?, ?, ?, ?)', userId, this.d.now(), cents, reason);
+    this.invalidate();
+  }
+
+  /** A player's net worth and place on the leaderboard right now (both null for the owner, who is not ranked), or null for somebody who is not on the board (a bot, a banned player). */
+  standing(userId: number): { netWorthCents: number | null; rank: number | null } | null {
+    const p = this.board().byId.get(userId);
+    return p ? { netWorthCents: p.netWorthCents, rank: p.rank } : null;
+  }
+
   /** Last week's best players: how much each grew between his mark of last week and his mark of this week. Only players with a gain are named. */
   private lastWeek(b: Ranking, week: number, thisWeek: ReadonlyMap<number, number>): { weekStartMs: number; winners: WeeklyWinner[] } {
     const previous = week - WEEK_MS;
     const before = new Map(this.d.db.all<{ user_id: number; net_worth_cents: number }>('SELECT user_id, net_worth_cents FROM weekly_marks WHERE week_start_ms = ?', previous).map((r) => [r.user_id, r.net_worth_cents] as const));
     const scored: { p: Person; gainCents: number; gainPct: number }[] = [];
+    const given = this.gifts(previous, week);
     for (const p of b.ranked) {
       const start = before.get(p.id);
       const end = thisWeek.get(p.id);
-      if (start === undefined || end === undefined || start < WEEKLY_MIN_START_CENTS || end <= start) continue;
-      scored.push({ p, gainCents: end - start, gainPct: Math.round(((end - start) / start) * 10_000) / 100 });
+      if (start === undefined || end === undefined || start < WEEKLY_MIN_START_CENTS) continue;
+      const gain = end - start - (given.get(p.id) ?? 0);
+      if (gain <= 0) continue;
+      scored.push({ p, gainCents: gain, gainPct: Math.round((gain / start) * 10_000) / 100 });
     }
     scored.sort((x, y) => y.gainPct - x.gainPct || y.gainCents - x.gainCents || x.p.createdMs - y.p.createdMs || x.p.id - y.p.id);
     return { weekStartMs: previous, winners: scored.slice(0, WEEKLY_PODIUM).map((x) => ({ username: x.p.username, displayName: x.p.displayName, gainCents: x.gainCents, gainPct: x.gainPct })) };

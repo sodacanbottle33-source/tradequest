@@ -6,6 +6,8 @@ import { CAREER_CLOSED_NOTE } from './careerLock';
 import { PlayFriendCard } from './Challenges';
 import { formatCents } from './format';
 import { MatchScreen } from './MatchScreen';
+import { RankedCard } from './RankedCard';
+import { pointsChangeText, rankedTag } from './rankedUtil';
 import { sharedStore, useShared } from './store';
 import type { HistoryEntry, Match } from './types';
 
@@ -128,6 +130,9 @@ export function LobbyScreen({ onGoSignIn, jump = null, onJumpDone }: { onGoSignI
               <li>A tie pays $50 to both.</li>
               <li>If you leave a live match you forfeit and your opponent wins. Leaving before it starts costs nothing.</li>
               <li>If the server restarts during a match, the match is cancelled and nobody is paid.</li>
+              <li>
+                <strong>Ranked:</strong> a match against a random real player moves your ranked points (see below). A match against a bot or a friend is just for fun and never does.
+              </li>
               {bots && <li>If nobody joins you within 10 seconds, a bot plays you. A real player who arrives first always takes the bot&apos;s place.</li>}
             </ul>
             <div className="row-buttons">
@@ -149,6 +154,9 @@ export function LobbyScreen({ onGoSignIn, jump = null, onJumpDone }: { onGoSignI
               Waiting for an opponent… {match.playerCount}/{match.capacity}
             </p>
             <Players match={match} />
+            <p className="hint rank-tag" data-testid="rank-tag">
+              {rankedTag(match)}
+            </p>
             <p className="hint">{match.message}</p>
             <div className="row-buttons">
               {bots && (
@@ -169,6 +177,9 @@ export function LobbyScreen({ onGoSignIn, jump = null, onJumpDone }: { onGoSignI
               {match.players.some((p) => p.bot && !p.you) ? `${match.players.find((p) => p.bot && !p.you)?.name ?? 'A bot'} will play you` : 'Opponent found'} {match.playerCount}/{match.capacity}. Press Ready.
             </p>
             <Players match={match} />
+            <p className="hint rank-tag" data-testid="rank-tag">
+              {rankedTag(match)}
+            </p>
             <p className="hint">{match.message}</p>
             {(() => {
               const me = match.players.find((p) => p.you);
@@ -193,6 +204,9 @@ export function LobbyScreen({ onGoSignIn, jump = null, onJumpDone }: { onGoSignI
             </p>
             <p className="big-status">Match starts in {secondsToStart} s</p>
             <Players match={match} />
+            <p className="hint rank-tag" data-testid="rank-tag">
+              {rankedTag(match)}
+            </p>
             <p className="hint">Prices are the same for both players. The 3 minutes start on the same market tick for both of you.</p>
             <p className="hint" data-testid="career-closed-note">
               {CAREER_CLOSED_NOTE}
@@ -203,6 +217,8 @@ export function LobbyScreen({ onGoSignIn, jump = null, onJumpDone }: { onGoSignI
           </>
         )}
       </section>
+
+      <RankedCard version={finishedId} />
 
       {!match && <PlayFriendCard />}
 
@@ -222,6 +238,7 @@ export function LobbyScreen({ onGoSignIn, jump = null, onJumpDone }: { onGoSignI
                   <th className="num">Your profit</th>
                   <th>Result</th>
                   <th className="num">Reward</th>
+                  <th className="num">Ranked points</th>
                 </tr>
               </thead>
               <tbody>
@@ -234,6 +251,12 @@ export function LobbyScreen({ onGoSignIn, jump = null, onJumpDone }: { onGoSignI
                     </td>
                     <td>{h.state === 'cancelled' ? `Cancelled${h.cancelReason ? ` (${h.cancelReason.replace(/_/g, ' ')})` : ''}` : resultText(h.you.result)}</td>
                     <td className="num mono">{h.you.rewardCents === null ? '—' : formatCents(h.you.rewardCents)}</td>
+                    <td
+                      className={`num mono ${h.you.rankBefore !== null && h.you.rankAfter !== null ? (h.you.rankAfter > h.you.rankBefore ? 'pos' : h.you.rankAfter < h.you.rankBefore ? 'neg' : '') : ''}`}
+                      data-testid={`history-points-${h.matchId}`}
+                    >
+                      {h.you.rankBefore === null || h.you.rankAfter === null ? '—' : pointsChangeText(h.you.rankBefore, h.you.rankAfter)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

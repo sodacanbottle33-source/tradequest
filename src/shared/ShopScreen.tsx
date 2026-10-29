@@ -18,8 +18,8 @@ import { Skeleton } from './Skeleton';
 import { sharedStore, useShared } from './store';
 import type { ShopView } from './types';
 
-/** What a thing looks like, drawn with the same classes the real thing uses. */
-function Sample({ def, name }: { def: CosmeticDef; name: string }) {
+/** What a thing looks like, drawn with the same classes the real thing uses (the Goals page shows its free looks the same way). */
+export function Sample({ def, name }: { def: CosmeticDef; name: string }) {
   if (isGearSlot(def.slot)) return def.slot === 'win' ? <WinSample id={def.id} /> : <ChartSample id={def.id} />;
   if (def.slot === 'frame') {
     return (

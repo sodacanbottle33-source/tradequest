@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Header, type Mode } from '../ui/Header';
 import { AccountScreen } from './AccountScreen';
 import { AdminScreen } from './AdminScreen';
+import { AwayCard } from './AwayCard';
 import { CallBar } from './CallBar';
 import { careerLocked, modeShown } from './careerLock';
 import { ChallengeBanner } from './Challenges';
@@ -12,6 +13,9 @@ import { CompanyView } from './CompanyView';
 import { BillboardStrip } from './BillboardStrip';
 import { DailyQuoteCard } from './DailyQuoteCard';
 import { clockTime } from './format';
+import { goalsWaiting } from './goalUtil';
+import { useGoals } from './goalsStore';
+import { GoalsScreen } from './GoalsScreen';
 import { LaunchScreen } from './LaunchScreen';
 import { LearnScreen } from './LearnScreen';
 import { learnSeen } from './learnUtil';
@@ -33,10 +37,11 @@ import { BadgeUnlockLayer } from './BadgeUnlock';
 import { WinBurstLayer } from './WinBurst';
 import { sharedStore, useShared } from './store';
 
-type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'learn' | 'players' | 'chat' | 'messages' | 'shop' | 'account';
+type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'goals' | 'learn' | 'players' | 'chat' | 'messages' | 'shop' | 'account';
 const CAREER_TABS: [CareerTab, string][] = [
   ['market', 'Market'],
   ['coins', 'Memecoins'],
+  ['goals', 'Goals'],
   ['earnings', 'Earnings'],
   ['launch', 'Launch'],
   ['learn', 'Learn'],
@@ -101,6 +106,12 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
     onMode('career');
   };
 
+  const goGoals = () => {
+    setCareerTab('goals');
+    onMode('career');
+    window.scrollTo?.(0, 0);
+  };
+
   const goShop = () => {
     setCareerTab('shop');
     onMode('career');
@@ -134,6 +145,9 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
   const careerTabs = CAREER_TABS;
   // Friend requests waiting for an answer: shown as a number on the Players tab.
   const requests = s.friends?.incoming.length ?? 0;
+  // Daily goals still open, plus free looks waiting to be chosen: shown as a number on the Goals tab.
+  const { view: goalsView } = useGoals();
+  const goalsOpen = goalsWaiting(goalsView);
   // Chat messages from other players that arrived while the Chat tab was not open.
   const unread = s.chat?.unread ?? 0;
   // Private messages not read yet, plus message requests and group invitations waiting for an answer.
@@ -189,6 +203,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
       )}
 
       <Notices />
+      <AwayCard onGoals={goGoals} />
       <ChallengeBanner />
       <Toasts />
       <CallBar />
@@ -256,6 +271,11 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
                   New
                 </span>
               )}
+              {id === 'goals' && goalsOpen > 0 && (
+                <span className="tab-count" data-testid="goals-badge" aria-label={`${goalsOpen} daily goal${goalsOpen === 1 ? '' : 's'} or free look${goalsOpen === 1 ? '' : 's'} waiting`}>
+                  {goalsOpen}
+                </span>
+              )}
               {id === 'chat' && unread > 0 && (
                 <span className="tab-count" data-testid="chat-badge" aria-label={`${unread} new chat message${unread === 1 ? '' : 's'}`}>
                   {unread > 99 ? '99+' : unread}
@@ -288,6 +308,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
           ))}
         {shown === 'career' && careerTab === 'earnings' && <EarningsScreen onOpen={openCompany} />}
         {shown === 'career' && careerTab === 'launch' && <LaunchScreen onOpen={openCompany} />}
+        {shown === 'career' && careerTab === 'goals' && <GoalsScreen />}
         {shown === 'career' && careerTab === 'learn' && <LearnScreen />}
         {shown === 'career' && careerTab === 'players' && <PlayersScreen />}
         {shown === 'career' && careerTab === 'chat' && <ChatScreen />}

@@ -4828,6 +4828,290 @@ code {
   .company-chart.cos-fx_sparkle .live-svg .candle .body { animation: gear-sparkle 3.4s ease-in-out var(--sd, 0s) infinite; }
 }
 
+/* ---------- Daily goals, the streak, "while you were away" and ranked 1v1 (docs/world.md §31, §32, §33; src/shared/GoalsScreen.tsx, AwayCard.tsx, RankedCard.tsx) ---------- */
+/* Looks only: every number on these screens comes from the server. Animations sit in the no-preference block at the end of this part. */
+.goals-layout {
+  display: grid;
+  gap: 14px;
+}
+.goals-head h2 {
+  margin-top: 0;
+}
+.streak-box {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+.streak-box.alive {
+  border-color: rgba(245, 184, 61, 0.7);
+  background: linear-gradient(160deg, rgba(245, 184, 61, 0.12), var(--panel-2) 60%);
+}
+.streak-box.at-risk {
+  border-color: rgba(239, 68, 68, 0.65);
+}
+.streak-flame {
+  font-size: 34px;
+  line-height: 1;
+}
+.streak-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.streak-count {
+  font-size: 22px;
+}
+.streak-freezes {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+}
+.streak-freezes .freeze {
+  font-size: 22px;
+  opacity: 0.25;
+  filter: grayscale(1);
+}
+.streak-freezes .freeze.has {
+  opacity: 1;
+  filter: none;
+}
+.goal-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.goal-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.goal-row.is-done {
+  border-color: rgba(34, 197, 94, 0.6);
+  background: linear-gradient(160deg, rgba(34, 197, 94, 0.1), var(--panel-2) 60%);
+}
+.goal-icon {
+  font-size: 24px;
+  text-align: center;
+}
+.goal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.goal-title {
+  overflow-wrap: anywhere;
+}
+.goal-hint {
+  font-size: 12px;
+}
+.goal-bar,
+.rank-bar {
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.goal-bar-fill,
+.rank-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--primary);
+}
+.goal-row.is-done .goal-bar-fill {
+  background: var(--up);
+}
+.rank-bar-fill {
+  background: var(--accent);
+}
+.goal-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+}
+.goal-count {
+  font-weight: 700;
+}
+.goal-reward {
+  font-size: 12px;
+}
+.goal-bonus {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+.goal-bonus.is-done {
+  border-color: rgba(34, 197, 94, 0.6);
+}
+.milestone-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.milestone {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.milestone.is-ready {
+  border-color: var(--accent);
+}
+.milestone.is-claimed {
+  border-color: rgba(34, 197, 94, 0.6);
+}
+.milestone-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.milestone-days {
+  font-weight: 700;
+  min-width: 64px;
+}
+.milestone-state {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.goal-picker {
+  margin-top: 10px;
+}
+
+/* "While you were away" */
+.away-card {
+  border-color: rgba(59, 130, 246, 0.6);
+  background: linear-gradient(160deg, rgba(59, 130, 246, 0.1), var(--panel) 55%);
+  margin-bottom: 14px;
+}
+.away-card h2 {
+  margin-top: 0;
+}
+.away-list {
+  margin: 8px 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
+}
+.away-list li.pos {
+  color: var(--up);
+}
+.away-list li.neg {
+  color: var(--down);
+}
+.away-companies ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.away-today {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+/* Ranked 1v1 */
+.ranked-card h3 {
+  margin: 14px 0 8px;
+}
+.rank-me {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+.rank-me.tier-silver { border-color: rgba(203, 213, 225, 0.7); }
+.rank-me.tier-gold { border-color: rgba(245, 184, 61, 0.8); }
+.rank-me.tier-platinum { border-color: rgba(103, 232, 249, 0.7); }
+.rank-me.tier-diamond { border-color: rgba(168, 85, 247, 0.8); background: linear-gradient(160deg, rgba(168, 85, 247, 0.14), var(--panel-2) 60%); }
+.rank-icon {
+  font-size: 34px;
+  line-height: 1;
+}
+.rank-me-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.rank-tier {
+  font-size: 20px;
+}
+.rank-points {
+  font-size: 14px;
+  color: var(--muted);
+}
+.rank-me-side {
+  margin-left: auto;
+  text-align: right;
+  font-size: 13px;
+}
+.rank-tag {
+  margin: 8px 0;
+}
+.rank-result {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.rank-up {
+  margin: 4px 0 0;
+  font-weight: 700;
+  color: var(--accent);
+}
+.rank-last ol {
+  margin: 0;
+  padding-left: 20px;
+}
+.ladder td,
+.ladder th {
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .goal-row { grid-template-columns: 28px minmax(0, 1fr); }
+  .goal-side { grid-column: 2; flex-direction: row; align-items: baseline; gap: 10px; text-align: left; }
+  .streak-freezes { margin-left: 0; }
+  .rank-me-side { margin-left: 0; text-align: left; flex-basis: 100%; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .streak-box.alive .streak-flame { display: inline-block; animation: flame-flicker 1.6s ease-in-out infinite; transform-origin: 50% 90%; }
+  @keyframes flame-flicker { 0%, 100% { transform: scale(1) rotate(-2deg); } 50% { transform: scale(1.1) rotate(2deg); } }
+  .goal-bar-fill,
+  .rank-bar-fill { transition: width 0.5s ease; }
+  .away-card { animation: away-in 0.3s ease-out both; }
+  @keyframes away-in { from { opacity: 0; transform: translateY(-8px); } }
+  .rank-up { animation: rank-pop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.4) both; }
+  @keyframes rank-pop { from { opacity: 0; transform: scale(0.8); } }
+  .goal-row.is-done { animation: goal-done 0.5s ease-out both; }
+  @keyframes goal-done { from { transform: scale(0.98); } }
+}
+
 /* ---------- Trade moments, loading shimmer, smooth screens and market marks ---------- */
 /* The check mark next to the answer to an order that went through (src/shared/FillCheck.tsx). */
 .notice.fill-ok {

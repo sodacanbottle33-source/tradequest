@@ -502,7 +502,7 @@ describe('a moderator is a player too', () => {
       });
       d.run("INSERT INTO users(username, display_name, pw_hash, role, created_ms) VALUES ('old', 'old', 'x', 'player', 1), ('boss', 'boss', 'x', 'owner', 1)");
       d.run("INSERT INTO user_bans(user_id, reason, banned_ms, until_ms, by_user_id) VALUES (1, 'old ban', 5, NULL, 2)");
-      expect(migrate(d)).toEqual([25, 26, 27, 28]);
+      expect(migrate(d)).toEqual([25, 26, 27, 28, 29]);
       expect(d.get<{ kind: string; reason: string }>('SELECT kind, reason FROM user_bans WHERE user_id = 1')).toEqual({ kind: 'ban', reason: 'old ban' });
       expect(d.get<{ n: number }>('SELECT COUNT(*) AS n FROM moderators')?.n).toBe(0);
       expect(() => d.run("UPDATE user_bans SET kind = 'pause' WHERE user_id = 1")).toThrow();

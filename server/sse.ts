@@ -12,6 +12,9 @@ export class SseHub {
   private readonly clients = new Map<number, Client>();
   private nextId = 1;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private stopped = false;
+  /** Called with the player's id when the LAST open page of a signed-in player has closed (not when the server itself is stopping). */
+  onUserGone: ((userId: number) => void) | null = null;
 
   get size(): number {
     return this.clients.size;
@@ -26,6 +29,7 @@ export class SseHub {
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     for (const c of this.clients.values()) c.res.end();
@@ -44,7 +48,14 @@ export class SseHub {
     res.write('retry: 2000\n\n');
     const client: Client = { id: this.nextId++, userId, res };
     this.clients.set(client.id, client);
-    req.on('close', () => this.clients.delete(client.id));
+    req.on('close', () => {
+      if (!this.clients.delete(client.id) || this.stopped || userId === null || this.has(userId)) return;
+      try {
+        this.onUserGone?.(userId);
+      } catch {
+        // what the server does when a page closes must never break the connection code
+      }
+    });
     this.write(client, frame('hello', hello));
   }
 

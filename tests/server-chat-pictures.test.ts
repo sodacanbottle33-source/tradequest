@@ -483,7 +483,7 @@ describe('what an old database keeps', () => {
       d.run("INSERT INTO conversations(kind, title, created_by, created_ms, last_ms) VALUES ('group', 'g', 1, 5, 5)");
       d.run("INSERT INTO private_messages(conversation_id, user_id, body, created_ms) VALUES (1, 1, 'old words', 5)");
       d.run("INSERT INTO private_reports(message_id, conversation_id, reporter_id, author_id, created_ms, context_json) VALUES (1, 1, 1, 1, 6, '[]')");
-      expect(migrate(d)).toEqual([26, 27, 28]);
+      expect(migrate(d)).toEqual([26, 27, 28, 29]);
       for (const t of ['chat_message_pictures', 'private_message_pictures']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n).toBe(0);
       expect(d.get<{ body: string }>('SELECT body FROM chat_messages WHERE id = 1')?.body).toBe('old message');
       expect(d.get<{ picture: unknown }>('SELECT picture FROM private_reports WHERE message_id = 1')?.picture).toBeNull();

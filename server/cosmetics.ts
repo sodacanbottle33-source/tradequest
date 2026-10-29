@@ -171,6 +171,35 @@ export class Shop {
     return { ...this.view(me), item: def.id, priceCents: price };
   }
 
+  /**
+   * Gives a thing for nothing (a free look for a streak, server/daily.ts) and puts it on. Whoever calls this has already decided that the player may have it; this only
+   * refuses a thing that is not in the catalog, one he already owns and a computer player. The price kept as a record is 0, so nothing is taken from his cash.
+   */
+  give(me: User, rawItem: unknown, reason: string): ShopView {
+    if (typeof rawItem !== 'string') throw new ShopError('bad_request', 'item must be the id of something in the Shop.', 400);
+    const def = cosmeticById(rawItem);
+    if (!def) throw new ShopError('no_such_item', 'There is nothing like that in the Shop.', 404);
+    const now = this.d.now();
+    this.d.db.tx(() => {
+      if (this.isBot(me.id)) throw new ShopError('cannot_buy', 'Computer players do not shop.', 403);
+      if (this.d.db.get('SELECT 1 AS x FROM user_cosmetics WHERE user_id = ? AND item = ?', me.id, def.id)) {
+        throw new ShopError('already_owned', `You already own ${def.name}. You can wear it from the Shop.`, 409);
+      }
+      this.d.db.run('INSERT INTO user_cosmetics(user_id, item, bought_ms, price_cents) VALUES (?, ?, ?, 0)', me.id, def.id, now);
+      if (isGearSlot(def.slot)) this.wearGear(me.id, def.slot, def.id, now);
+      else this.wear(me.id, def.slot, def.id, now);
+    });
+    this.d.log.info('account', `${me.username} was given "${def.name}" (${reason}).`);
+    if (isGearSlot(def.slot)) this.announceGear(me);
+    else this.announce(me);
+    return this.view(me);
+  }
+
+  /** The ids of the things a player owns. */
+  ownedBy(userId: number): string[] {
+    return this.d.db.all<{ item: string }>('SELECT item FROM user_cosmetics WHERE user_id = ?', userId).map((r) => r.item);
+  }
+
   /** Puts a thing he owns on (or takes the place's thing off when `rawItem` is null). Free. */
   equip(me: User, rawSlot: unknown, rawItem: unknown): { equipped: Look; gear: Gear } {
     const known = typeof rawSlot === 'string' ? ALL_SLOT_IDS.find((id) => id === rawSlot) : undefined;

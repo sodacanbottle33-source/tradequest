@@ -10,10 +10,13 @@ import { browserVoiceDeps, VoiceSession } from './voice';
 import { badgeById } from './badgeCatalog';
 import { playBadgeShow } from './badgeShow';
 import type { Gear, Look } from './cosmeticCatalog';
+import { awayStore } from './awayStore';
 import { billboardStore } from './billboardStore';
+import { goalNotice } from './goalUtil';
+import { goalsStore } from './goalsStore';
 import { logoStore } from './logoStore';
 import { profileStore } from './profileStore';
-import type { Account, Announcement, BanNotice, BillboardSlotView, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
+import type { Account, Announcement, BanNotice, BillboardSlotView, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, GoalsEvent, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
 
 /** A pop-up about a position the market closed by itself. */
 export interface Toast extends ToastText {
@@ -274,6 +277,9 @@ export class SharedStore {
       if (this.state.user) {
         void this.calls.reconcile();
         void profileStore.start();
+        // Today's goals (asking also pays any goal finished while the page was closed) and the "while you were away" card.
+        void goalsStore.load();
+        void awayStore.load();
       }
     });
     es.addEventListener('tick', (e) => this.onTick(JSON.parse((e as MessageEvent<string>).data) as TickPayload));
@@ -295,6 +301,8 @@ export class SharedStore {
     es.addEventListener('chat_status', () => void this.refreshChat());
     // The owner made this player a moderator, or took the job away: bring the role up to date (the menu and pages follow it) and say so.
     es.addEventListener('role_changed', (e) => this.onRoleChanged(JSON.parse((e as MessageEvent<string>).data) as { role: string }));
+    // A daily goal (or the bonus for all three, or a streak look) was paid.
+    es.addEventListener('goals', (e) => this.onGoals(JSON.parse((e as MessageEvent<string>).data) as GoalsEvent));
     // This player earned one or more achievement badges.
     es.addEventListener('badges', (e) => this.onBadges(JSON.parse((e as MessageEvent<string>).data) as { earned: string[] }));
     // A player paid for a new username: every list that shows the old name is brought up to date.
@@ -356,6 +364,14 @@ export class SharedStore {
   /** A limit order filled (all or part of it) or ended: say so at once and bring the account and the order list up to date. */
   noteLimit(n: LimitNotice): void {
     this.showToast(n.order.ticker, describeLimitEvent(n.what, n.order), TOAST_MS);
+    void this.refreshPrivate(false);
+  }
+
+  /** A daily goal was paid: say so, and bring the Goals page and the Career cash up to date. */
+  private onGoals(d: GoalsEvent): void {
+    const text = goalNotice(d);
+    if (text) this.showToast('', text, TOAST_MS);
+    void goalsStore.load();
     void this.refreshPrivate(false);
   }
 
@@ -769,6 +785,8 @@ export class SharedStore {
       this.calls.reset();
       profileStore.stop();
       billboardStore.clearMine();
+      goalsStore.clear();
+      awayStore.clear();
       void this.recheckMe();
     }
   }
@@ -796,6 +814,8 @@ export class SharedStore {
     void this.refreshChat();
     void this.refreshMessages();
     void profileStore.start();
+    void goalsStore.load();
+    void awayStore.load();
   }
 
   async signOut(): Promise<void> {
@@ -805,6 +825,8 @@ export class SharedStore {
       this.calls.reset();
       profileStore.stop();
       billboardStore.clearMine();
+      goalsStore.clear();
+      awayStore.clear();
       this.set({ user: null, banned: null, career: null, friends: null, challenges: null, challengeNote: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, profileFor: null, limits: [], match: null, walletCents: 0, toasts: [] });
       for (const t of this.toastTimers.values()) clearTimeout(t);
       this.toastTimers.clear();

@@ -375,6 +375,8 @@ export interface MatchPlayer {
   readonly profitCents: number | null;
   readonly result: 'win' | 'loss' | 'tie' | 'forfeit' | null;
   readonly rewardCents: number | null;
+  /** Only after a ranked match is over: the ranked points before and after. `note` is 'limit' when the same two players had played each other too often this hour (no points moved). */
+  readonly rank: { readonly before: number; readonly after: number; readonly note: 'limit' | null } | null;
 }
 
 export interface Match {
@@ -399,6 +401,8 @@ export interface Match {
   readonly canTrade: boolean;
   /** True for a match between two friends who agreed to play (a challenge). */
   readonly friendMatch: boolean;
+  /** True when this match moves ranked points: two real players from the lobby, not a challenge, not a bot match (docs/world.md §31). */
+  readonly ranked: boolean;
 }
 
 export interface HistoryEntry {
@@ -407,9 +411,145 @@ export interface HistoryEntry {
   readonly outcome: string | null;
   readonly endedMs: number | null;
   readonly startTick: number | null;
-  readonly you: { profitCents: number | null; finalValueCents: number | null; result: string | null; rewardCents: number | null };
+  readonly you: { profitCents: number | null; finalValueCents: number | null; result: string | null; rewardCents: number | null; rankBefore: number | null; rankAfter: number | null };
   readonly opponent: { name: string | null; bot: boolean; profitCents: number | null; finalValueCents: number | null } | null;
   readonly cancelReason: string | null;
+}
+
+// ---- ranked 1v1 (docs/world.md §31) ---------------------------------------------------------------------------------------------
+
+export interface RankedPlayerView {
+  readonly points: number;
+  readonly tier: string;
+  readonly tierName: string;
+  readonly tierIcon: string;
+  /** The tier above (its name and the points it starts at), or null in Diamond. */
+  readonly next: { readonly name: string; readonly floor: number } | null;
+  /** Points above the bottom of the tier, the size of the tier, and how far across it the player is (0 … 1). */
+  readonly into: number;
+  readonly span: number;
+  readonly fraction: number;
+  /** The bottom of the highest tier reached this season: the points can not fall below it. */
+  readonly floorPoints: number;
+  readonly matches: number;
+  readonly wins: number;
+  readonly losses: number;
+  /** The place on the ladder this season, or null before the first ranked match of the season. */
+  readonly place: number | null;
+}
+
+export interface LadderEntry {
+  readonly place: number;
+  readonly username: string;
+  readonly displayName: string;
+  readonly points: number;
+  readonly tier: string;
+  readonly tierName: string;
+  readonly tierIcon: string;
+  readonly matches: number;
+  readonly you: boolean;
+}
+
+export interface RankedView {
+  readonly season: { readonly startMs: number; readonly endMs: number };
+  readonly startPoints: number;
+  readonly tiers: readonly { readonly id: string; readonly name: string; readonly floor: number; readonly icon: string }[];
+  readonly me: RankedPlayerView;
+  readonly ladder: readonly LadderEntry[];
+  /** How many players have played a ranked match this season. */
+  readonly players: number;
+  /** The podium of the last finished season, or null. */
+  readonly lastSeason: { readonly startMs: number; readonly places: readonly { place: number; username: string; displayName: string; points: number }[] } | null;
+  readonly rules: { readonly minMatches: number; readonly pairLimit: number };
+}
+
+// ---- daily goals, the streak and the free looks (docs/world.md §32) --------------------------------------------------------------
+
+export interface GoalReward {
+  readonly xp: number;
+  readonly cashCents: number;
+  readonly coinCents: number;
+}
+
+export interface GoalLine {
+  readonly id: string;
+  readonly icon: string;
+  readonly title: string;
+  readonly hint: string;
+  readonly target: number;
+  /** How far he is today, never more than the target. */
+  readonly progress: number;
+  readonly done: boolean;
+  readonly reward: GoalReward;
+}
+
+export interface StreakView {
+  /** The streak as it stands now (0 when it has run out). */
+  readonly current: number;
+  readonly best: number;
+  readonly freezes: number;
+  /** True when the streak is alive but today's first goal is not done yet. */
+  readonly atRisk: boolean;
+  /** How many missed days a freeze will cover when he finishes a goal today (0 when none). */
+  readonly covers: number;
+  /** True when he had a streak that has run out. */
+  readonly lost: boolean;
+  readonly todayDone: boolean;
+  /** Days until the next freeze is earned (0 when he already holds the most). */
+  readonly toFreeze: number;
+}
+
+export interface MilestoneView {
+  readonly days: number;
+  readonly rarity: number;
+  readonly rarityName: string;
+  readonly state: 'locked' | 'ready' | 'claimed';
+  /** What he took, once claimed. */
+  readonly item: string | null;
+  /** For a milestone that is ready: the things he may take. */
+  readonly choices: readonly string[];
+}
+
+export interface GoalsView {
+  readonly day: number;
+  readonly startMs: number;
+  /** When the goals change: the next 00:00 Tokyo time. */
+  readonly endMs: number;
+  readonly serverMs: number;
+  readonly goals: readonly GoalLine[];
+  readonly bonus: { readonly reward: GoalReward; readonly paid: boolean };
+  readonly streak: StreakView;
+  readonly milestones: readonly MilestoneView[];
+}
+
+/** What the live stream tells the pages of a player when something was paid. */
+export interface GoalsEvent {
+  readonly finished: readonly string[];
+  readonly bonus: boolean;
+  readonly reward: GoalReward;
+  /** Streak milestones reached just now (a free look is waiting for him). */
+  readonly milestones: readonly number[];
+  readonly streak: number;
+}
+
+// ---- "while you were away" (docs/world.md §33) ------------------------------------------------------------------------------------
+
+export interface AwayReport {
+  readonly seenMs: number;
+  readonly nowMs: number;
+  readonly awayMs: number;
+  readonly netWorth: { readonly beforeCents: number; readonly nowCents: number; readonly changeCents: number; readonly changePct: number } | null;
+  readonly rank: { readonly before: number; readonly now: number } | null;
+  /** The holding whose value changed most (in cents), or null when nothing changed. */
+  readonly mover: { readonly ticker: string; readonly name: string; readonly changePct: number; readonly changeCents: number; readonly short: boolean } | null;
+  /** Companies he launched that moved or were bought. */
+  readonly companies: readonly { readonly ticker: string; readonly name: string; readonly changePct: number | null; readonly newInvestors: number }[];
+}
+
+export interface AwayView {
+  readonly report: AwayReport;
+  /** The streak and the goals still open today. */
+  readonly today: { readonly streak: number; readonly atRisk: boolean; readonly goalsLeft: number };
 }
 
 export interface Health {

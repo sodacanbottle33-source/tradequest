@@ -18,8 +18,11 @@ import type {
   AdminState,
   AdminStyle,
   BadgesView,
+  AwayView,
   BillboardBook,
   BillboardView,
+  GoalsView,
+  RankedView,
   PlayerProfile,
   ShopBuy,
   ShopView,
@@ -259,6 +262,13 @@ export const api = {
   looks: () => request<{ looks: Record<string, Look> }>('GET', '/api/looks'),
   // What you have on your own screen (candles, chart, win style). Only yours: nobody can ask for another player's.
   gear: () => request<{ gear: Gear }>('GET', '/api/gear'),
+
+  // Ranked 1v1 (the ladder, the player's tier), daily goals with the streak and the free looks, and the "while you were away" card. All need a signed-in player.
+  ranked: () => request<RankedView>('GET', '/api/ranked'),
+  goals: () => request<GoalsView>('GET', '/api/goals'),
+  claimGoal: (milestone: number, item: string) => request<GoalsView>('POST', '/api/goals/claim', { milestone, item }),
+  away: () => request<{ away: AwayView | null }>('GET', '/api/away'),
+  dismissAway: () => request<{ ok: boolean }>('POST', '/api/away/dismiss', {}),
   // The billboard: anybody can look (also a visitor); a signed-in player gets his cash and the companies he launched, and can book a place for one of them.
   billboard: () => request<BillboardView>('GET', '/api/billboard'),
   bookBillboard: (slot: number, ticker: string, hours: number) => request<BillboardBook>('POST', '/api/billboard/book', { slot, ticker, hours }),

@@ -104,6 +104,9 @@ export function registerLobbyRoutes(router: Router, s: Services): void {
     return { matches: matches.history(user.id, intParam(ctx.url, 'limit', 20, 1, 100), before === null ? undefined : intParam(ctx.url, 'before', 0, 1, Number.MAX_SAFE_INTEGER)) };
   });
 
+  // The ranked ladder (docs/world.md §31): your tier and points, this season's best players and last season's podium.
+  router.get('/api/ranked', (ctx) => s.ranked.view(ctx.requireUser()));
+
   router.get('/api/wallet', (ctx) => {
     const user = ctx.requireUser();
     return matches.wallet(user.id);

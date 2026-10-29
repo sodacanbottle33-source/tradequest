@@ -245,7 +245,7 @@ describe('what an old database keeps', () => {
       });
       d.run("INSERT INTO users(username, display_name, pw_hash, role, created_ms) VALUES ('a', 'a', 'x', 'player', 1)");
       d.run("INSERT INTO companies(id, ticker, name, listing_tick, listed_ms) VALUES (1, 'ABC', 'Abc Co', 0, 1)");
-      expect(migrate(d)).toEqual([28]);
+      expect(migrate(d)).toEqual([28, 29]);
       for (const t of ['user_gear', 'billboard_rentals']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n).toBe(0);
       d.run("INSERT INTO user_gear(user_id, candles, updated_ms) VALUES (1, 'cc_neon', 5)");
       expect(() => d.run("INSERT INTO user_gear(user_id, candles, updated_ms) VALUES (1, 'cc_mono', 6)")).toThrow(); // one row per player

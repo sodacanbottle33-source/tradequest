@@ -1072,6 +1072,105 @@ CREATE INDEX billboard_by_slot ON billboard_rentals(slot, ends_ms);
 CREATE INDEX billboard_by_user ON billboard_rentals(user_id, ends_ms);
 `,
   },
+  {
+    version: 29,
+    name: 'ranked 1v1, daily goals with a streak, and the "while you were away" card',
+    sql: `
+-- Ranked 1v1 (server/ranked.ts, src/world/rankedRules.ts, docs/world.md §31). One row per player who has played a ranked match: his points and tier THIS season, the
+-- highest tier he reached this season (the floor he cannot fall below), the highest tier he ever reached (for the badges), and his matches this season. A season is a week
+-- (Monday 00:00 Tokyo time); when a new one starts every row moves halfway back to the starting points and the season counters start again.
+CREATE TABLE ranked_player (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  season_ms  INTEGER NOT NULL,
+  points     INTEGER NOT NULL CHECK (points >= 0),
+  peak_tier  INTEGER NOT NULL CHECK (peak_tier BETWEEN 0 AND 4),
+  best_tier  INTEGER NOT NULL CHECK (best_tier BETWEEN 0 AND 4),
+  matches    INTEGER NOT NULL DEFAULT 0 CHECK (matches >= 0),
+  wins       INTEGER NOT NULL DEFAULT 0 CHECK (wins >= 0),
+  losses     INTEGER NOT NULL DEFAULT 0 CHECK (losses >= 0),
+  updated_ms INTEGER NOT NULL
+);
+CREATE INDEX ranked_by_points ON ranked_player(points DESC, user_id);
+
+-- The points a player had before and after a ranked match (NULL for a match that was not ranked: a friend match, a match against a bot, a cancelled one).
+ALTER TABLE match_players ADD COLUMN rank_before INTEGER;
+ALTER TABLE match_players ADD COLUMN rank_after INTEGER;
+-- 'limit' when the match was ranked but moved no points because the same two players had already played each other several times this hour.
+ALTER TABLE match_players ADD COLUMN rank_note TEXT;
+
+-- The best places of every finished season (the top SEASON_PLACES players with enough matches). The podium gets badges from these rows.
+CREATE TABLE ranked_season_results (
+  season_ms INTEGER NOT NULL,
+  place     INTEGER NOT NULL CHECK (place >= 1),
+  user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  points    INTEGER NOT NULL,
+  matches   INTEGER NOT NULL,
+  PRIMARY KEY (season_ms, place)
+) WITHOUT ROWID;
+CREATE INDEX ranked_results_by_user ON ranked_season_results(user_id);
+
+-- Daily goals (server/daily.ts, docs/world.md §32). The goals of a day are the same for everybody and come from a fixed list; what a player has done is read from what the
+-- game already saved (trades, lessons, matches). This table only remembers which goals were finished (and paid), once. A "day" is a Tokyo-time day, counted from 1970.
+CREATE TABLE daily_goal_done (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  day     INTEGER NOT NULL,
+  goal    TEXT NOT NULL CHECK (length(goal) BETWEEN 1 AND 40),
+  done_ms INTEGER NOT NULL,
+  PRIMARY KEY (user_id, day, goal)
+) WITHOUT ROWID;
+
+-- The bonus for finishing all of a day's goals, paid once per day.
+CREATE TABLE daily_bonus (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  day     INTEGER NOT NULL,
+  paid_ms INTEGER NOT NULL,
+  PRIMARY KEY (user_id, day)
+) WITHOUT ROWID;
+
+-- The streak: days in a row on which at least one goal was finished. A "freeze" (earned every 7th day of a streak, at most 2 kept) covers one missed day.
+CREATE TABLE streaks (
+  user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  current    INTEGER NOT NULL CHECK (current >= 0),
+  best       INTEGER NOT NULL CHECK (best >= 0),
+  last_day   INTEGER NOT NULL,
+  freezes    INTEGER NOT NULL DEFAULT 0 CHECK (freezes BETWEEN 0 AND 2),
+  saved      INTEGER NOT NULL DEFAULT 0 CHECK (saved >= 0),
+  updated_ms INTEGER NOT NULL
+);
+
+-- Free looks for reaching a streak of 3, 7, 14 and 30 days (each once, ever). The player picks the thing later: item stays NULL until he does.
+CREATE TABLE streak_rewards (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  milestone  INTEGER NOT NULL CHECK (milestone > 0),
+  earned_ms  INTEGER NOT NULL,
+  item       TEXT,
+  claimed_ms INTEGER,
+  PRIMARY KEY (user_id, milestone)
+) WITHOUT ROWID;
+
+-- Career cash the game gave a player (daily goals): a record, so the weekly board can leave it out of a player's growth (server/social.ts). The money itself is in the account.
+CREATE TABLE cash_gifts (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ms      INTEGER NOT NULL,
+  cents   INTEGER NOT NULL CHECK (cents > 0),
+  reason  TEXT NOT NULL
+);
+CREATE INDEX cash_gifts_by_time ON cash_gifts(ms);
+
+-- "While you were away" (server/away.ts, docs/world.md §33): what the player's account looked like when his last page closed (net worth, place, what he held), and the
+-- report made when he comes back after a while. The report stays until he closes it.
+CREATE TABLE away_marks (
+  user_id         INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  seen_ms         INTEGER NOT NULL,
+  net_worth_cents INTEGER,
+  rank            INTEGER,
+  holdings        TEXT NOT NULL DEFAULT '[]',
+  report          TEXT,
+  report_ms       INTEGER
+);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

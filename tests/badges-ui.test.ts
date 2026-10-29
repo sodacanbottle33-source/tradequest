@@ -28,7 +28,7 @@ describe('Badge screens', () => {
     expect(screen).toMatch(/data-testid=\{`badge-\$\{b\.id\}`\}/);
     expect(screen).toMatch(/Not earned yet/);
     expect(screen).not.toMatch(/localStorage|sessionStorage|Math\.random/);
-    expect(BADGE_GROUPS.length).toBe(4);
+    expect(BADGE_GROUPS.length).toBe(5);
   });
 
   it('BADGEUI-2: the Players list shows at most three badge icons next to a name, from the server\'s answer; a locked medal is grey and every medal says what it is', () => {

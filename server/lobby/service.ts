@@ -24,6 +24,7 @@ import {
 import { equityOf } from '../leverage';
 import { BOT_WAIT_MS, freeBot } from './bots';
 import type { Logger } from '../log';
+import type { Ranked } from '../ranked';
 import type { Db } from '../sqlite';
 import type { AccountRow, Trading } from '../trading';
 import type { WorldRuntime } from '../world/runtime';
@@ -79,6 +80,9 @@ interface PlayerRow {
   reward_cents: number | null;
   dismissed: number;
   is_bot: number;
+  rank_before: number | null;
+  rank_after: number | null;
+  rank_note: string | null;
 }
 
 export interface MatchPlayerView {
@@ -94,6 +98,8 @@ export interface MatchPlayerView {
   readonly profitCents: number | null;
   readonly result: PlayerResult | null;
   readonly rewardCents: number | null;
+  /** Only after a ranked match is over: the ranked points before and after (docs/world.md §31). `note` is 'limit' when the same two players had played each other too often this hour. */
+  readonly rank: { readonly before: number; readonly after: number; readonly note: 'limit' | null } | null;
 }
 
 export interface MatchView {
@@ -119,6 +125,8 @@ export interface MatchView {
   readonly canTrade: boolean;
   /** True for a match between two friends who agreed to play (a challenge, server/challenges.ts). */
   readonly friendMatch: boolean;
+  /** True when this match moves ranked points: two real players from the lobby, not a challenge. False for a friend match, a match against a bot and a cancelled one. */
+  readonly ranked: boolean;
 }
 
 export interface HistoryEntry {
@@ -127,7 +135,7 @@ export interface HistoryEntry {
   readonly outcome: MatchOutcome | null;
   readonly endedMs: number | null;
   readonly startTick: number | null;
-  readonly you: { profitCents: number | null; finalValueCents: number | null; result: PlayerResult | null; rewardCents: number | null };
+  readonly you: { profitCents: number | null; finalValueCents: number | null; result: PlayerResult | null; rewardCents: number | null; rankBefore: number | null; rankAfter: number | null };
   readonly opponent: { name: string | null; bot: boolean; profitCents: number | null; finalValueCents: number | null } | null;
   readonly cancelReason: string | null;
 }
@@ -149,6 +157,8 @@ export interface MatchServiceOptions {
   readonly bots?: boolean;
   /** How long a player waits alone before a bot joins (default {@link BOT_WAIT_MS}). */
   readonly botWaitMs?: number;
+  /** The ranked ladder (server/ranked.ts): told about every settled match, inside the settling transaction. Without it matches move no points. */
+  readonly ranked?: Ranked;
 }
 
 const CANCEL_TEXT: Record<string, string> = {
@@ -167,6 +177,7 @@ export class MatchService {
   private readonly onChange: (userId: number, view: MatchView | null) => void;
   private readonly botsOn: boolean;
   private readonly botWaitMs: number;
+  private readonly ranked: Ranked | null;
   private lastSettleError = 0;
 
   constructor(o: MatchServiceOptions) {
@@ -178,6 +189,7 @@ export class MatchService {
     this.onChange = o.onChange ?? (() => undefined);
     this.botsOn = o.bots === true;
     this.botWaitMs = o.botWaitMs ?? BOT_WAIT_MS;
+    this.ranked = o.ranked ?? null;
   }
 
   /** Whether computer opponents are switched on. */
@@ -210,6 +222,7 @@ export class MatchService {
   private players(matchId: number): PlayerRow[] {
     return this.db.all<PlayerRow>(
       `SELECT p.match_id, p.user_id, u.display_name, p.joined_ms, p.last_seen_ms, p.ready, p.active, p.forfeited, p.account_id, p.final_value_cents, p.profit_cents, p.result, p.reward_cents, p.dismissed,
+              p.rank_before, p.rank_after, p.rank_note,
               EXISTS (SELECT 1 FROM bots b WHERE b.user_id = p.user_id) AS is_bot
          FROM match_players p JOIN users u ON u.id = p.user_id WHERE p.match_id = ? ORDER BY p.joined_ms, p.user_id`,
       matchId,
@@ -292,6 +305,7 @@ export class MatchService {
         profitCents: done ? p.profit_cents : null,
         result: done ? p.result : null,
         rewardCents: done && p.is_bot !== 1 ? p.reward_cents : null, // a bot is never paid, so the results show a dash for it
+        rank: done && p.rank_before !== null && p.rank_after !== null ? { before: p.rank_before, after: p.rank_after, note: p.rank_note === 'limit' ? 'limit' : null } : null,
       })),
       message: this.messageFor(m, phase, ps, userId, tick),
       startCashCents: m.start_cash_cents,
@@ -308,6 +322,7 @@ export class MatchService {
       cancelReason: m.cancel_reason,
       canTrade: phase === 'live' && ps.find((p) => p.user_id === userId)?.forfeited === 0,
       friendMatch: m.friends === 1,
+      ranked: m.state !== 'cancelled' && m.friends === 0 && m.outcome !== 'abandoned' && !ps.some((p) => p.is_bot === 1),
     };
   }
 
@@ -679,6 +694,14 @@ export class MatchService {
         }
       }
       this.db.run("UPDATE matches SET state = 'finished', outcome = ?, winner_user_id = ?, settled_ms = ? WHERE id = ?", verdict.outcome, verdict.winnerUserId, nowMs, m.id);
+      // Ranked points (server/ranked.ts) move in the same transaction, so a settled match and its points can never disagree.
+      this.ranked?.settle({
+        matchId: m.id,
+        friends: m.friends === 1,
+        outcome: verdict.outcome,
+        nowMs,
+        players: verdict.players.map((v) => ({ userId: v.userId, bot: (ps.find((p) => p.user_id === v.userId) as PlayerRow).is_bot === 1, result: v.result })),
+      });
       return true;
     });
     if (done) {
@@ -743,7 +766,7 @@ export class MatchService {
         outcome: m.outcome,
         endedMs: m.settled_ms,
         startTick: m.start_tick,
-        you: { profitCents: me.profit_cents, finalValueCents: me.final_value_cents, result: me.result, rewardCents: me.reward_cents },
+        you: { profitCents: me.profit_cents, finalValueCents: me.final_value_cents, result: me.result, rewardCents: me.reward_cents, rankBefore: me.rank_before, rankAfter: me.rank_after },
         opponent: other ? { name: other.display_name, bot: other.is_bot === 1, profitCents: other.profit_cents, finalValueCents: other.final_value_cents } : null,
         cancelReason: m.cancel_reason,
       };

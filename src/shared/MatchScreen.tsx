@@ -8,6 +8,7 @@ import { EarningsScreen } from './EarningsScreen';
 import { formatCents, formatClock } from './format';
 import { MarketScreen } from './MarketScreen';
 import { NewsScreen } from './NewsScreen';
+import { notRankedReason, pointsChangeText, tierLabel, tierReached } from './rankedUtil';
 import { sharedStore, useShared } from './store';
 import type { Account, Match } from './types';
 
@@ -76,6 +77,7 @@ function Results({ match, onDismiss, busy }: { match: Match; onDismiss: () => vo
           </table>
         </div>
       )}
+      {match.phase === 'finished' && <RankedResult match={match} />}
       <p className="hint">
         Match results are saved once. Your virtual currency is now <strong data-testid="wallet">{formatCents(walletCents)}</strong>. Your Career account was not touched.
       </p>
@@ -83,6 +85,43 @@ function Results({ match, onDismiss, busy }: { match: Match; onDismiss: () => vo
         Close
       </button>
     </section>
+  );
+}
+
+/** What the match did to the player's ranked points (docs/world.md §31), or why it did not count. */
+function RankedResult({ match }: { match: Match }) {
+  const me = match.players.find((p) => p.you);
+  if (!me) return null;
+  if (!match.ranked) {
+    const why = notRankedReason(match);
+    return (
+      <p className="hint rank-result" data-testid="rank-result">
+        Not ranked: {why ?? 'this match'} never moves ranked points.
+      </p>
+    );
+  }
+  if (!me.rank) return null;
+  const reached = tierReached(me.rank.before, me.rank.after);
+  return (
+    <div className="rank-result" data-testid="rank-result">
+      <strong className={me.rank.after > me.rank.before ? 'pos' : me.rank.after < me.rank.before ? 'neg' : ''} data-testid="rank-change">
+        Ranked: {pointsChangeText(me.rank.before, me.rank.after)}
+      </strong>{' '}
+      <span className="mono">
+        {me.rank.before} → {me.rank.after}
+      </span>{' '}
+      <span>{tierLabel(me.rank.after)}</span>
+      {reached && (
+        <p className="rank-up" data-testid="rank-up">
+          You reached {reached}!
+        </p>
+      )}
+      {me.rank.note === 'limit' && (
+        <p className="hint" data-testid="rank-limit">
+          You have played this player several times this hour, so no points moved. Try a different opponent.
+        </p>
+      )}
+    </div>
   );
 }
 

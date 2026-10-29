@@ -622,7 +622,11 @@ describe('what it cannot do', () => {
     const service = strip(readFileSync(resolve(process.cwd(), 'server', 'social.ts'), 'utf8'));
     const routes = strip(readFileSync(resolve(process.cwd(), 'server', 'routes', 'social.ts'), 'utf8'));
     const writes = [...service.matchAll(/\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(\w+)/gi)].map((m) => (m[2] as string).toLowerCase());
-    expect([...new Set(writes)].sort()).toEqual(['friendships', 'weekly_marks']); // the tables of this feature (the weekly board keeps each player's net worth at the start of the week: a number to compare with, no money moves)
+    // The tables of this feature: friendships, and weekly_marks (the weekly board keeps each player's net worth at the start of the week: a number to compare with, no money moves).
+    // cash_gifts is only a RECORD that the game itself gave a player cash (daily goals, docs/world.md §32) so the weekly board can leave it out of his growth; it is written in one
+    // place (`gave`), the money itself is moved by the goals, and nothing here moves money from one player to another.
+    expect([...new Set(writes)].sort()).toEqual(['cash_gifts', 'friendships', 'weekly_marks']);
+    expect(writes.filter((w) => w === 'cash_gifts')).toHaveLength(1);
     expect(service).not.toMatch(/cash_cents|wallets|positions|placeOrder|adjustCash/);
     expect(routes).not.toMatch(/\.db\b|trading\.|cash/);
   });

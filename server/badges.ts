@@ -102,6 +102,19 @@ const RULES: Record<string, Rule> = {
   chatterbox: () => 'SELECT user_id FROM chat_messages WHERE deleted_ms IS NULL GROUP BY user_id HAVING COUNT(*) >= 100',
   lessons_100: () => 'SELECT user_id FROM learn_progress WHERE lessons_done >= 100',
   wins_25: () => `SELECT user_id ${wonMatches} GROUP BY user_id HAVING COUNT(*) >= 25`,
+  // ---- the third batch (docs/world.md §31 and §32): daily goals, the streak and ranked 1v1
+  streak_3: () => 'SELECT user_id FROM streaks WHERE best >= 3',
+  streak_7: () => 'SELECT user_id FROM streaks WHERE best >= 7',
+  streak_14: () => 'SELECT user_id FROM streaks WHERE best >= 14',
+  streak_30: () => 'SELECT user_id FROM streaks WHERE best >= 30',
+  perfect_day: () => 'SELECT DISTINCT user_id FROM daily_bonus',
+  goals_50: () => 'SELECT user_id FROM daily_goal_done GROUP BY user_id HAVING COUNT(*) >= 50',
+  rank_silver: () => 'SELECT user_id FROM ranked_player WHERE best_tier >= 1',
+  rank_gold: () => 'SELECT user_id FROM ranked_player WHERE best_tier >= 2',
+  rank_platinum: () => 'SELECT user_id FROM ranked_player WHERE best_tier >= 3',
+  rank_diamond: () => 'SELECT user_id FROM ranked_player WHERE best_tier >= 4',
+  season_podium: () => 'SELECT DISTINCT user_id FROM ranked_season_results WHERE place <= 3',
+  season_champion: () => 'SELECT DISTINCT user_id FROM ranked_season_results WHERE place = 1',
 };
 
 /** One closed trade with at least this much profit is a Home Run: $500 (the same size the game calls a huge win). */

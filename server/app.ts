@@ -9,7 +9,10 @@ import { Admin } from './admin';
 import { DEFAULT_GLOBAL_DAILY, DEFAULT_PER_USER_DAILY, createAiClient, type AiClient } from './aiClient';
 import { Auth, AuthError, SESSION_COOKIE } from './auth';
 import { Calls } from './calls';
+import { Away } from './away';
 import { Challenges } from './challenges';
+import { Daily } from './daily';
+import { Ranked } from './ranked';
 import { Chat } from './chat';
 import { ChatPictures } from './chatPictures';
 import type { Config } from './config';
@@ -53,6 +56,7 @@ import { registerBadgeRoutes } from './routes/badges';
 import { registerCompanyPictureRoutes } from './routes/companyPictures';
 import { registerProfileRoutes } from './routes/profile';
 import { registerBillboardRoutes } from './routes/billboard';
+import { registerDailyRoutes } from './routes/daily';
 import { registerShopRoutes } from './routes/shop';
 import { registerCallRoutes } from './routes/calls';
 import { registerMessageRoutes } from './routes/messages';
@@ -85,6 +89,8 @@ export interface AppOptions {
   readonly bots?: boolean;
   /** For tests: how many milliseconds a player waits alone before a bot joins (default 10 000). */
   readonly botWaitMs?: number;
+  /** For tests: how long a player has to be away before the "while you were away" card is made (default 30 minutes). */
+  readonly awayMinMs?: number;
   /** The bots also trade in the main market with their own Career accounts (the game turns this on in main.ts; tests of other things leave it out). */
   readonly marketBots?: boolean;
   /** The fee on stock orders in Career, in basis points of the order's value (the game turns it on in main.ts with STOCK_FEE_BPS; tests of other things leave it at 0). */
@@ -273,6 +279,8 @@ export function createApp(options: AppOptions): App {
     onChange: (userId, order, what) => hub.publishTo(userId, 'limit', { what, order }),
   });
   limitStep = (tick) => limits.step(tick);
+  // Ranked 1v1: points for matches between two real players from the lobby; the match service settles them in the same transaction as the match.
+  const ranked = new Ranked({ db, now, log });
   const matches = new MatchService({
     db,
     world,
@@ -282,6 +290,7 @@ export function createApp(options: AppOptions): App {
     onChange: (userId, view) => hub.publishTo(userId, 'match', { match: view }),
     bots: options.bots === true,
     botWaitMs: options.botWaitMs,
+    ranked,
   });
   // Friends and the leaderboard. A player is told over his live stream when a request arrives, is accepted or a friend leaves.
   // Voice calls between two friends. Nothing is saved; the sound goes from browser to browser. A call ends the moment its two players stop being friends.
@@ -386,6 +395,27 @@ export function createApp(options: AppOptions): App {
     spent: () => social.invalidate(),
     isBanned: (userId) => auth.banOf(userId) !== null,
   });
+  // Daily goals with a streak: three goals a day, a little XP, cash and coins for each, and free looks at streak milestones. The cash is not growth on the weekly board.
+  const daily = new Daily({
+    db,
+    now,
+    log,
+    publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
+    gaveCash: (userId, cents) => social.gave(userId, cents, 'daily goals'),
+    shop,
+    refreshBadges: (userId) => {
+      badges.sweep(userId);
+    },
+  });
+  // "While you were away": a picture of the account is taken when a player's last page closes, and compared when he comes back after a while.
+  const away = new Away({ db, world, trading, social, daily, now, log, minAwayMs: options.awayMinMs });
+  hub.onUserGone = (userId) => {
+    try {
+      away.snapshot(userId);
+    } catch (error) {
+      log.warn('away', `Could not take the picture of player ${userId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   // Profile pictures (everybody sees them; the owner can remove any) and who is online.
   const profiles = new Profiles({
     db,
@@ -437,6 +467,9 @@ export function createApp(options: AppOptions): App {
     admin,
     launches,
     matches,
+    ranked,
+    daily,
+    away,
     social,
     challenges,
     chat,
@@ -477,6 +510,7 @@ export function createApp(options: AppOptions): App {
   registerProfileRoutes(router, services);
   registerShopRoutes(router, services);
   registerBillboardRoutes(router, services);
+  registerDailyRoutes(router, services);
   registerCompanyPictureRoutes(router, services);
   registerBadgeRoutes(router, services);
   registerLearnRoutes(router, services);
@@ -509,6 +543,11 @@ export function createApp(options: AppOptions): App {
       social.rollWeek();
     } catch (error) {
       log.error('social', `Weekly board update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
+      ranked.rollSeason();
+    } catch (error) {
+      log.error('ranked', `Ranked season update failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     try {
       calls.sweep();
@@ -626,6 +665,8 @@ export function createApp(options: AppOptions): App {
     }
   };
   let leaseTimer: ReturnType<typeof setInterval> | null = null;
+  // Daily goals: every 20 seconds, the players who have a page open are looked at, and a finished goal is paid at once.
+  let goalTimer: ReturnType<typeof setInterval> | null = null;
   return {
     services,
     marketBots,
@@ -655,6 +696,8 @@ export function createApp(options: AppOptions): App {
       badgeFirst.unref?.();
       badgeTimer = setInterval(sweepBadges, 45_000);
       badgeTimer.unref?.();
+      goalTimer = setInterval(() => daily.sweepMany(hub.userIds()), 20_000);
+      goalTimer.unref?.();
     },
     close() {
       world.stop();
@@ -663,6 +706,7 @@ export function createApp(options: AppOptions): App {
       if (purgeTimer) clearInterval(purgeTimer);
       if (badgeTimer) clearInterval(badgeTimer);
       if (badgeFirst) clearTimeout(badgeFirst);
+      if (goalTimer) clearInterval(goalTimer);
       if (leaseTimer) clearInterval(leaseTimer);
       try {
         leases.release(SERVER_LEASE);

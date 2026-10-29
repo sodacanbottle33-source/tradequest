@@ -11,5 +11,6 @@ export * from './newsText';
 export * from './fundamentals';
 export * from './newsgen';
 export * from './matchRules';
+export * from './rankedRules';
 export * from './memecoins';
 export type { MemeProfile } from './catalogData';

@@ -341,7 +341,7 @@ describe('what an old database keeps', () => {
         }
       });
       d.run("INSERT INTO users(username, display_name, pw_hash, role, created_ms) VALUES ('a', 'a', 'x', 'player', 1)");
-      expect(migrate(d)).toEqual([27, 28]);
+      expect(migrate(d)).toEqual([27, 28, 29]);
       for (const t of ['user_cosmetics', 'user_looks']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n).toBe(0);
       d.run("INSERT INTO user_cosmetics(user_id, item, bought_ms, price_cents) VALUES (1, 'c_sky', 5, 200000)");
       expect(() => d.run("INSERT INTO user_cosmetics(user_id, item, bought_ms, price_cents) VALUES (1, 'c_sky', 6, 200000)")).toThrow();

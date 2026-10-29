@@ -2,7 +2,7 @@
 // data: the server decides who has earned which badge (server/badges.ts has one rule for each id here), and the screens only show what the server says.
 // A badge is for fun. It gives no money and changes no price.
 
-export type BadgeGroup = 'trading' | 'launching' | 'social' | 'learning';
+export type BadgeGroup = 'trading' | 'launching' | 'social' | 'learning' | 'daily';
 
 /** 1 = bronze, 2 = silver, 3 = gold, 4 = diamond. A higher tier is harder to get, and is shown first next to a player's name. */
 export type BadgeTier = 1 | 2 | 3 | 4;
@@ -30,6 +30,7 @@ export const BADGE_GROUPS: readonly { readonly id: BadgeGroup; readonly label: s
   { id: 'launching', label: 'Launching' },
   { id: 'social', label: 'Friends and chat' },
   { id: 'learning', label: 'Learn and matches' },
+  { id: 'daily', label: 'Daily goals and ranked' },
 ];
 
 export const TIER_NAMES: readonly string[] = ['', 'Bronze', 'Silver', 'Gold', 'Diamond'];
@@ -86,6 +87,19 @@ export const BADGES: readonly BadgeDef[] = [
   { id: 'first_win', group: 'learning', tier: 2, icon: '🏅', name: 'Victory!', how: 'Win a 1v1 match.' },
   { id: 'wins_5', group: 'learning', tier: 3, icon: '🥇', name: 'Champion', how: 'Win 5 1v1 matches.' },
   { id: 'wins_25', group: 'learning', tier: 4, icon: '🏆', name: 'Unbeatable', how: 'Win 25 1v1 matches.' },
+  // ---- daily goals and ranked
+  { id: 'streak_3', group: 'daily', tier: 1, icon: '🕯️', name: 'Warming Up', how: 'Finish a daily goal 3 days in a row.' },
+  { id: 'streak_7', group: 'daily', tier: 2, icon: '🔥', name: 'On Fire', how: 'Keep a daily-goal streak of 7 days.' },
+  { id: 'streak_14', group: 'daily', tier: 3, icon: '☄️', name: 'Blazing', how: 'Keep a daily-goal streak of 14 days.' },
+  { id: 'streak_30', group: 'daily', tier: 4, icon: '🌋', name: 'Unstoppable', how: 'Keep a daily-goal streak of 30 days.' },
+  { id: 'perfect_day', group: 'daily', tier: 1, icon: '✅', name: 'Perfect Day', how: 'Finish all 3 daily goals in one day.' },
+  { id: 'goals_50', group: 'daily', tier: 3, icon: '🎯', name: 'Goal Getter', how: 'Finish 50 daily goals.' },
+  { id: 'rank_silver', group: 'daily', tier: 2, icon: '🥈', name: 'Silver League', how: 'Reach Silver in ranked 1v1.' },
+  { id: 'rank_gold', group: 'daily', tier: 3, icon: '🥇', name: 'Gold League', how: 'Reach Gold in ranked 1v1.' },
+  { id: 'rank_platinum', group: 'daily', tier: 3, icon: '💠', name: 'Platinum League', how: 'Reach Platinum in ranked 1v1.' },
+  { id: 'rank_diamond', group: 'daily', tier: 4, icon: '💎', name: 'Diamond League', how: 'Reach Diamond in ranked 1v1.' },
+  { id: 'season_podium', group: 'daily', tier: 3, icon: '🎖️', name: 'Podium Finish', how: 'Finish a ranked season in the top 3 (at least 5 ranked matches).' },
+  { id: 'season_champion', group: 'daily', tier: 4, icon: '🌟', name: 'Season Champion', how: 'Finish a ranked season in 1st place (at least 5 ranked matches).' },
 ];
 
 const BY_ID = new Map(BADGES.map((b) => [b.id, b]));

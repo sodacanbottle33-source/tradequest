@@ -22,6 +22,9 @@ import type { Logger } from './log';
 import type { Messages } from './messages';
 import type { Renames } from './rename';
 import type { Billboard } from './billboard';
+import type { Away } from './away';
+import type { Daily } from './daily';
+import type { Ranked } from './ranked';
 import type { Shop } from './cosmetics';
 import type { CompanyPictures } from './companyPictures';
 import type { Profiles } from './profile';
@@ -57,6 +60,12 @@ export interface Services {
   /** Stocks and memecoins any player can launch, and the rug pull (server/launch.ts). */
   readonly launches: Launches;
   readonly matches: MatchService;
+  /** The ranked 1v1 ladder: points, tiers and seasons (server/ranked.ts). */
+  readonly ranked: Ranked;
+  /** Daily goals, the streak and the free looks for it (server/daily.ts). */
+  readonly daily: Daily;
+  /** "While you were away": what changed since the player's last page closed (server/away.ts). */
+  readonly away: Away;
   /** Friends, the player list and the richest-players leaderboard (server/social.ts). */
   readonly social: Social;
   /** Friend 1v1 challenges (server/challenges.ts). */
