@@ -60,6 +60,15 @@ export function registerLobbyRoutes(router: Router, s: Services): void {
     return guard(() => ({ match: matches.leave(user.id) }));
   });
 
+  // "Rematch": after a finished match between two real players, each can ask the other to play again (docs/world.md §35). When both have asked, a closed lobby of the two opens.
+  router.post('/api/lobby/rematch', async (ctx) => {
+    const user = ctx.requireUser();
+    limited(user.id);
+    const b = await ctx.body();
+    if (typeof b.matchId !== 'number' || !Number.isInteger(b.matchId)) throw new HttpError(400, 'bad_request', 'matchId must be the number of the match you just played.');
+    return guard(() => ({ match: matches.rematch(user.id, b.matchId as number) }));
+  });
+
   router.post('/api/lobby/dismiss', (ctx) => {
     const user = ctx.requireUser();
     limited(user.id);

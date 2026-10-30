@@ -1,7 +1,8 @@
-// The Shop: things to wear (docs/world.md §29) and things for your own screen (§30).
+// The Shop: things to wear (docs/world.md §29), banners and pets (§34) and things for your own screen (§30).
 //
-// A player can buy things that change how he looks to other players: the colour of his name, a glow around it, a ring around his picture and a title under
-// his name. He can also buy things only HE sees: the colours and shape of the candles, the background and an effect on his price chart, and the style of the party
+// A player can buy things that change how he looks to other players: the colour of his name, a glow around it, a ring around his picture, a title under
+// his name, a banner behind his name on his profile card and a pet next to his name. (A pet grows with the best streak of daily goals he has ever had; the growth is
+// worked out here from that number and is never stored.) A few looks cannot be bought at all: ranked play and the weekly team race give them (`award`). He can also buy things only HE sees: the colours and shape of the candles, the background and an effect on his price chart, and the style of the party
 // after a win. The list, with the kind, the rarity and the price of each, is src/shared/cosmeticCatalog.ts. The rules here:
 //   • The price comes out of the cash of his Career account and is gone (like the cost of a new username). Spending therefore lowers his net worth, so it lowers his
 //     place on the leaderboard and his growth on the weekly board. Nothing here gives money back and nothing is ever refunded.
@@ -14,14 +15,15 @@
 // What a player has on his own screen is told to nobody but him (GET /api/gear, and the "gear" event of the live stream to his own other pages).
 
 import { badgeById } from '../src/shared/badgeCatalog';
-import { ALL_SLOT_IDS, COSMETICS, cleanGear, cleanLook, cosmeticById, gearIsEmpty, isGearSlot, isSlot, priceOf, priceText, type Gear, type GearSlot, type Look, type Slot } from '../src/shared/cosmeticCatalog';
+import { ALL_SLOT_IDS, COSMETICS, cleanGear, cleanLook, cosmeticById, gearIsEmpty, isGearSlot, isLookSlot, lookIsEmpty, priceOf, priceText, type Gear, type GearSlot, type Look, type LookSlot } from '../src/shared/cosmeticCatalog';
+import { petStageOf } from '../src/shared/petCatalog';
 import type { User } from './auth';
 import type { Logger } from './log';
 import type { Db } from './sqlite';
 
 export class ShopError extends Error {
   constructor(
-    readonly code: 'bad_request' | 'no_such_item' | 'already_owned' | 'not_owned' | 'wrong_place' | 'badge_needed' | 'not_enough_cash' | 'cannot_buy',
+    readonly code: 'bad_request' | 'no_such_item' | 'already_owned' | 'not_owned' | 'wrong_place' | 'badge_needed' | 'not_enough_cash' | 'cannot_buy' | 'not_for_sale',
     message: string,
     readonly status: number,
     readonly extra?: Record<string, unknown>,
@@ -68,6 +70,8 @@ interface LookRow {
   glow: string | null;
   frame: string | null;
   title: string | null;
+  banner: string | null;
+  pet: string | null;
 }
 
 interface GearRow {
@@ -83,9 +87,18 @@ function gearOfRow(row: GearRow | undefined): Gear {
   return cleanGear({ candles: row.candles ?? undefined, shape: row.shape ?? undefined, backdrop: row.backdrop ?? undefined, effect: row.effect ?? undefined, win: row.win ?? undefined });
 }
 
-function lookOfRow(row: LookRow | undefined): Look {
+/** `best` is the best streak of daily goals the player ever had; it decides how far his pet has grown. */
+function lookOfRow(row: LookRow | undefined, best: number | null | undefined): Look {
   if (!row) return {};
-  return cleanLook({ color: row.color ?? undefined, glow: row.glow ?? undefined, frame: row.frame ?? undefined, title: row.title ?? undefined });
+  return cleanLook({
+    color: row.color ?? undefined,
+    glow: row.glow ?? undefined,
+    frame: row.frame ?? undefined,
+    title: row.title ?? undefined,
+    banner: row.banner ?? undefined,
+    pet: row.pet ?? undefined,
+    petStage: petStageOf(best ?? 0),
+  });
 }
 
 export class Shop {
@@ -101,7 +114,10 @@ export class Shop {
   }
 
   lookOf(userId: number): Look {
-    return lookOfRow(this.d.db.get<LookRow>('SELECT color, glow, frame, title FROM user_looks WHERE user_id = ?', userId));
+    return lookOfRow(
+      this.d.db.get<LookRow>('SELECT color, glow, frame, title, banner, pet FROM user_looks WHERE user_id = ?', userId),
+      this.d.db.get<{ best: number }>('SELECT best FROM streaks WHERE user_id = ?', userId)?.best,
+    );
   }
 
   /** What a player has on his own screen. */
@@ -111,13 +127,14 @@ export class Shop {
 
   /** Everybody who wears anything: username -> what he wears. */
   looks(): Record<string, Look> {
-    const rows = this.d.db.all<LookRow & { username: string }>(
-      'SELECT u.username AS username, l.color, l.glow, l.frame, l.title FROM user_looks l JOIN users u ON u.id = l.user_id ORDER BY u.id',
+    const rows = this.d.db.all<LookRow & { username: string; best: number | null }>(
+      `SELECT u.username AS username, l.color, l.glow, l.frame, l.title, l.banner, l.pet, s.best AS best
+         FROM user_looks l JOIN users u ON u.id = l.user_id LEFT JOIN streaks s ON s.user_id = l.user_id ORDER BY u.id`,
     );
     const out: Record<string, Look> = {};
     for (const r of rows) {
-      const look = lookOfRow(r);
-      if (look.color !== undefined || look.glow !== undefined || look.frame !== undefined || look.title !== undefined) out[r.username] = look;
+      const look = lookOfRow(r, r.best);
+      if (!lookIsEmpty(look)) out[r.username] = look;
     }
     return out;
   }
@@ -135,6 +152,7 @@ export class Shop {
     if (typeof rawItem !== 'string') throw new ShopError('bad_request', 'item must be the id of something in the Shop.', 400);
     const def = cosmeticById(rawItem);
     if (!def) throw new ShopError('no_such_item', 'There is nothing like that in the Shop.', 404);
+    if (def.earn !== undefined) throw new ShopError('not_for_sale', `${def.name} cannot be bought. ${def.how ?? 'It is earned.'}`, 403, { how: def.how ?? null });
     const price = priceOf(def);
     const now = this.d.now();
     // A badge he earned a moment ago counts: look for new ones before checking (only when this thing needs one).
@@ -195,6 +213,30 @@ export class Shop {
     return this.view(me);
   }
 
+  /**
+   * Gives an EARNED look (ranked play, the weekly team race: src/shared/cosmeticCatalog.ts, `earn`) to a player by his id. Unlike `give` it does not put the thing on (a
+   * player may like his look as it is) and it does not complain when he already has it: it just says whether it was new. Computer players and banned names are not skipped
+   * here; the caller decides who has earned what. Nothing is taken from his cash.
+   */
+  award(userId: number, rawItem: string, reason: string): boolean {
+    const def = cosmeticById(rawItem);
+    if (!def || this.isBot(userId)) return false;
+    const made = this.d.db.run('INSERT OR IGNORE INTO user_cosmetics(user_id, item, bought_ms, price_cents) VALUES (?, ?, ?, 0)', userId, def.id, this.d.now());
+    if (made.changes !== 1) return false;
+    const who = this.d.db.get<{ username: string }>('SELECT username FROM users WHERE id = ?', userId)?.username ?? String(userId);
+    this.d.log.info('account', `${who} earned "${def.name}" (${reason}).`);
+    return true;
+  }
+
+  /** Tells every page what a player wears now, without changing it. Used when his pet has grown (his best streak crossed a growth step), so the others see it at once. */
+  refreshLook(userId: number): void {
+    const who = this.d.db.get<{ username: string }>('SELECT username FROM users WHERE id = ?', userId);
+    if (!who) return;
+    const look = this.lookOf(userId);
+    if (look.pet === undefined) return;
+    this.d.publish('looks', { username: who.username, look });
+  }
+
   /** The ids of the things a player owns. */
   ownedBy(userId: number): string[] {
     return this.d.db.all<{ item: string }>('SELECT item FROM user_cosmetics WHERE user_id = ?', userId).map((r) => r.item);
@@ -227,14 +269,14 @@ export class Shop {
   }
 
   /** Writes one place, whichever group it belongs to. */
-  private put(userId: number, slot: Slot | GearSlot, item: string | null, now: number): void {
+  private put(userId: number, slot: LookSlot | GearSlot, item: string | null, now: number): void {
     if (isGearSlot(slot)) this.wearGear(userId, slot, item, now);
-    else if (isSlot(slot)) this.wear(userId, slot, item, now);
+    else if (isLookSlot(slot)) this.wear(userId, slot, item, now);
   }
 
   /** Writes the one place of a player's look (inside a transaction). A player who then wears nothing has no row. */
-  private wear(userId: number, slot: Slot, item: string | null, now: number): void {
-    // `slot` is one of four fixed words (checked by isSlot / the catalog), never text from a player, so it is safe in the statement.
+  private wear(userId: number, slot: LookSlot, item: string | null, now: number): void {
+    // `slot` is one of six fixed words (checked by isLookSlot / the catalog), never text from a player, so it is safe in the statement.
     this.d.db.run(
       `INSERT INTO user_looks(user_id, ${slot}, updated_ms) VALUES (?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET ${slot} = excluded.${slot}, updated_ms = excluded.updated_ms`,
@@ -242,7 +284,7 @@ export class Shop {
       item,
       now,
     );
-    this.d.db.run('DELETE FROM user_looks WHERE user_id = ? AND color IS NULL AND glow IS NULL AND frame IS NULL AND title IS NULL', userId);
+    this.d.db.run('DELETE FROM user_looks WHERE user_id = ? AND color IS NULL AND glow IS NULL AND frame IS NULL AND title IS NULL AND banner IS NULL AND pet IS NULL', userId);
   }
 
   /** Writes the one place of a player's own-screen gear (inside a transaction). A player who then has nothing on has no row. */
@@ -267,7 +309,6 @@ export class Shop {
   /** Tells every page what this player wears now (null = nothing). */
   private announce(me: User): void {
     const look = this.lookOf(me.id);
-    const empty = look.color === undefined && look.glow === undefined && look.frame === undefined && look.title === undefined;
-    this.d.publish('looks', { username: me.username, look: empty ? null : look });
+    this.d.publish('looks', { username: me.username, look: lookIsEmpty(look) ? null : look });
   }
 }

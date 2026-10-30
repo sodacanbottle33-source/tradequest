@@ -12,7 +12,9 @@ import { ChatScreen } from './ChatScreen';
 import { CompanyView } from './CompanyView';
 import { BillboardStrip } from './BillboardStrip';
 import { DailyQuoteCard } from './DailyQuoteCard';
+import { EventsStrip } from './EventsStrip';
 import { clockTime } from './format';
+import { predictOpen, usePredict } from './extrasStore';
 import { goalsWaiting } from './goalUtil';
 import { useGoals } from './goalsStore';
 import { GoalsScreen } from './GoalsScreen';
@@ -33,11 +35,12 @@ import { Toasts } from './Toasts';
 import { ProfileCard } from './ProfileCard';
 import { ProfileMenu } from './ProfileMenu';
 import { ShopScreen } from './ShopScreen';
+import { TeamsScreen } from './TeamsScreen';
 import { BadgeUnlockLayer } from './BadgeUnlock';
 import { WinBurstLayer } from './WinBurst';
 import { sharedStore, useShared } from './store';
 
-type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'goals' | 'learn' | 'players' | 'chat' | 'messages' | 'shop' | 'account';
+type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'goals' | 'learn' | 'players' | 'teams' | 'chat' | 'messages' | 'shop' | 'account';
 const CAREER_TABS: [CareerTab, string][] = [
   ['market', 'Market'],
   ['coins', 'Memecoins'],
@@ -46,6 +49,7 @@ const CAREER_TABS: [CareerTab, string][] = [
   ['launch', 'Launch'],
   ['learn', 'Learn'],
   ['players', 'Players'],
+  ['teams', 'Teams'],
   ['chat', 'Chat'],
   ['messages', 'Messages'],
   ['shop', 'Shop'],
@@ -129,8 +133,9 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
     if (mode === 'mod' && s.authChecked && !isMod) onMode('career');
   }, [mode, s.authChecked, isMod, onMode]);
 
-  // A friend said yes (or you did): the lobby of the two of you opens on the 1v1 screen once, wherever you were.
-  const friendLobbyId = s.match?.friendMatch && s.match.phase === 'ready_check' ? s.match.id : 0;
+  // A friend said yes (or you did), or both of you asked for a rematch: the lobby of the two of you opens on the 1v1 screen once, wherever you were.
+  // A friend match, and a rematch (docs/world.md §35), open the lobby the same way: the first time it is waiting for the player's Ready.
+  const friendLobbyId = s.match && s.match.friendMatch && s.match.phase === 'ready_check' ? s.match.id : s.match && s.match.isRematch && s.match.phase === 'ready_check' ? s.match.id : 0;
   const openedLobby = useRef(0);
   useEffect(() => {
     if (friendLobbyId !== 0 && openedLobby.current !== friendLobbyId) {
@@ -147,7 +152,9 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
   const requests = s.friends?.incoming.length ?? 0;
   // Daily goals still open, plus free looks waiting to be chosen: shown as a number on the Goals tab.
   const { view: goalsView } = useGoals();
-  const goalsOpen = goalsWaiting(goalsView);
+  // Today's daily prediction counts as one more thing to do until the guess is made.
+  const { view: predictView, nowMs: predictNow } = usePredict();
+  const goalsOpen = goalsWaiting(goalsView) + (predictOpen(predictView, predictNow) ? 1 : 0);
   // Chat messages from other players that arrived while the Chat tab was not open.
   const unread = s.chat?.unread ?? 0;
   // Private messages not read yet, plus message requests and group invitations waiting for an answer.
@@ -233,7 +240,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
 
       {friendLobbyId !== 0 && shown !== 'battle' && (
         <p className="notice info battle-notice" role="status" data-testid="friend-lobby-notice">
-          Your friend match is waiting for you to press Ready.{' '}
+          Your {s.match?.isRematch ? 'rematch' : 'friend match'} is waiting for you to press Ready.{' '}
           <button type="button" className="link-btn" onClick={() => onMode('battle')}>
             Go to the match
           </button>
@@ -302,6 +309,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
           ) : (
             <>
               <BillboardStrip onOpen={openCompany} onBook={() => setCareerTab('launch')} />
+              {s.user && <EventsStrip onOpen={openCompany} />}
               {careerTab === 'market' && <DailyQuoteCard />}
               <MarketScreen key={careerTab} kind={careerTab === 'coins' ? 'coins' : 'stocks'} onOpen={openCompany} selected={ticker} />
             </>
@@ -311,6 +319,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
         {shown === 'career' && careerTab === 'goals' && <GoalsScreen />}
         {shown === 'career' && careerTab === 'learn' && <LearnScreen />}
         {shown === 'career' && careerTab === 'players' && <PlayersScreen />}
+        {shown === 'career' && careerTab === 'teams' && <TeamsScreen />}
         {shown === 'career' && careerTab === 'chat' && <ChatScreen />}
         {shown === 'career' && careerTab === 'messages' && <MessagesScreen />}
         {shown === 'career' && careerTab === 'shop' && <ShopScreen />}

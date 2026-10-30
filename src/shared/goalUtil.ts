@@ -118,6 +118,8 @@ const KIND_NAMES: Record<AnySlot, string> = {
   glow: 'Name glow',
   frame: 'Picture frame',
   title: 'Title',
+  banner: 'Profile banner',
+  pet: 'Pet',
   candles: 'Candle colours',
   shape: 'Candle shape',
   backdrop: 'Chart background',

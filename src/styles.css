@@ -5112,6 +5112,547 @@ code {
   @keyframes goal-done { from { transform: scale(0.98); } }
 }
 
+/* ---------- Update 4: banners, pets, earned looks, the rematch button, teams, the daily prediction and market events (docs/world.md §34 to §39) ---------- */
+/* Looks only, drawn with CSS (no picture files). A banner is `.pbanner` plus one `.cos-bn_…` class; the Shop sample, the profile card and every other place use the same classes.
+   A glow is a filter (it also works on gradient names), and every animation sits in the one no-preference block at the end of this part, so a player who asked for less motion sees still looks. */
+
+/* profile banners */
+.pbanner {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(135deg, #334155, #0f172a);
+  background-size: 100% 100%;
+}
+.pbanner.shop-banner {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 12px;
+}
+.pbanner .pname {
+  color: #fff;
+  font-size: 16px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85));
+}
+.profile-banner {
+  height: 76px;
+  margin: 6px 0 0;
+  border-radius: 10px;
+}
+.profile-top.has-banner {
+  margin-top: -34px;
+  align-items: flex-start;
+}
+.profile-top.has-banner .profile-pic {
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px var(--panel);
+}
+.profile-top.has-banner .profile-who {
+  margin-top: 38px;
+}
+.pbanner.cos-bn_dawn { background: linear-gradient(90deg, #fda4af, #fcd34d 52%, #fef3c7); }
+.pbanner.cos-bn_ocean {
+  background:
+    repeating-linear-gradient(100deg, rgba(255, 255, 255, 0.14) 0 6px, transparent 6px 20px),
+    linear-gradient(180deg, #38bdf8, #1e3a8a);
+}
+.pbanner.cos-bn_pine {
+  background:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.22) 0 10px, transparent 10px 26px),
+    linear-gradient(180deg, #166534, #052e16);
+}
+.pbanner.cos-bn_sunset { background: linear-gradient(180deg, #fb923c, #db2777 55%, #4c1d95); }
+.pbanner.cos-bn_circuit {
+  background:
+    linear-gradient(rgba(74, 222, 128, 0.28) 1px, transparent 1px) 0 0 / 16px 16px,
+    linear-gradient(90deg, rgba(74, 222, 128, 0.28) 1px, transparent 1px) 0 0 / 16px 16px,
+    radial-gradient(circle at 70% 40%, rgba(74, 222, 128, 0.35), transparent 40%),
+    #052e16;
+}
+.pbanner.cos-bn_stripes {
+  background: repeating-linear-gradient(90deg, #16a34a 0 9px, #0b0f14 9px 13px, #dc2626 13px 22px, #0b0f14 22px 26px);
+}
+.pbanner.cos-bn_aurora {
+  background: linear-gradient(100deg, #0f172a, #065f46 28%, #4f46e5 56%, #a855f7 80%, #0f172a);
+  background-size: 200% 100%;
+}
+.pbanner.cos-bn_galaxy {
+  background:
+    radial-gradient(1.5px 1.5px at 12% 28%, #fff, transparent),
+    radial-gradient(1px 1px at 33% 70%, #e0e7ff, transparent),
+    radial-gradient(1.5px 1.5px at 52% 22%, #fff, transparent),
+    radial-gradient(1px 1px at 68% 62%, #c7d2fe, transparent),
+    radial-gradient(1.5px 1.5px at 86% 30%, #fff, transparent),
+    radial-gradient(ellipse at 30% 50%, rgba(168, 85, 247, 0.45), transparent 60%),
+    linear-gradient(120deg, #0b0b2b, #2e1065);
+}
+.pbanner.cos-bn_lava {
+  background: linear-gradient(90deg, #7f1d1d, #ea580c, #facc15, #ea580c, #7f1d1d);
+  background-size: 200% 100%;
+}
+.pbanner.cos-bn_vault {
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.18) 0 8px, transparent 8px 20px),
+    linear-gradient(135deg, #fde68a, #f59e0b 50%, #92400e);
+  border-color: rgba(252, 211, 77, 0.7);
+}
+.pbanner.cos-bn_champion {
+  background: repeating-linear-gradient(90deg, #14532d 0 14px, #fcd34d 14px 18px, #166534 18px 32px, #fcd34d 32px 36px);
+  border-color: rgba(252, 211, 77, 0.7);
+}
+.pbanner.cos-bn_library {
+  background:
+    repeating-linear-gradient(0deg, #451a03 0 3px, transparent 3px 26px),
+    repeating-linear-gradient(90deg, #78350f 0 12px, #92400e 12px 16px, #b45309 16px 22px, #451a03 22px 24px);
+  border-color: rgba(180, 83, 9, 0.8);
+}
+.pbanner.cos-bn_lg_gold {
+  background: linear-gradient(135deg, #fef08a, #f59e0b 45%, #b45309 75%, #fde68a);
+  border-color: rgba(252, 211, 77, 0.8);
+}
+.pbanner.cos-bn_lg_plat {
+  background: linear-gradient(135deg, #f1f5f9, #67e8f9 40%, #94a3b8 70%, #e2e8f0);
+  border-color: rgba(165, 243, 252, 0.8);
+}
+.pbanner.cos-bn_lg_diamond {
+  background:
+    radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.85), transparent 28%),
+    radial-gradient(circle at 75% 65%, rgba(255, 255, 255, 0.55), transparent 24%),
+    linear-gradient(135deg, #67e8f9, #3b82f6 50%, #1e3a8a);
+  border-color: rgba(186, 230, 253, 0.9);
+}
+.pbanner.cos-bn_season {
+  background:
+    radial-gradient(circle at 50% 120%, rgba(252, 211, 77, 0.65), transparent 60%),
+    linear-gradient(135deg, #581c87, #1e1b4b 55%, #0f172a);
+  border-color: rgba(252, 211, 77, 0.85);
+}
+.pbanner.cos-bn_team {
+  background: repeating-linear-gradient(135deg, #1d4ed8 0 14px, #1e3a8a 14px 28px);
+  border-color: rgba(252, 211, 77, 0.8);
+}
+.pbanner.cos-bn_lg_gold .pname,
+.pbanner.cos-bn_lg_plat .pname,
+.pbanner.cos-bn_dawn .pname,
+.pbanner.cos-bn_vault .pname { color: #1c1917; filter: none; }
+
+/* pets: a small picture next to the name, and in the Shop the egg and the four forms it grows into */
+.pname-pet {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25em;
+  min-width: 0;
+  max-width: 100%;
+}
+.ppet {
+  flex: none;
+  font-size: 0.95em;
+  line-height: 1;
+  cursor: default;
+}
+.pet-sample {
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  line-height: 1;
+}
+.pet-form {
+  display: inline-block;
+  opacity: 0.55;
+}
+.pet-stage-0 { font-size: 16px; }
+.pet-stage-1 { font-size: 18px; }
+.pet-stage-2 { font-size: 21px; }
+.pet-stage-3 { font-size: 25px; opacity: 0.8; }
+.pet-stage-4 { font-size: 30px; opacity: 1; }
+.pet-now {
+  display: block;
+  font-size: 12px;
+}
+.shop-earned .shop-item {
+  border-style: dashed;
+}
+.shop-earned .shop-lock {
+  font-size: 12px;
+}
+
+/* earned picture rings (the ranked tiers and the season champion) */
+.pfp-frame.cos-f_lg_gold { --ring: linear-gradient(135deg, #fef08a, #eab308 45%, #a16207 75%, #fde047); filter: drop-shadow(0 0 3px rgba(250, 204, 21, 0.75)); }
+.pfp-frame.cos-f_lg_plat {
+  --ring: conic-gradient(#f1f5f9, #67e8f9, #94a3b8, #e2e8f0, #a5f3fc, #f1f5f9);
+  filter: drop-shadow(0 0 4px rgba(103, 232, 249, 0.75));
+}
+.pfp-frame.cos-f_lg_diamond {
+  --ring: conic-gradient(#e0f2fe, #38bdf8, #ffffff, #3b82f6, #bae6fd, #ffffff, #e0f2fe);
+  filter: drop-shadow(0 0 5px rgba(56, 189, 248, 0.9));
+}
+.pfp-frame.cos-f_lg_diamond::after { content: '💠'; top: calc(var(--s) * -0.16); right: calc(var(--s) * -0.18); }
+.pfp-frame.cos-f_season {
+  --ring: conic-gradient(#fde047, #7e22ce, #fef08a, #a855f7, #f59e0b, #fde047);
+  filter: drop-shadow(0 0 5px rgba(250, 204, 21, 0.85));
+}
+.pfp-frame.cos-f_season::after { content: '⭐'; top: calc(var(--s) * -0.16); right: calc(var(--s) * -0.18); }
+
+/* the team chip on a profile card, and the trophy room */
+.team-chip {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 184, 61, 0.55);
+  font-size: 12px;
+  color: var(--accent);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trophy-room h3 {
+  margin: 14px 0 8px;
+}
+.trophy-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.trophy-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 13px;
+}
+.trophy-icon {
+  flex: none;
+  font-size: 16px;
+  line-height: 1.2;
+}
+.trophy-facts {
+  margin-top: 12px;
+  margin-bottom: 0;
+}
+
+/* the rematch button after a match */
+.rematch-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.rematch-offer[data-state='asked'] {
+  border-color: var(--primary);
+}
+.rematch-clock {
+  font-size: 13px;
+}
+.rematch-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+/* the daily prediction */
+.predict-card h3 {
+  margin: 0 0 8px;
+}
+.predict-stock {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.predict-ticker {
+  font-size: 22px;
+  letter-spacing: 0.03em;
+}
+.predict-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.predict-price {
+  margin-left: auto;
+  font-size: 20px;
+  font-weight: 700;
+}
+.predict-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.predict-buttons .btn {
+  flex: 1;
+  min-height: 44px;
+  font-weight: 700;
+}
+.predict-up {
+  background: var(--up);
+  border-color: var(--up);
+  color: #04130a;
+}
+.predict-down {
+  border-color: var(--down);
+  color: var(--down);
+}
+.predict-mine {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--primary);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.predict-last {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--muted);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 13px;
+}
+.predict-last.is-win { border-left-color: var(--up); }
+.predict-last.is-loss { border-left-color: var(--down); }
+.predict-last.is-draw { border-left-color: var(--accent); }
+.predict-record {
+  margin: 8px 0 0;
+}
+
+/* market events: the strip at the top of the Market page */
+.events-strip {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+.events-strip.is-live {
+  border-color: var(--accent);
+  background: linear-gradient(90deg, rgba(245, 184, 61, 0.12), var(--panel) 70%);
+}
+.event-live,
+.event-next {
+  margin: 0;
+}
+.event-icon {
+  font-size: 1.15em;
+}
+.event-moves {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-left: 4px;
+  vertical-align: baseline;
+}
+.event-move {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+.event-recent {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.event-live + .event-recent,
+.event-next + .event-recent {
+  margin-top: 8px;
+}
+
+/* teams */
+.teams-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 860px;
+}
+.team-head h2,
+.team-mine h3,
+.team-new h3,
+.team-invites h3,
+.team-race h3,
+.team-last h3 {
+  margin: 0 0 8px;
+}
+.team-tag {
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--accent);
+}
+.team-score {
+  margin: 4px 0 10px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.team-members {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 0;
+}
+.team-member {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.team-leader {
+  color: var(--accent);
+}
+.team-gain {
+  margin-left: auto;
+  font-size: 13px;
+}
+.team-member-act {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.team-leader-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin: 10px 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+.team-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.team-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 13px;
+}
+.team-form input[type='text'] {
+  min-width: 0;
+  width: 220px;
+  max-width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.team-form input[type='text']:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.team-form .team-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+}
+.team-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.team-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+.team-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.team-row.is-mine {
+  border-color: var(--primary);
+}
+.team-row-act {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+}
+.team-rank {
+  flex: none;
+  min-width: 2.6em;
+  font-weight: 700;
+}
+.team-who {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.team-score-cell {
+  flex: none;
+  margin-left: auto;
+  font-weight: 700;
+}
+.team-race-list .team-score-cell + .btn {
+  flex: none;
+}
+
+@media (max-width: 600px) {
+  .profile-banner { height: 64px; }
+  .profile-top.has-banner { margin-top: -30px; }
+  .profile-top.has-banner .profile-who { margin-top: 34px; }
+  .predict-price { margin-left: 0; flex-basis: 100%; }
+  .team-form input[type='text'] { width: 100%; }
+  .team-form label { flex: 1 1 100%; }
+  .team-gain,
+  .team-score-cell { margin-left: 0; }
+  .team-row-act { margin-left: 0; }
+  .event-moves { display: flex; margin-left: 0; margin-top: 4px; }
+  .rematch-offer .btn { flex: 1; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pbanner.cos-bn_aurora { animation: look-drift 9s linear infinite alternate; }
+  .pbanner.cos-bn_lava { animation: look-drift 6s linear infinite alternate; }
+  @keyframes look-drift { to { background-position: 100% 0; } }
+  .pfp-frame.cos-f_lg_plat::before,
+  .pfp-frame.cos-f_lg_diamond::before,
+  .pfp-frame.cos-f_season::before { animation: cos-spin 7s linear infinite; }
+  .pfp-frame.cos-f_lg_diamond::after,
+  .pfp-frame.cos-f_season::after { animation: cos-twinkle 2.4s ease-in-out infinite; }
+  .ppet { display: inline-block; animation: pet-hop 3.2s ease-in-out infinite; transform-origin: 50% 100%; }
+  @keyframes pet-hop { 0%, 80%, 100% { transform: translateY(0); } 90% { transform: translateY(-3px); } }
+  .rematch-offer[data-state='asked'] { animation: rematch-nudge 1.8s ease-in-out infinite; }
+  @keyframes rematch-nudge { 50% { box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.35); } }
+  .events-strip.is-live { animation: event-glow 2.6s ease-in-out infinite; }
+  @keyframes event-glow { 50% { box-shadow: 0 0 12px rgba(245, 184, 61, 0.35); } }
+  .predict-last { animation: away-in 0.3s ease-out both; }
+  .team-row,
+  .team-member { transition: border-color 0.15s ease; }
+}
+
 /* ---------- Trade moments, loading shimmer, smooth screens and market marks ---------- */
 /* The check mark next to the answer to an order that went through (src/shared/FillCheck.tsx). */
 .notice.fill-ok {

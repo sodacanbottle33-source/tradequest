@@ -334,7 +334,7 @@ describe('what an old database keeps', () => {
       d.run("INSERT INTO users(username, display_name, pw_hash, role, created_ms) VALUES ('a', 'a', 'x', 'player', 1), ('b', 'b', 'x', 'player', 1)");
       d.run("INSERT INTO conversations(kind, title, created_by, created_ms, last_ms) VALUES ('group', 'old group', 1, 5, 5)");
       d.run("INSERT INTO private_messages(conversation_id, user_id, body, created_ms) VALUES (1, 1, 'old words', 5)");
-      expect(migrate(d)).toEqual([26, 27, 28, 29]);
+      expect(migrate(d)).toEqual([26, 27, 28, 29, 30]);
       expect(d.get<{ visibility: string; title: string }>('SELECT visibility, title FROM conversations WHERE id = 1')).toEqual({ visibility: 'private', title: 'old group' });
       expect(d.get<{ body: string }>('SELECT body FROM private_messages WHERE id = 1')?.body).toBe('old words');
       expect(() => d.run("UPDATE conversations SET visibility = 'secret' WHERE id = 1")).toThrow();

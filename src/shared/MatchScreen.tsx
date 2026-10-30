@@ -8,6 +8,7 @@ import { EarningsScreen } from './EarningsScreen';
 import { formatCents, formatClock } from './format';
 import { MarketScreen } from './MarketScreen';
 import { NewsScreen } from './NewsScreen';
+import { offerClock, rematchState, rematchText } from './extrasUtil';
 import { notRankedReason, pointsChangeText, tierLabel, tierReached } from './rankedUtil';
 import { sharedStore, useShared } from './store';
 import type { Account, Match } from './types';
@@ -78,6 +79,7 @@ function Results({ match, onDismiss, busy }: { match: Match; onDismiss: () => vo
         </div>
       )}
       {match.phase === 'finished' && <RankedResult match={match} />}
+      {match.phase === 'finished' && <RematchOffer match={match} otherName={other?.name ?? 'your opponent'} busy={busy} />}
       <p className="hint">
         Match results are saved once. Your virtual currency is now <strong data-testid="wallet">{formatCents(walletCents)}</strong>. Your Career account was not touched.
       </p>
@@ -85,6 +87,61 @@ function Results({ match, onDismiss, busy }: { match: Match; onDismiss: () => vo
         Close
       </button>
     </section>
+  );
+}
+
+/**
+ * "Rematch" (docs/world.md §35): for two minutes after a match between two real players either one can ask the other to play again. The server keeps the offer; this page only asks
+ * and counts the time down from what the server said (the time left when its answer was made). When both have asked, the server opens a new lobby of the two of them.
+ */
+function RematchOffer({ match, otherName, busy }: { match: Match; otherName: string; busy: boolean }) {
+  const [error, setError] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+  // The page's own clock is only used to count down from the moment the answer arrived.
+  const [arrived, setArrived] = useState(() => Date.now());
+  const [, bump] = useState(0);
+  const offer = match.rematch;
+  useEffect(() => {
+    setArrived(Date.now());
+  }, [match.id, offer?.msLeft, offer?.youAsked, offer?.theyAsked]);
+  useEffect(() => {
+    const id = setInterval(() => bump((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const msLeft = offer === null ? 0 : offer.msLeft - (Date.now() - arrived);
+  const state = rematchState(match, msLeft);
+  if (state === 'none') return null;
+  const ask = async () => {
+    if (asking || busy) return;
+    setAsking(true);
+    setError(null);
+    try {
+      const out = await api.rematch(match.id);
+      sharedStore.setMatch(out.match);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      await sharedStore.refreshLobby();
+    } finally {
+      setAsking(false);
+    }
+  };
+  return (
+    <div className="rematch-offer" data-testid="rematch" data-state={state}>
+      <button type="button" className="btn btn-primary" disabled={asking || busy || state === 'waiting'} onClick={() => void ask()} data-testid="rematch-button">
+        {state === 'asked' ? 'Yes, rematch!' : state === 'waiting' ? 'Waiting…' : 'Rematch'}
+      </button>
+      <span className="rematch-clock mono muted" data-testid="rematch-clock">
+        {offerClock(msLeft)}
+      </span>
+      <p className="hint rematch-note" data-testid="rematch-note">
+        {rematchText(state, otherName, match.ranked)}
+      </p>
+      {error && (
+        <p className="notice error" role="alert" data-testid="rematch-error">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

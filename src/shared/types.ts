@@ -403,6 +403,10 @@ export interface Match {
   readonly friendMatch: boolean;
   /** True when this match moves ranked points: two real players from the lobby, not a challenge, not a bot match (docs/world.md §31). */
   readonly ranked: boolean;
+  /** True for a match the two players agreed to play again straight after a match (docs/world.md §35). */
+  readonly isRematch: boolean;
+  /** After a finished match between two real players: the rematch offer (null when there is none). `msLeft` is how long it lasts when this answer was made. */
+  readonly rematch: { readonly youAsked: boolean; readonly theyAsked: boolean; readonly msLeft: number } | null;
 }
 
 export interface HistoryEntry {
@@ -1409,4 +1413,144 @@ export interface BillboardView {
 
 export interface BillboardBook extends BillboardView {
   readonly booked: { readonly slot: number; readonly ticker: string; readonly hours: number; readonly priceCents: number; readonly extended: boolean; readonly endsMs: number };
+}
+
+// ---- the trophy room, teams, the daily prediction and market events (docs/world.md §36 to §39) ----------------------------------------
+
+/** What a player has won, on his profile card. Only places and counts: never money. */
+export interface TrophyRoom {
+  readonly username: string;
+  readonly displayName: string;
+  readonly ranked: {
+    readonly bestTier: { readonly id: string; readonly name: string; readonly icon: string } | null;
+    readonly seasons: readonly { readonly seasonMs: number; readonly place: number; readonly points: number }[];
+  };
+  readonly weekly: { readonly podiums: readonly { readonly weekStartMs: number; readonly place: number; readonly gainPct: number }[]; readonly firsts: number };
+  readonly goals: { readonly finished: number; readonly perfectDays: number; readonly bestStreak: number };
+  readonly matches: { readonly played: number; readonly wins: number };
+  readonly predictions: { readonly made: number; readonly correct: number; readonly bestRun: number };
+  readonly lessons: number;
+  readonly badges: { readonly earned: number; readonly total: number };
+  readonly team: { readonly name: string; readonly tag: string } | null;
+  readonly teamWins: readonly { readonly weekStartMs: number; readonly place: number; readonly teamName: string; readonly teamTag: string }[];
+  readonly count: number;
+}
+
+export interface TeamMember {
+  readonly username: string;
+  readonly displayName: string;
+  readonly leader: boolean;
+  readonly joinedMs: number;
+  /** His growth this week in percent, or null when he does not count on the weekly board yet. */
+  readonly gainPct: number | null;
+}
+
+export interface TeamRow {
+  readonly id: number;
+  readonly name: string;
+  readonly tag: string;
+  readonly open: boolean;
+  readonly members: number;
+  readonly scored: number;
+  readonly scorePct: number | null;
+  readonly rank: number | null;
+  readonly leader: string;
+  readonly you: boolean;
+}
+
+export interface MyTeam extends TeamRow {
+  readonly memberList: readonly TeamMember[];
+  readonly iAmLeader: boolean;
+  readonly invited: readonly { readonly username: string; readonly invitedMs: number }[];
+}
+
+export interface TeamInvite {
+  readonly teamId: number;
+  readonly name: string;
+  readonly tag: string;
+  readonly members: number;
+  readonly invitedMs: number;
+}
+
+export interface TeamsView {
+  readonly weekStartMs: number;
+  readonly endsMs: number;
+  readonly me: MyTeam | null;
+  readonly invites: readonly TeamInvite[];
+  readonly teams: readonly TeamRow[];
+  readonly total: number;
+  readonly lastWeek: { readonly weekStartMs: number; readonly places: readonly { readonly place: number; readonly teamName: string; readonly teamTag: string; readonly scorePct: number; readonly members: number }[] } | null;
+  readonly limits: { readonly maxMembers: number; readonly minScored: number; readonly nameMin: number; readonly nameMax: number; readonly tagMin: number; readonly tagMax: number };
+}
+
+export interface PredictCompany {
+  readonly id: number;
+  readonly ticker: string;
+  readonly name: string;
+  readonly priceCents: number | null;
+}
+
+export interface PredictView {
+  readonly day: number;
+  readonly endMs: number;
+  readonly serverMs: number;
+  readonly company: PredictCompany | null;
+  readonly mine: { readonly pick: 'up' | 'down'; readonly priceFromCents: number; readonly pickedMs: number } | null;
+  readonly last: {
+    readonly day: number;
+    readonly ticker: string;
+    readonly name: string;
+    readonly pick: 'up' | 'down';
+    readonly result: 'win' | 'loss' | 'draw';
+    readonly priceFromCents: number;
+    readonly priceToCents: number | null;
+  } | null;
+  readonly stats: { readonly made: number; readonly correct: number; readonly run: number; readonly bestRun: number };
+  readonly reward: GoalReward;
+}
+
+/** What the live stream tells a player when one of his guesses was judged. */
+export interface PredictedEvent {
+  readonly day: number;
+  readonly ticker: string;
+  readonly pick: 'up' | 'down';
+  readonly result: 'win' | 'loss' | 'draw';
+  readonly reward: GoalReward | null;
+}
+
+/** What the live stream tells a player when looks he earned were just given to him. */
+export interface EarnedEvent {
+  readonly reason: string;
+  readonly items: readonly { readonly id: string; readonly name: string }[];
+}
+
+export type MarketEventKind = 'storm' | 'frenzy' | 'rally' | 'selloff';
+
+export interface MarketEventLine {
+  readonly day: number;
+  readonly atMs: number;
+  readonly kind: MarketEventKind | null;
+  readonly name: string | null;
+  readonly icon: string | null;
+  readonly blurb: string | null;
+  readonly status: 'planned' | 'done' | 'missed' | 'off';
+  readonly moves: readonly { readonly ticker: string; readonly name: string; readonly pct: number }[];
+}
+
+export interface MarketEventsView {
+  readonly serverMs: number;
+  readonly enabled: boolean;
+  readonly next: { readonly day: number; readonly atMs: number } | null;
+  readonly live: MarketEventLine | null;
+  readonly recent: readonly MarketEventLine[];
+}
+
+/** What the live stream tells every signed-in page when a market event starts. */
+export interface MarketEventPush {
+  readonly kind: MarketEventKind;
+  readonly name: string;
+  readonly icon: string;
+  readonly blurb: string;
+  readonly day: number;
+  readonly count: number;
 }

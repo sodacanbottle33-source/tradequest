@@ -22,7 +22,11 @@ import type {
   BillboardBook,
   BillboardView,
   GoalsView,
+  MarketEventsView,
+  PredictView,
   RankedView,
+  TeamsView,
+  TrophyRoom,
   PlayerProfile,
   ShopBuy,
   ShopView,
@@ -182,6 +186,8 @@ export const api = {
   ready: (ready: boolean) => request<{ match: Match }>('POST', '/api/lobby/ready', { ready }),
   leave: () => request<{ match: Match | null }>('POST', '/api/lobby/leave', {}),
   dismiss: () => request<{ ok: boolean }>('POST', '/api/lobby/dismiss', {}),
+  /** Asks the other player for a rematch of the match just played; when both have asked, the answer is the new lobby. */
+  rematch: (matchId: number) => request<{ match: Match }>('POST', '/api/lobby/rematch', { matchId }),
   matches: () => request<{ matches: HistoryEntry[] }>('GET', '/api/matches?limit=20'),
   wallet: () => request<{ balanceCents: number }>('GET', '/api/wallet'),
 
@@ -273,6 +279,23 @@ export const api = {
   billboard: () => request<BillboardView>('GET', '/api/billboard'),
   bookBillboard: (slot: number, ticker: string, hours: number) => request<BillboardBook>('POST', '/api/billboard/book', { slot, ticker, hours }),
   playerProfile: (username: string) => request<PlayerProfile>('GET', `/api/player/${encodeURIComponent(username)}`),
+  /** The trophy room of a player (docs/world.md §36). */
+  trophies: (username: string) => request<TrophyRoom>('GET', `/api/trophies/${encodeURIComponent(username)}`),
+  // Teams and the weekly team race (docs/world.md §37). Every answer is the whole teams page as it is afterwards.
+  teams: () => request<TeamsView>('GET', '/api/teams'),
+  teamCreate: (name: string, tag: string, open: boolean) => request<TeamsView>('POST', '/api/teams/create', { name, tag, open }),
+  teamJoin: (teamId: number) => request<TeamsView>('POST', '/api/teams/join', { teamId }),
+  teamLeave: () => request<TeamsView>('POST', '/api/teams/leave', {}),
+  teamInvite: (username: string) => request<TeamsView>('POST', '/api/teams/invite', { username }),
+  teamDecline: (teamId: number) => request<TeamsView>('POST', '/api/teams/decline', { teamId }),
+  teamKick: (username: string) => request<TeamsView>('POST', '/api/teams/kick', { username }),
+  teamLead: (username: string) => request<TeamsView>('POST', '/api/teams/lead', { username }),
+  teamOpen: (open: boolean) => request<TeamsView>('POST', '/api/teams/settings', { open }),
+  teamDisband: () => request<TeamsView>('POST', '/api/teams/disband', {}),
+  // The daily prediction (docs/world.md §38) and market events (§39).
+  predict: () => request<PredictView>('GET', '/api/predict'),
+  predictPick: (pick: 'up' | 'down') => request<PredictView>('POST', '/api/predict/pick', { pick }),
+  marketEvents: () => request<MarketEventsView>('GET', '/api/events'),
 
   // Moderators and the owner (staff): the server answers 403 to an ordinary player, and refuses a moderator anything that touches the owner or another moderator.
   modPlayers: (q = '') => request<StaffPlayers>('GET', `/api/mod/players${q.trim() === '' ? '' : `?q=${enc(q.trim())}`}`),

@@ -6,7 +6,9 @@ import { api } from './api';
 import { Avatar, OnlineDot, useOnlineWatch } from './Avatar';
 import { BadgeIcon } from './BadgeIcon';
 import { BADGES } from './badgeCatalog';
-import { cosmeticById, SLOTS } from './cosmeticCatalog';
+import { bannerClass, cosmeticById, PROFILE_SLOTS, SLOTS } from './cosmeticCatalog';
+import { trophyFacts, trophyLines } from './extrasUtil';
+import { petLabel } from './petCatalog';
 import { formatCents } from './format';
 import { PlayerName } from './PlayerName';
 import { relationLabel, problemText } from './playersUtil';
@@ -15,7 +17,7 @@ import { RoleBadge } from './RoleBadge';
 import { joinedText, rankText } from './shopUtil';
 import { Skeleton } from './Skeleton';
 import { sharedStore, useShared } from './store';
-import type { PlayerProfile } from './types';
+import type { PlayerProfile, TrophyRoom } from './types';
 
 export function ProfileCard({ onShop }: { onShop: () => void }) {
   const { profileFor, user } = useShared();
@@ -26,6 +28,8 @@ export function ProfileCard({ onShop }: { onShop: () => void }) {
 function Card({ username, mine, onShop }: { username: string; mine: boolean; onShop: () => void }) {
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The trophy room is a nicety: if it can not be loaded the rest of the card still shows.
+  const [trophies, setTrophies] = useState<TrophyRoom | null>(null);
   const close = useRef<HTMLButtonElement>(null);
   const { looks } = useProfiles();
   useOnlineWatch();
@@ -46,6 +50,19 @@ function Card({ username, mine, onShop }: { username: string; mine: boolean; onS
   }, [username]);
 
   useEffect(() => {
+    let alive = true;
+    api
+      .trophies(username)
+      .then((t) => {
+        if (alive) setTrophies(t);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [username]);
+
+  useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') sharedStore.closeProfile();
     };
@@ -54,11 +71,16 @@ function Card({ username, mine, onShop }: { username: string; mine: boolean; onS
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const worn = SLOTS.map((slot) => {
-    const id = looks[username]?.[slot.id];
-    const def = id === undefined ? undefined : cosmeticById(id);
-    return def ? { slot: slot.label, name: def.name, rarity: def.rarity } : null;
-  }).filter((x): x is { slot: string; name: string; rarity: 1 | 2 | 3 | 4 } => x !== null);
+  const look = looks[username];
+  const worn = [...SLOTS, ...PROFILE_SLOTS]
+    .map((slot) => {
+      const id = look?.[slot.id];
+      const def = id === undefined ? undefined : cosmeticById(id);
+      // A pet is shown with how far it has grown.
+      return def ? { slot: slot.label, name: slot.id === 'pet' ? petLabel(def.id, look?.petStage ?? 0) : def.name, rarity: def.rarity } : null;
+    })
+    .filter((x): x is { slot: string; name: string; rarity: 1 | 2 | 3 | 4 } => x !== null);
+  const banner = bannerClass(look);
 
   return (
     <div
@@ -84,7 +106,8 @@ function Card({ username, mine, onShop }: { username: string; mine: boolean; onS
         )}
         {profile && (
           <>
-            <div className="profile-top">
+            {banner !== '' && <div className={`profile-banner pbanner ${banner}`} aria-hidden="true" data-testid="profile-banner" />}
+            <div className={banner === '' ? 'profile-top' : 'profile-top has-banner'}>
               <span className="pfp-wrap profile-pic">
                 <Avatar username={profile.username} displayName={profile.displayName} size={84} />
                 <OnlineDot username={profile.username} />
@@ -95,6 +118,11 @@ function Card({ username, mine, onShop }: { username: string; mine: boolean; onS
                 <span className="profile-role">
                   <RoleBadge role={profile.role} />
                   {!mine && profile.relation !== 'none' && <span className="rel-chip" data-testid="profile-relation">{relationLabel(profile.relation)}</span>}
+                  {trophies?.team && (
+                    <span className="team-chip" title={trophies.team.name} data-testid="profile-team">
+                      [{trophies.team.tag}] {trophies.team.name}
+                    </span>
+                  )}
                 </span>
               </div>
             </div>
@@ -130,6 +158,36 @@ function Card({ username, mine, onShop }: { username: string; mine: boolean; onS
                 </div>
               )}
             </section>
+
+            {trophies && (
+              <section aria-label="Trophy room" className="trophy-room" data-testid="trophy-room">
+                <h3>
+                  Trophy room <span className="h2-note" data-testid="trophy-count">{trophies.count} trophies</span>
+                </h3>
+                {trophyLines(trophies).length === 0 ? (
+                  <p className="muted">No trophies yet.</p>
+                ) : (
+                  <ul className="trophy-list" data-testid="trophy-list">
+                    {trophyLines(trophies).map((t) => (
+                      <li key={t.key}>
+                        <span className="trophy-icon" aria-hidden="true">
+                          {t.icon}
+                        </span>
+                        <span>{t.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <dl className="profile-facts trophy-facts" data-testid="trophy-facts">
+                  {trophyFacts(trophies).map((f) => (
+                    <div key={f.key}>
+                      <dt>{f.label}</dt>
+                      <dd>{f.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            )}
 
             <section aria-label="What he wears">
               <h3>Looks</h3>

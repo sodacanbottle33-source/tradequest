@@ -36,6 +36,8 @@ const match = (phase: Match['phase'], players: MatchPlayer[] = [player(), player
   canTrade: phase === 'live',
   friendMatch: false,
   ranked: false,
+  isRematch: false,
+  rematch: null,
 });
 
 describe('when Career is closed', () => {

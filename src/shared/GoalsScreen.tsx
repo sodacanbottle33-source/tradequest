@@ -8,6 +8,7 @@ import { cosmeticById } from './cosmeticCatalog';
 import { FREEZE_EVERY, MAX_FREEZES, rewardText } from './goalCatalog';
 import { barPercent, kindName, longUntil, lookName, streakNote } from './goalUtil';
 import { goalsStore, useGoals } from './goalsStore';
+import { PredictCard } from './PredictCard';
 import { problemText } from './playersUtil';
 import { Sample } from './ShopScreen';
 import { Skeleton } from './Skeleton';
@@ -167,6 +168,8 @@ export function GoalsScreen() {
           A goal is paid once, when the game sees it is done. The cash is yours to spend, but it does not count as growth on the weekly leaderboard. Goals never give an advantage in a trade or a match.
         </p>
       </section>
+
+      <PredictCard />
 
       <section className="card" aria-label="Streak rewards">
         <h3>

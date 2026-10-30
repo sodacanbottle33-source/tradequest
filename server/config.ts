@@ -33,6 +33,8 @@ export interface Config {
   readonly bots: boolean;
   /** The same bots trading in the main market with their own money (on with the bots; TQ_MARKET_BOTS=0 switches only this off). */
   readonly marketBots: boolean;
+  /** Market events at 21:00 Tokyo time (TQ_EVENTS=0 switches them off). They also need the news system and an owner account. */
+  readonly events: boolean;
   /** The one username that is the owner (admin): TQ_OWNER, or else the first line of data/owner.txt. Empty = nobody. */
   readonly ownerUsername: string;
   /** The servers voice calls use to connect two players (TQ_ICE_SERVERS: a JSON list; the default is free public STUN). */
@@ -112,6 +114,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     memecoins: (env.TQ_MEMECOINS ?? '1') !== '0',
     bots: (env.TQ_BOTS ?? '1') !== '0',
     marketBots: (env.TQ_BOTS ?? '1') !== '0' && (env.TQ_MARKET_BOTS ?? '1') !== '0',
+    events: (env.TQ_EVENTS ?? '1') !== '0',
     ownerUsername: ownerOf(env, dataDir),
     iceServers: iceServersOf(env.TQ_ICE_SERVERS),
     ai: ai.settings,

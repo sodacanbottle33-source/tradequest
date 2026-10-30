@@ -294,11 +294,65 @@ export class Social {
     const kept = this.ranking;
     try {
       this.markMissing(week);
+      this.recordPodium(week);
     } finally {
       this.ranking = kept;
     }
     this.d.db.run('DELETE FROM weekly_marks WHERE week_start_ms < ?', week - WEEK_MS);
     this.markedWeek = week;
+  }
+
+  /**
+   * Writes down for good the best three of the week that just ended (the trophy room, docs/world.md §36): the marks of last week and this week are still here, and the next
+   * roll deletes the older ones. Written at most once per week and place, so a restart in the middle of the week changes nothing.
+   */
+  private recordPodium(week: number): void {
+    const previous = week - WEEK_MS;
+    const { db } = this.d;
+    if (db.get('SELECT 1 AS x FROM weekly_winners WHERE week_start_ms = ?', previous)) return;
+    const marks = new Map(db.all<{ user_id: number; net_worth_cents: number }>('SELECT user_id, net_worth_cents FROM weekly_marks WHERE week_start_ms = ?', week).map((r) => [r.user_id, r.net_worth_cents] as const));
+    const top = this.lastWeekScored(this.board(), week, marks).slice(0, WEEKLY_PODIUM);
+    db.tx(() => {
+      top.forEach((x, i) => {
+        db.run('INSERT OR IGNORE INTO weekly_winners(week_start_ms, place, user_id, gain_pct, gain_cents) VALUES (?, ?, ?, ?, ?)', previous, i + 1, x.p.id, x.gainPct, x.gainCents);
+      });
+    });
+  }
+
+  /** The weekly growth of every player who counts this week (at least the minimum at the start of the week): player id -> money and percent. Cash the game gave away is not growth. */
+  weeklyGrowth(): Map<number, { gainCents: number; gainPct: number }> {
+    const b = this.board();
+    const week = weekStartOf(this.d.now());
+    this.rollWeek();
+    this.markMissing(week);
+    const marks = new Map(this.d.db.all<{ user_id: number; net_worth_cents: number }>('SELECT user_id, net_worth_cents FROM weekly_marks WHERE week_start_ms = ?', week).map((r) => [r.user_id, r.net_worth_cents] as const));
+    const given = this.gifts(week, week + WEEK_MS);
+    const out = new Map<number, { gainCents: number; gainPct: number }>();
+    for (const p of b.ranked) {
+      const start = marks.get(p.id);
+      if (start === undefined || start < WEEKLY_MIN_START_CENTS) continue;
+      const gain = (p.netWorthCents as number) - start - (given.get(p.id) ?? 0);
+      out.set(p.id, { gainCents: gain, gainPct: Math.round((gain / start) * 10_000) / 100 });
+    }
+    return out;
+  }
+
+  /** The same for the week that has just ended (from the marks of last week to the marks of this week). A loss is a negative number. Empty when there are no marks of last week. */
+  lastWeekGrowth(): Map<number, { gainCents: number; gainPct: number }> {
+    const week = weekStartOf(this.d.now());
+    const b = this.board();
+    const marks = new Map(this.d.db.all<{ user_id: number; net_worth_cents: number }>('SELECT user_id, net_worth_cents FROM weekly_marks WHERE week_start_ms = ?', week).map((r) => [r.user_id, r.net_worth_cents] as const));
+    const before = new Map(this.d.db.all<{ user_id: number; net_worth_cents: number }>('SELECT user_id, net_worth_cents FROM weekly_marks WHERE week_start_ms = ?', week - WEEK_MS).map((r) => [r.user_id, r.net_worth_cents] as const));
+    const given = this.gifts(week - WEEK_MS, week);
+    const out = new Map<number, { gainCents: number; gainPct: number }>();
+    for (const p of b.ranked) {
+      const start = before.get(p.id);
+      const end = marks.get(p.id);
+      if (start === undefined || end === undefined || start < WEEKLY_MIN_START_CENTS) continue;
+      const gain = end - start - (given.get(p.id) ?? 0);
+      out.set(p.id, { gainCents: gain, gainPct: Math.round((gain / start) * 10_000) / 100 });
+    }
+    return out;
   }
 
   /** Gives a mark to every ranked player who has none for this week. A player who joined this week started with the starting cash. */
@@ -370,6 +424,12 @@ export class Social {
 
   /** Last week's best players: how much each grew between his mark of last week and his mark of this week. Only players with a gain are named. */
   private lastWeek(b: Ranking, week: number, thisWeek: ReadonlyMap<number, number>): { weekStartMs: number; winners: WeeklyWinner[] } {
+    const scored = this.lastWeekScored(b, week, thisWeek);
+    return { weekStartMs: week - WEEK_MS, winners: scored.slice(0, WEEKLY_PODIUM).map((x) => ({ username: x.p.username, displayName: x.p.displayName, gainCents: x.gainCents, gainPct: x.gainPct })) };
+  }
+
+  /** Everybody who gained last week, best first. */
+  private lastWeekScored(b: Ranking, week: number, thisWeek: ReadonlyMap<number, number>): { p: Person; gainCents: number; gainPct: number }[] {
     const previous = week - WEEK_MS;
     const before = new Map(this.d.db.all<{ user_id: number; net_worth_cents: number }>('SELECT user_id, net_worth_cents FROM weekly_marks WHERE week_start_ms = ?', previous).map((r) => [r.user_id, r.net_worth_cents] as const));
     const scored: { p: Person; gainCents: number; gainPct: number }[] = [];
@@ -383,7 +443,7 @@ export class Social {
       scored.push({ p, gainCents: gain, gainPct: Math.round((gain / start) * 10_000) / 100 });
     }
     scored.sort((x, y) => y.gainPct - x.gainPct || y.gainCents - x.gainCents || x.p.createdMs - y.p.createdMs || x.p.id - y.p.id);
-    return { weekStartMs: previous, winners: scored.slice(0, WEEKLY_PODIUM).map((x) => ({ username: x.p.username, displayName: x.p.displayName, gainCents: x.gainCents, gainPct: x.gainPct })) };
+    return scored;
   }
 
   // ---- friendships -------------------------------------------------------------------------------------------------
@@ -470,6 +530,12 @@ export class Social {
       }),
     );
     return { players, total: matching.length, offset: start, updatedMs: b.atMs };
+  }
+
+  /** The id and names of a real player who may be shown (not a computer player, not banned); anybody else is "no such player". For the trophy room. */
+  playerRef(username: string): { id: number; username: string; displayName: string } {
+    const p = this.findPlayer(username);
+    return { id: p.id, username: p.username, displayName: p.displayName };
   }
 
   /** The profile card of one player (a real player who is not banned; anybody else is "no such player"). */

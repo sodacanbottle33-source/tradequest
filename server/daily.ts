@@ -48,7 +48,7 @@ export interface DailyDeps {
   readonly publishTo: (userId: number, event: string, data: unknown) => void;
   /** Told after Career cash was given, so the weekly board does not count it as growth and the leaderboards show the new net worth at once. */
   readonly gaveCash?: (userId: number, cents: number) => void;
-  readonly shop: Pick<Shop, 'give' | 'ownedBy'>;
+  readonly shop: Pick<Shop, 'give' | 'ownedBy' | 'refreshLook'>;
   /** Gives the player any badge he has just earned (the sweep otherwise runs every 45 seconds). */
   readonly refreshBadges?: (userId: number) => void;
   /** For tests: the goals of a day (default: {@link goalsOfDay}, the same for everybody). */
@@ -178,14 +178,15 @@ export class Daily {
 
   // ---- paying -------------------------------------------------------------------------------------------------------
 
-  private pay(userId: number, r: Reward, nowMs: number): void {
+  /** Pays a reward (Learn XP, Career cash, 1v1 coins) inside the caller's transaction. The daily prediction (server/predict.ts) pays the same way. */
+  payReward(userId: number, r: Reward, nowMs: number, reason = 'daily_goal'): void {
     const { db } = this.d;
     if (r.xp > 0) {
       db.run('INSERT INTO learn_progress(user_id, xp, updated_ms) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET xp = xp + excluded.xp, updated_ms = excluded.updated_ms', userId, r.xp, nowMs);
     }
     if (r.cashCents > 0) db.run("UPDATE accounts SET cash_cents = cash_cents + ? WHERE user_id = ? AND kind = 'career'", r.cashCents, userId);
     if (r.coinCents > 0) {
-      db.run("INSERT INTO wallet_ledger(user_id, delta_cents, reason, match_id, created_ms) VALUES (?, ?, 'daily_goal', NULL, ?)", userId, r.coinCents, nowMs);
+      db.run('INSERT INTO wallet_ledger(user_id, delta_cents, reason, match_id, created_ms) VALUES (?, ?, ?, NULL, ?)', userId, r.coinCents, reason, nowMs);
       db.run(
         'INSERT INTO wallets(user_id, balance_cents, updated_ms) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET balance_cents = balance_cents + excluded.balance_cents, updated_ms = excluded.updated_ms',
         userId,
@@ -291,7 +292,7 @@ export class Daily {
     db.tx(() => {
       for (const id of newly) {
         if (db.run('INSERT OR IGNORE INTO daily_goal_done(user_id, day, goal, done_ms) VALUES (?, ?, ?, ?)', userId, day, id, nowMs).changes !== 1) continue;
-        this.pay(userId, GOAL_REWARD, nowMs);
+        this.payReward(userId, GOAL_REWARD, nowMs);
         paid = plus(paid, GOAL_REWARD);
         finished.push(id);
       }
@@ -299,7 +300,7 @@ export class Daily {
       milestones = this.advance(userId, day, nowMs);
       const all = this.count('SELECT COUNT(*) AS n FROM daily_goal_done WHERE user_id = ? AND day = ?', userId, day);
       if (all >= GOALS_PER_DAY && db.run('INSERT OR IGNORE INTO daily_bonus(user_id, day, paid_ms) VALUES (?, ?, ?)', userId, day, nowMs).changes === 1) {
-        this.pay(userId, BONUS_REWARD, nowMs);
+        this.payReward(userId, BONUS_REWARD, nowMs);
         paid = plus(paid, BONUS_REWARD);
         bonus = true;
       }
@@ -307,6 +308,8 @@ export class Daily {
     if (finished.length === 0) return null;
     if (paid.cashCents > 0) this.d.gaveCash?.(userId, paid.cashCents);
     this.d.refreshBadges?.(userId);
+    // A new streak milestone is a step in the growth of his pet (docs/world.md §34): everybody sees it at once.
+    if (milestones.length > 0) this.d.shop.refreshLook(userId);
     const event: GoalsEvent = { finished, bonus, reward: paid, milestones, streak: this.streakOf(userId, day).current };
     this.d.publishTo(userId, 'goals', event);
     this.d.log.info('daily', `Player ${userId} finished ${finished.join(', ')}${bonus ? ' and the day bonus' : ''}; streak ${event.streak}.`);
@@ -354,7 +357,7 @@ export class Daily {
     const milestones: MilestoneView[] = STREAK_MILESTONES.map((m) => {
       const r = rewards.get(m.days);
       const state: MilestoneView['state'] = !r ? 'locked' : r.claimed_ms === null ? 'ready' : 'claimed';
-      const choices = state === 'ready' ? COSMETICS.filter((c) => c.rarity === m.rarity && c.requiresBadge === undefined && !owned.has(c.id)).map((c) => c.id) : [];
+      const choices = state === 'ready' ? COSMETICS.filter((c) => c.rarity === m.rarity && c.requiresBadge === undefined && c.earn === undefined && !owned.has(c.id)).map((c) => c.id) : [];
       return { days: m.days, rarity: m.rarity, rarityName: RARITY_NAMES[m.rarity] as string, state, item: r?.item ?? null, choices };
     });
     return {
@@ -379,6 +382,7 @@ export class Daily {
     if (!def) throw new DailyError('no_such_item', 'There is nothing like that in the Shop.', 404);
     if (def.rarity !== ms.rarity) throw new DailyError('wrong_item', `The ${ms.days}-day reward is a ${RARITY_NAMES[ms.rarity]} thing. ${def.name} is ${RARITY_NAMES[def.rarity]}.`, 400);
     if (def.requiresBadge !== undefined) throw new DailyError('wrong_item', `${def.name} needs a badge, so it can not be a free look. Pick another one.`, 400);
+    if (def.earn !== undefined) throw new DailyError('wrong_item', `${def.name} is earned in play, so it can not be a free look. Pick another one.`, 400);
     const nowMs = this.d.now();
     this.d.db.tx(() => {
       if (this.isBot(me.id)) throw new DailyError('cannot_play', 'Computer players do not play daily goals.', 403);

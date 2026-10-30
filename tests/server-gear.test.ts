@@ -12,6 +12,7 @@ import {
   ALL_SLOT_IDS,
   COSMETICS,
   GEAR_SLOTS,
+  PROFILE_SLOTS,
   RARITY_PRICE_CENTS,
   SLOTS,
   chartClasses,
@@ -45,7 +46,7 @@ const gear = COSMETICS.filter((c) => isGearSlot(c.slot));
 describe('what is for sale for your own screen', () => {
   it('GEAR-1: five places with 36 things, the same four prices as the other Shop things, ids that cannot be mixed up with the other group, and every Legendary one needs a real badge', () => {
     expect(GEAR_SLOTS.map((s) => s.id)).toEqual(['candles', 'shape', 'backdrop', 'effect', 'win']);
-    expect(ALL_SLOT_IDS).toEqual([...SLOTS.map((s) => s.id), ...GEAR_SLOTS.map((s) => s.id)]);
+    expect(ALL_SLOT_IDS).toEqual([...SLOTS.map((s) => s.id), ...PROFILE_SLOTS.map((s) => s.id), ...GEAR_SLOTS.map((s) => s.id)]);
     const count = (slot: string) => COSMETICS.filter((c) => c.slot === slot).length;
     expect(['candles', 'shape', 'backdrop', 'effect', 'win'].map(count)).toEqual([10, 6, 7, 5, 8]);
     expect(gear.length).toBe(36);
@@ -245,7 +246,7 @@ describe('what an old database keeps', () => {
       });
       d.run("INSERT INTO users(username, display_name, pw_hash, role, created_ms) VALUES ('a', 'a', 'x', 'player', 1)");
       d.run("INSERT INTO companies(id, ticker, name, listing_tick, listed_ms) VALUES (1, 'ABC', 'Abc Co', 0, 1)");
-      expect(migrate(d)).toEqual([28, 29]);
+      expect(migrate(d)).toEqual([28, 29, 30]);
       for (const t of ['user_gear', 'billboard_rentals']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n).toBe(0);
       d.run("INSERT INTO user_gear(user_id, candles, updated_ms) VALUES (1, 'cc_neon', 5)");
       expect(() => d.run("INSERT INTO user_gear(user_id, candles, updated_ms) VALUES (1, 'cc_mono', 6)")).toThrow(); // one row per player

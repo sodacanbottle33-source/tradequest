@@ -62,7 +62,14 @@ interface MatchRow {
   cancel_reason: string | null;
   /** 1 for a match two friends agreed on (a challenge): a lobby of exactly those two, closed to everybody else. */
   friends: number;
+  /** 1 for a match two players agreed to play again right after a match (docs/world.md §35): also a lobby of exactly those two. It counts for ranked like the match before it. */
+  rematch: number;
 }
+
+const MATCH_COLUMNS = 'id, state, created_ms, start_tick, end_tick, duration_ticks, start_cash_cents, settled_ms, outcome, winner_user_id, cancel_reason, friends, rematch';
+
+/** How long after a match ended (in real time) the two players may still ask each other for a rematch. */
+export const REMATCH_WINDOW_MS = 120_000;
 
 interface PlayerRow {
   match_id: number;
@@ -127,6 +134,13 @@ export interface MatchView {
   readonly friendMatch: boolean;
   /** True when this match moves ranked points: two real players from the lobby, not a challenge. False for a friend match, a match against a bot and a cancelled one. */
   readonly ranked: boolean;
+  /** True for a match the two players agreed to play again straight after a match (docs/world.md §35). */
+  readonly isRematch: boolean;
+  /**
+   * After a finished match between two real players: whether a rematch can still be asked for (null when it can not: a bot, an abandoned or cancelled match, too late, or the other
+   * player is already somewhere else). `msLeft` is how long the offer lasts when this view was made.
+   */
+  readonly rematch: { readonly youAsked: boolean; readonly theyAsked: boolean; readonly msLeft: number } | null;
 }
 
 export interface HistoryEntry {
@@ -166,6 +180,7 @@ const CANCEL_TEXT: Record<string, string> = {
   server_restart: 'The server restarted during this match, so it was cancelled. Nobody won or lost.',
   start_missed: 'The match could not start on time and was cancelled. Nobody won or lost.',
   friend_left: 'Your friend left before the match started, so it was cancelled. Nobody won or lost.',
+  rematch_left: 'Your opponent left before the rematch started, so it was cancelled. Nobody won or lost.',
 };
 
 export class MatchService {
@@ -179,6 +194,8 @@ export class MatchService {
   private readonly botWaitMs: number;
   private readonly ranked: Ranked | null;
   private lastSettleError = 0;
+  /** Who has asked for a rematch of which finished match (match id -> player ids). Kept in memory: an offer only lasts REMATCH_WINDOW_MS, so a restart simply ends it. */
+  private readonly rematchAsks = new Map<number, Set<number>>();
 
   constructor(o: MatchServiceOptions) {
     this.db = o.db;
@@ -214,7 +231,7 @@ export class MatchService {
   // ---- reading -----------------------------------------------------------------------------------------------------
 
   private match(id: number): MatchRow {
-    const m = this.db.get<MatchRow>('SELECT id, state, created_ms, start_tick, end_tick, duration_ticks, start_cash_cents, settled_ms, outcome, winner_user_id, cancel_reason, friends FROM matches WHERE id = ?', id);
+    const m = this.db.get<MatchRow>(`SELECT ${MATCH_COLUMNS} FROM matches WHERE id = ?`, id);
     if (!m) throw new LobbyError(404, 'no_such_match', 'No such match.');
     return m;
   }
@@ -259,6 +276,7 @@ export class MatchService {
       case 'ready_check':
         if (other?.is_bot === 1) return me?.ready ? `You are ready. ${other.display_name} is ready too.` : `${other.display_name} will play you (2/2). Press Ready when you are ready.`;
         if (m.friends === 1) return me?.ready ? `You are ready. Waiting for your friend ${other?.display_name ?? ''} to be ready.` : `Friend match against ${other?.display_name ?? 'your friend'}. Press Ready when you are ready.`;
+        if (m.rematch === 1) return me?.ready ? `You are ready. Waiting for ${other?.display_name ?? 'your opponent'} to be ready for the rematch.` : `Rematch against ${other?.display_name ?? 'your opponent'}. Press Ready when you are ready.`;
         if (me?.ready) return `You are ready. Waiting for ${other?.display_name ?? 'your opponent'} to be ready.`;
         return `${other?.display_name ?? 'An opponent'} has joined (2/2). Press Ready when you are ready.`;
       case 'countdown':
@@ -323,7 +341,66 @@ export class MatchService {
       canTrade: phase === 'live' && ps.find((p) => p.user_id === userId)?.forfeited === 0,
       friendMatch: m.friends === 1,
       ranked: m.state !== 'cancelled' && m.friends === 0 && m.outcome !== 'abandoned' && !ps.some((p) => p.is_bot === 1),
+      isRematch: m.rematch === 1,
+      rematch: this.rematchOffer(m, ps, userId),
     };
+  }
+
+  // ---- rematch -----------------------------------------------------------------------------------------------------
+
+  /** The rematch offer of a finished match as one of its players sees it, or null when there is none (see MatchView.rematch). */
+  private rematchOffer(m: MatchRow, ps: PlayerRow[], userId: number): MatchView['rematch'] {
+    if (m.state !== 'finished' || m.outcome === 'abandoned' || m.settled_ms === null) return null;
+    const me = ps.find((p) => p.user_id === userId);
+    const other = ps.find((p) => p.user_id !== userId);
+    if (!me || !other || ps.length !== 2 || ps.some((p) => p.is_bot === 1)) return null;
+    // Both must still be looking at the result: a player who closed it, or went to look for another match, has said no.
+    if (ps.some((p) => p.dismissed === 1)) return null;
+    const msLeft = m.settled_ms + REMATCH_WINDOW_MS - this.now();
+    if (msLeft <= 0) return null;
+    if (this.membership(other.user_id) || this.membership(me.user_id)) return null;
+    const asks = this.rematchAsks.get(m.id);
+    return { youAsked: asks?.has(userId) === true, theyAsked: asks?.has(other.user_id) === true, msLeft };
+  }
+
+  /**
+   * One player asks the other for a rematch of the match he just played (docs/world.md §35). When both have asked, a new closed lobby of exactly the two of them opens, nobody ready
+   * yet. A rematch of a match that counted for ranked points counts as well (the same limit on points from the same opponent applies); a rematch of a friend match is a friend match.
+   * Asking twice is the same as asking once.
+   */
+  rematch(userId: number, matchId: number): MatchView {
+    this.advance();
+    let opened: number | null = null;
+    this.db.tx(() => {
+      const m = this.match(matchId);
+      const ps = this.players(m.id);
+      if (!ps.some((p) => p.user_id === userId)) throw new LobbyError(404, 'no_such_match', 'No such match.');
+      const offer = this.rematchOffer(m, ps, userId);
+      if (offer === null) throw new LobbyError(409, 'no_rematch', 'There is no rematch to ask for any more. You can find a new match.');
+      const other = ps.find((p) => p.user_id !== userId) as PlayerRow;
+      const asks = this.rematchAsks.get(m.id) ?? new Set<number>();
+      asks.add(userId);
+      this.rematchAsks.set(m.id, asks);
+      if (asks.has(other.user_id)) {
+        opened = this.openClosed(userId, other.user_id, m.friends === 1 ? 'friends' : 'rematch');
+        this.rematchAsks.delete(m.id);
+      }
+    });
+    if (opened !== null) {
+      this.log.info('lobby', `Rematch of match ${matchId} opened as match ${opened}.`);
+      this.notify(opened);
+    } else {
+      this.notify(matchId);
+    }
+    return this.viewOf(this.match(opened ?? matchId), userId);
+  }
+
+  /** Forgets old offers (called by the time sweep), so the memory does not grow. */
+  private forgetOldAsks(): void {
+    for (const id of [...this.rematchAsks.keys()]) {
+      const settled = this.db.get<{ settled_ms: number | null }>('SELECT settled_ms FROM matches WHERE id = ?', id)?.settled_ms;
+      if (settled === undefined || settled === null || settled + REMATCH_WINDOW_MS < this.now()) this.rematchAsks.delete(id);
+    }
   }
 
   /** The player's current match (lobby, countdown, live, or the result they have not closed yet), or null. Counts as "I am here". */
@@ -351,7 +428,7 @@ export class MatchService {
     const mem = this.membership(userId);
     if (!mem) return true;
     const m = this.match(mem.match_id);
-    if (m.state !== 'lobby' || m.friends === 1) return false;
+    if (m.state !== 'lobby' || m.friends === 1 || m.rematch === 1) return false;
     return this.players(m.id).filter((p) => p.active === 1 && p.is_bot === 0).length === 1;
   }
 
@@ -362,23 +439,29 @@ export class MatchService {
    */
   openFriendMatch(aId: number, bId: number): number {
     this.advance();
-    const matchId = this.db.tx(() => {
-      for (const u of [aId, bId]) {
-        if (!this.free(u)) throw new LobbyError(409, 'player_busy', 'A player is in another match right now.');
-      }
-      for (const u of [aId, bId]) {
-        const mem = this.membership(u);
-        if (mem) this.removeFromLobby(this.match(mem.match_id), u);
-        this.db.run('UPDATE match_players SET dismissed = 1 WHERE user_id = ? AND active = 0', u);
-      }
-      const nowMs = this.now();
-      const id = this.db.run("INSERT INTO matches(state, created_ms, duration_ticks, start_cash_cents, friends) VALUES ('lobby', ?, ?, ?, 1)", nowMs, MATCH_TICKS, MATCH_CASH_CENTS).lastInsertRowid;
-      for (const u of [aId, bId]) this.db.run('INSERT INTO match_players(match_id, user_id, joined_ms, last_seen_ms) VALUES (?, ?, ?, ?)', id, u, nowMs, nowMs);
-      return id;
-    });
+    const matchId = this.db.tx(() => this.openClosed(aId, bId, 'friends'));
     this.log.info('lobby', `Friend match ${matchId} opened for players ${aId} and ${bId}.`);
     this.notify(matchId);
     return matchId;
+  }
+
+  /**
+   * Opens a closed lobby of exactly two players (a friend match, or a rematch), nobody ready yet. Call inside a transaction. A player who was waiting alone for an opponent is taken
+   * out of that lobby first, and the finished matches on both screens are closed. Throws LobbyError 'player_busy' when either is in a match that cannot be left like that.
+   */
+  private openClosed(aId: number, bId: number, kind: 'friends' | 'rematch'): number {
+    for (const u of [aId, bId]) {
+      if (!this.free(u)) throw new LobbyError(409, 'player_busy', 'A player is in another match right now.');
+    }
+    for (const u of [aId, bId]) {
+      const mem = this.membership(u);
+      if (mem) this.removeFromLobby(this.match(mem.match_id), u);
+      this.db.run('UPDATE match_players SET dismissed = 1 WHERE user_id = ? AND active = 0', u);
+    }
+    const nowMs = this.now();
+    const id = this.db.run("INSERT INTO matches(state, created_ms, duration_ticks, start_cash_cents, friends, rematch) VALUES ('lobby', ?, ?, ?, ?, ?)", nowMs, MATCH_TICKS, MATCH_CASH_CENTS, kind === 'friends' ? 1 : 0, kind === 'rematch' ? 1 : 0).lastInsertRowid;
+    for (const u of [aId, bId]) this.db.run('INSERT INTO match_players(match_id, user_id, joined_ms, last_seen_ms) VALUES (?, ?, ?, ?)', id, u, nowMs, nowMs);
+    return id;
   }
 
   /** How many players are searching for an opponent right now. */
@@ -400,7 +483,7 @@ export class MatchService {
       // A lobby with one real player is open, also when a bot is sitting in it: a real player always takes the bot's place.
       const open = this.db.get<{ id: number }>(
         `SELECT m.id FROM matches m
-          WHERE m.state = 'lobby' AND m.friends = 0
+          WHERE m.state = 'lobby' AND m.friends = 0 AND m.rematch = 0
             AND (SELECT COUNT(*) FROM match_players p WHERE p.match_id = m.id AND p.active = 1 AND p.user_id NOT IN (SELECT user_id FROM bots)) = 1
             AND NOT EXISTS (SELECT 1 FROM match_players p WHERE p.match_id = m.id AND p.user_id = ?)
           ORDER BY m.id LIMIT 1`,
@@ -499,6 +582,12 @@ export class MatchService {
       this.db.run('UPDATE match_players SET active = 0, ready = 0 WHERE match_id = ?', m.id);
       return;
     }
+    if (m.rematch === 1) {
+      // The same for a rematch: it was agreed between these two players only.
+      this.db.run("UPDATE matches SET state = 'cancelled', cancel_reason = 'rematch_left', start_tick = NULL, end_tick = NULL WHERE id = ?", m.id);
+      this.db.run('UPDATE match_players SET active = 0, ready = 0 WHERE match_id = ?', m.id);
+      return;
+    }
     // A bot does not wait for anybody: when the last real player has gone, the bot goes too.
     if (this.players(m.id).filter((p) => p.active === 1 && p.is_bot === 0).length === 0) this.db.run('DELETE FROM match_players WHERE match_id = ? AND active = 1', m.id);
     const left = this.players(m.id).filter((p) => p.active === 1);
@@ -542,6 +631,7 @@ export class MatchService {
     this.sweepPresence();
     this.autoBots();
     this.settleDue(this.world.savedTick);
+    this.forgetOldAsks();
   }
 
   /** A real player who has waited alone for a while gets a bot as an opponent. */
@@ -716,7 +806,7 @@ export class MatchService {
   /** The rule for orders: a match account may trade only while its own match is live, and never after it. */
   gate = (account: AccountRow, tick: number): string | null => {
     if (account.kind !== 'match') return null;
-    const m = this.db.get<MatchRow>('SELECT id, state, created_ms, start_tick, end_tick, duration_ticks, start_cash_cents, settled_ms, outcome, winner_user_id, cancel_reason, friends FROM matches WHERE id = ?', account.match_id as number);
+    const m = this.db.get<MatchRow>(`SELECT ${MATCH_COLUMNS} FROM matches WHERE id = ?`, account.match_id as number);
     if (!m || m.state !== 'live') return 'This match is over, so you can no longer trade in it.';
     const start = m.start_tick as number;
     const end = m.end_tick as number;

@@ -141,7 +141,7 @@ Spend your Career cash on **looks**. Open the **Shop** tab (or the profile menu 
 More to spend your Career cash on. The prices and rules are the same as the rest of the Shop (**Common $2,000, Rare $10,000, Epic $50,000, Legendary $250,000**; the money is gone for good; each thing is bought once; the Legendary ones also need a badge you have earned).
 * **For your screen only** (nobody else sees these, and they change no number): **candle colours** (Ocean, Neon, Aurora, the moving Rainbow, Diamond, Royal and more), **candle shapes** (Hollow, Slim, Rounded, Bold Wicks, Ghost, Crystal), **chart backgrounds** (Midnight Blue, Graph Paper, Green Code, Dusk, Galaxy, Northern Lights, Gold Vault), **chart effects** (Candle Glow, Heartbeat, Neon Price Line, Fire Candle, Diamond Sparkle) and **win styles** for the party after a win (Gold Rain, Candy Pop, Coin Shower, Star Burst, Fireworks, Neon Night, Diamond Rain, Royal Crown). Each card shows a small chart, or a **Try it** button for a win style, before you buy. Pick one in each place and every price chart you open wears it at once; with nothing picked your charts look exactly as before. Reduced motion gets still looks.
 * **The billboard**: three places at the top of the **Market** and **Memecoins** tabs, seen by everybody (visitors too), where you can show **a company you launched yourself** for **$5,000 an hour** (1, 3, 6, 12 or 24 hours, at most 24 hours from now). Book it in the **Launch** tab ("Book", then "Confirm"). First come, first served, one place per player; you can add hours to your own place. It only shows the company (picture, name, price, who shows it, time left) and a click opens it: it never changes a price. A company that fails stops being shown. The money comes out of Career cash and is gone, so your net worth and place on both leaderboards go down by the price.
-* Saved with the game as **schema 28**: **an older program will not open schema 28**, so copy the `data` folder before the first start of the new version. Banners, pets and other things are planned for a later update. Details: `docs/world.md` §30.
+* Saved with the game as **schema 28**: **an older program will not open schema 28**, so copy the `data` folder before the first start of the new version. Banners and pets came in the next update (below). Details: `docs/world.md` §30.
 
 ## Daily goals and the streak
 
@@ -161,6 +161,32 @@ A 1v1 match against **another real player picked by the lobby** now moves ranked
 * You can **never fall below the bottom of the highest tier you reached this season**. The same two players earn points from each other at most **3 times an hour**.
 * A season is a **week** (Monday 00:00 Tokyo time). Then everybody's points move halfway back to 100, and the top 10 with at least 5 matches are written down (top 3 shown). Badges for Silver, Gold, Platinum and Diamond, a podium finish and a season win. The ladder and your tier are on the **1v1** screen; the result screen and the history show your points.
 * Saved with the game as **schema 29**: **an older program will not open schema 29**, so copy the `data` folder before the first start of the new version. Details: `docs/world.md` §31.
+
+## Banners, pets and looks you earn
+
+Two new things to wear that **everybody sees**: a **banner** behind your name on your profile card (17: Dawn, Ocean Waves, Sunset Sky, Starfield, Gold Vault and more) and a **pet** next to your name (10: Chick, Pup, Fox, Dragon, Phoenix, Golden Bull and more). A pet starts as an **egg** and grows with your **best daily-goal streak** (it hatches at 3 days and grows again at 7, 14 and 30). Both are bought in the **Shop** with Career cash at the usual prices (the Legendary ones also need a badge). They give no money and no help in trading.
+* Some looks **can not be bought**: reach **Gold, Platinum or Diamond** in a ranked season (with at least 5 ranked matches) for that league's ring, title and banner; finish a season **1st** for the Season Champion looks; finish in the top 3 for a Season Podium title; be in the **team** that wins the week for the Team Champion looks. They are given at the end of the season or week, you get a pop-up, and you put them on in the Shop. Details: `docs/world.md` §34.
+
+## Rematch
+
+After a 1v1 match against another real player, press **Rematch** within **two minutes**. When both of you have pressed it, a new lobby of just the two of you opens and you press Ready. A rematch after a ranked match counts for ranked points too (the same 3-matches-an-hour limit between the same two players applies); a rematch of a friend match is a friend match. Details: `docs/world.md` §35.
+
+## Trophy room
+
+Click a player's name: under the badges the profile card now shows a **trophy room** (best ranked tier, season places, weekly podiums, team wins) and a few facts (1v1 wins, goals, streak, predictions, lessons, badges) and the player's team. Places and counts only, never money. Details: `docs/world.md` §36.
+
+## Teams
+
+Open the **Teams** tab (after Players). Start a team (a name and a short tag) or join an open one; invite players if it is invite-only. Every week (Monday 00:00 Tokyo time) the teams race: a team's score is the **average weekly growth** of its players, so a big team has no advantage, and a team needs **3 players** on the weekly board to be scored. A team has at most 10 players; you can be in one at a time. The best three teams are written down and the winning team's players get the **Team Champion** looks. A team gives no money and no help in trading. Details: `docs/world.md` §37.
+
+## Daily prediction
+
+On the **Goals** tab: one stock a day, the same for everybody. Say once whether its price will end the day **higher or lower** (Tokyo day). A right guess pays the same as one daily goal (10 XP, $10, $5 of 1v1 coins; the cash does not count as weekly growth); a wrong guess costs nothing. Your record is kept. Details: `docs/world.md` §38.
+
+## Market events
+
+At **21:00 Tokyo time**, at most once a day, something happens to the market: a **Market Storm**, a **Meme Frenzy**, a **Broad Rally** or a **Sell-off**. You are told only that there will be one; the headlines and the price moves come when it starts (stocks 4–12%, memecoins 20–45%; companies players launched are never touched). A strip at the top of the **Market** tab shows the time, the biggest moves and the last events. It needs the news system and an owner account; `TQ_EVENTS=0` switches it off. Details: `docs/world.md` §39.
+* All of this is saved with the game as **schema 30**: **an older program will not open schema 30**, so copy the `data` folder before the first start of the new version. On Render the first start logs "Database updated to schema version 30".
 
 ## Calmer stocks
 
@@ -458,4 +484,4 @@ The engine never imports React, and React never sees the full candle lists — o
 
 ## Not built yet
 
-Career recovery mechanic, match history on profiles, player stats beyond the net-worth leaderboard, the Saturday giveaway, and (for calls) group calls, video, screen sharing, calls with non-friends and a missed-call note inside the chat; for companies, a button for the owner to make a company fail and new companies that replace failed ones; for pictures, no crop tool beyond a square; for the Shop, banners, pets and other things (a later update). Not planned: real market data, and buying virtual currency with real money. See `docs/world.md` §11 for the known limits of what exists (for example: news text is template-based, the server must stay running for "24/7", the persistent world has no independent Python reference).
+Career recovery mechanic, match history on profiles, player stats beyond the net-worth leaderboard, the Saturday giveaway, and (for calls) group calls, video, screen sharing, calls with non-friends and a missed-call note inside the chat; for companies, a button for the owner to make a company fail and new companies that replace failed ones; for pictures, no crop tool beyond a square; for the Shop, seasonal items. Not planned: real market data, and buying virtual currency with real money. See `docs/world.md` §11 for the known limits of what exists (for example: news text is template-based, the server must stay running for "24/7", the persistent world has no independent Python reference).

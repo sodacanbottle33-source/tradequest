@@ -1171,6 +1171,104 @@ CREATE TABLE away_marks (
 );
 `,
   },
+  {
+    version: 30,
+    name: 'banners and pets, rematch, trophies, teams, the daily prediction and market events',
+    sql: `
+-- Banners and pets (server/cosmetics.ts, docs/world.md §34): two more places on a player that everybody sees. The things themselves are in src/shared/cosmeticCatalog.ts.
+-- A pet's growth stage is NOT stored: it is worked out from the player's best streak when it is shown.
+ALTER TABLE user_looks ADD COLUMN banner TEXT;
+ALTER TABLE user_looks ADD COLUMN pet TEXT;
+
+-- Rematch (server/lobby/service.ts, docs/world.md §35): 1 for a match two players agreed to play again straight after a match. It is a lobby of exactly those two, closed to
+-- everybody else; unlike a friend match (friends = 1) it counts for ranked points when the match before it did.
+ALTER TABLE matches ADD COLUMN rematch INTEGER NOT NULL DEFAULT 0 CHECK (rematch IN (0, 1));
+
+-- The best three of each finished week of the weekly board (server/social.ts), written down when the week turns, for the trophy room (docs/world.md §36).
+CREATE TABLE weekly_winners (
+  week_start_ms INTEGER NOT NULL,
+  place         INTEGER NOT NULL CHECK (place BETWEEN 1 AND 3),
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  gain_pct      REAL NOT NULL,
+  gain_cents    INTEGER NOT NULL,
+  PRIMARY KEY (week_start_ms, place)
+) WITHOUT ROWID;
+CREATE INDEX weekly_winners_by_user ON weekly_winners(user_id);
+
+-- Teams (server/teams.ts, docs/world.md §37). A player is in at most one team (user_id is the key of team_members). name_key and tag_key are the lower-case spellings, so two
+-- teams cannot be told apart only by capital letters. A team that has no members left is deleted with its rows.
+CREATE TABLE teams (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL CHECK (length(name) BETWEEN 3 AND 20),
+  name_key   TEXT NOT NULL UNIQUE,
+  tag        TEXT NOT NULL CHECK (length(tag) BETWEEN 2 AND 4),
+  tag_key    TEXT NOT NULL UNIQUE,
+  leader_id  INTEGER NOT NULL REFERENCES users(id),
+  open       INTEGER NOT NULL DEFAULT 1 CHECK (open IN (0, 1)),
+  created_ms INTEGER NOT NULL
+);
+CREATE TABLE team_members (
+  user_id   INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  team_id   INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  joined_ms INTEGER NOT NULL
+);
+CREATE INDEX team_members_by_team ON team_members(team_id);
+CREATE TABLE team_invites (
+  team_id    INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  invited_ms INTEGER NOT NULL,
+  PRIMARY KEY (team_id, user_id)
+) WITHOUT ROWID;
+-- The best teams of each finished week. The name and tag are copied, so the result stays readable when the team is later renamed or deleted.
+CREATE TABLE team_week_results (
+  week_start_ms INTEGER NOT NULL,
+  place         INTEGER NOT NULL CHECK (place BETWEEN 1 AND 3),
+  team_name     TEXT NOT NULL,
+  team_tag      TEXT NOT NULL,
+  score_pct     REAL NOT NULL,
+  members       INTEGER NOT NULL,
+  PRIMARY KEY (week_start_ms, place)
+) WITHOUT ROWID;
+-- Who was in a winning team that week (for the trophy room and the reward looks).
+CREATE TABLE team_week_members (
+  week_start_ms INTEGER NOT NULL,
+  place         INTEGER NOT NULL,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  PRIMARY KEY (week_start_ms, place, user_id)
+) WITHOUT ROWID;
+
+-- The daily prediction (server/predict.ts, docs/world.md §38). One company is the featured one of each Tokyo day (chosen once and kept); a player picks up or down once a day,
+-- the price he saw is kept, and when the day is over the pick is judged against the price then. A player risks nothing.
+CREATE TABLE predict_days (
+  day        INTEGER PRIMARY KEY,
+  company_id INTEGER NOT NULL
+);
+CREATE TABLE predictions (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  day        INTEGER NOT NULL,
+  company_id INTEGER NOT NULL,
+  pick       TEXT NOT NULL CHECK (pick IN ('up', 'down')),
+  price_from REAL NOT NULL,
+  picked_ms  INTEGER NOT NULL,
+  result     TEXT CHECK (result IN ('win', 'loss', 'draw')),
+  price_to   REAL,
+  judged_ms  INTEGER,
+  PRIMARY KEY (user_id, day)
+) WITHOUT ROWID;
+CREATE INDEX predictions_open ON predictions(day) WHERE result IS NULL;
+
+-- Market events (server/events.ts, docs/world.md §39): at most one a day, announced ahead without saying which companies. A row is written when the event is planned and
+-- finished when it ran, so a restart never runs it twice.
+CREATE TABLE market_events (
+  day        INTEGER PRIMARY KEY,
+  kind       TEXT NOT NULL,
+  planned_ms INTEGER NOT NULL,
+  status     TEXT NOT NULL CHECK (status IN ('planned', 'done', 'missed', 'off')),
+  fired_ms   INTEGER,
+  moves_json TEXT NOT NULL DEFAULT '[]'
+);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

@@ -549,8 +549,8 @@ describe('storage', () => {
       }
       for (const id of [1, 2, 3]) d.run("INSERT INTO users(id, username, display_name, pw_hash, role, created_ms) VALUES (?, ?, ?, 'x', 'player', 1)", id, `u${id}`, `u${id}`);
       d.run("INSERT INTO matches(id, state, created_ms, duration_ticks, start_cash_cents) VALUES (7, 'lobby', 5, 180, 10000000)");
-      expect(migrate(d)).toEqual([20, 21, 22, 23, 24, 25, 26, 27, 28, 29]); // (29 adds ranked 1v1, daily goals and the away card; 28 adds the Shop's own-screen gear and the billboard; 27 adds the Shop; 26 adds public groups, pictures and the username log; 25 adds the empty moderator and badge tables; 24 adds the empty company-picture table) (21 adds the empty private-chat tables)
-      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(29);
+      expect(migrate(d)).toEqual([20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]); // (30 adds banners, pets, rematch, trophies, teams, the daily prediction and market events; 29 adds ranked 1v1, daily goals and the away card; 28 adds the Shop's own-screen gear and the billboard; 27 adds the Shop; 26 adds public groups, pictures and the username log; 25 adds the empty moderator and badge tables; 24 adds the empty company-picture table) (21 adds the empty private-chat tables)
+      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(30);
       expect(d.all('SELECT id, state, friends FROM matches')).toEqual([{ id: 7, state: 'lobby', friends: 0 }]);
       for (const table of ['challenges', 'chat_messages', 'chat_restrictions', 'chat_reports']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)?.n).toBe(0);
       expect(migrate(d)).toEqual([]);

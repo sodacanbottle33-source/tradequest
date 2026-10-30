@@ -516,8 +516,8 @@ const openPosition = (r: Running, account: number, company: number, short = fals
 };
 
 describe('the second batch of badges (docs/world.md §28)', () => {
-  it('BADGE-12: the list grew to 56 (12 more for daily goals and ranked 1v1); four are secret and each secret one has a hint; the others have none; the best three still start with the highest tier', () => {
-    expect(BADGES).toHaveLength(56);
+  it('BADGE-12: the list grew to 64 (12 more for daily goals and ranked 1v1, 8 more for predictions, the weekly podium and teams); four are secret and each secret one has a hint; the others have none; the best three still start with the highest tier', () => {
+    expect(BADGES).toHaveLength(64);
     const secret = BADGES.filter((b) => b.secret === true);
     expect(secret.map((b) => b.id).sort()).toEqual(['all_sectors', 'chatterbox', 'lesson_learned', 'trade_days_7']);
     for (const b of BADGES) {
@@ -794,7 +794,7 @@ describe('the second batch of badges (docs/world.md §28)', () => {
     await signUp(r, 'bob');
     db(r).run('INSERT INTO user_badges(user_id, badge, earned_ms) VALUES (?, ?, ?)', idOf(r, 'alice'), 'chatterbox', r.clock.now());
     const page = (await call(r, '/api/badges', { cookie: alice })).json;
-    expect(page.badges).toHaveLength(56);
+    expect(page.badges).toHaveLength(64);
     expect(page.badges.find((b: any) => b.id === 'chatterbox')).toMatchObject({ earnedMs: r.clock.now(), owners: 1 });
     expect(page.badges.find((b: any) => b.id === 'lesson_learned')).toEqual({ id: 'lesson_learned', earnedMs: null, owners: 0 });
   }, LONG);

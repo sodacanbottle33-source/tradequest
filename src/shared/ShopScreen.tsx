@@ -6,9 +6,10 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
 import { Avatar, colourOf, initialOf } from './Avatar';
-import { COSMETICS, GEAR_SLOTS, RARITY_NAMES, SLOTS, isGearSlot, priceOf, priceText, type AnySlot, type CosmeticDef } from './cosmeticCatalog';
+import { COSMETICS, GEAR_SLOTS, LEAGUE_LOOKS, PROFILE_SLOTS, RARITY_NAMES, SEASON_CHAMPION_LOOKS, SEASON_PODIUM_LOOKS, SLOTS, TEAM_CHAMPION_LOOKS, isGearSlot, priceOf, priceText, type AnySlot, type CosmeticDef } from './cosmeticCatalog';
 import { formatCents } from './format';
 import { ChartSample, WinSample } from './GearSamples';
+import { PET_EGG, petById, petLabel } from './petCatalog';
 import { PlayerName } from './PlayerName';
 import { problemText } from './playersUtil';
 import { profileStore } from './profileStore';
@@ -35,6 +36,26 @@ export function Sample({ def, name }: { def: CosmeticDef; name: string }) {
       <span className="pname-wrap" aria-hidden="true">
         <strong className="pname">{name}</strong>
         <span className="ptitle">{def.name}</span>
+      </span>
+    );
+  }
+  if (def.slot === 'banner') {
+    return (
+      <span className={`pbanner shop-banner cos-${def.id}`} aria-hidden="true">
+        <strong className="pname">{name}</strong>
+      </span>
+    );
+  }
+  if (def.slot === 'pet') {
+    // The egg and the four forms it grows into, in order.
+    const forms = petById(def.id)?.forms ?? [];
+    return (
+      <span className="pet-sample" aria-hidden="true">
+        {[PET_EGG, ...forms].map((form, i) => (
+          <span className={`pet-form pet-stage-${i}`} key={i}>
+            {form}
+          </span>
+        ))}
       </span>
     );
   }
@@ -110,70 +131,104 @@ export function ShopScreen() {
     }
   };
 
+  /** One card: what it looks like, its name and rarity, and what can be done with it (buy, wear, take off, or how to earn it). */
+  const renderItem = (def: CosmeticDef, v: ShopView) => {
+    const owned = v.owned.includes(def.id);
+    const worn = (isGearSlot(def.slot) ? v.gear[def.slot] : v.equipped[def.slot]) === def.id;
+    const lock = owned ? null : lockReason(def, v);
+    const asking = confirming === def.id;
+    const earnedOnly = def.earn !== undefined;
+    return (
+      <li className={`shop-item rar-${def.rarity}${worn ? ' worn' : ''}`} key={def.id} data-testid={`shop-item-${def.id}`} data-owned={owned} data-worn={worn}>
+        <div className="shop-sample-box">
+          <Sample def={def} name={user.displayName} />
+        </div>
+        <div className="shop-item-info">
+          <strong>{def.name}</strong>
+          <span className={`rar-chip rar-${def.rarity}`}>{RARITY_NAMES[def.rarity]}</span>
+          {def.slot === 'pet' && worn && (
+            <span className="pet-now muted" data-testid={`pet-now-${def.id}`}>
+              Now: {petLabel(def.id, v.equipped.petStage ?? 0)}
+            </span>
+          )}
+        </div>
+        <div className="shop-item-act">
+          {owned ? (
+            worn ? (
+              <>
+                <span className="shop-wearing">{isGearSlot(def.slot) ? 'On' : 'Wearing'}</span>
+                <button type="button" className="btn btn-small btn-ghost" disabled={busy !== null} onClick={() => void wear(def.slot, null, def)} data-testid={`shop-off-${def.id}`}>
+                  Take off
+                </button>
+              </>
+            ) : (
+              <button type="button" className="btn btn-small" disabled={busy !== null} onClick={() => void wear(def.slot, def.id, def)} data-testid={`shop-wear-${def.id}`}>
+                {isGearSlot(def.slot) ? 'Use' : 'Wear'}
+              </button>
+            )
+          ) : earnedOnly ? (
+            <span className="shop-lock muted" data-testid={`shop-earn-${def.id}`}>
+              {def.how}
+            </span>
+          ) : asking ? (
+            <>
+              <button type="button" className="btn btn-small btn-buy" disabled={busy !== null} onClick={() => void buy(def)} data-testid={`shop-confirm-${def.id}`}>
+                Confirm {priceText(priceOf(def))}
+              </button>
+              <button type="button" className="btn btn-small btn-ghost" disabled={busy !== null} onClick={() => setConfirming(null)} data-testid={`shop-cancel-${def.id}`}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="btn btn-small" disabled={lock !== null || busy !== null} onClick={() => setConfirming(def.id)} data-testid={`shop-buy-${def.id}`}>
+                Buy {priceText(priceOf(def))}
+              </button>
+              {lock && (
+                <span className="shop-lock muted" data-testid={`shop-lock-${def.id}`}>
+                  {lock}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      </li>
+    );
+  };
+
   const renderSlot = (slotId: AnySlot, label: string, hint: string, v: ShopView) => {
-    const items = COSMETICS.filter((c) => c.slot === slotId).sort((a, b) => a.rarity - b.rarity);
+    const items = COSMETICS.filter((c) => c.slot === slotId)
+      .filter((c) => c.earn === undefined) // looks that are earned are not for sale: they have their own sections below
+      .sort((a, b) => a.rarity - b.rarity);
     return (
       <section className={`card shop-section shop-slot-${slotId}`} key={slotId} aria-label={label} data-testid={`shop-slot-${slotId}`}>
         <h3>
           {label} <span className="h2-note">{hint}</span>
         </h3>
-        <ul className="shop-grid">
-          {items.map((def) => {
-            const owned = v.owned.includes(def.id);
-            const worn = (isGearSlot(def.slot) ? v.gear[def.slot] : v.equipped[def.slot]) === def.id;
-            const lock = owned ? null : lockReason(def, v);
-            const asking = confirming === def.id;
-            return (
-              <li className={`shop-item rar-${def.rarity}${worn ? ' worn' : ''}`} key={def.id} data-testid={`shop-item-${def.id}`} data-owned={owned} data-worn={worn}>
-                <div className="shop-sample-box">
-                  <Sample def={def} name={user.displayName} />
-                </div>
-                <div className="shop-item-info">
-                  <strong>{def.name}</strong>
-                  <span className={`rar-chip rar-${def.rarity}`}>{RARITY_NAMES[def.rarity]}</span>
-                </div>
-                <div className="shop-item-act">
-                  {owned ? (
-                    worn ? (
-                      <>
-                        <span className="shop-wearing">{isGearSlot(def.slot) ? 'On' : 'Wearing'}</span>
-                        <button type="button" className="btn btn-small btn-ghost" disabled={busy !== null} onClick={() => void wear(def.slot, null, def)} data-testid={`shop-off-${def.id}`}>
-                          Take off
-                        </button>
-                      </>
-                    ) : (
-                      <button type="button" className="btn btn-small" disabled={busy !== null} onClick={() => void wear(def.slot, def.id, def)} data-testid={`shop-wear-${def.id}`}>
-                        {isGearSlot(def.slot) ? 'Use' : 'Wear'}
-                      </button>
-                    )
-                  ) : asking ? (
-                    <>
-                      <button type="button" className="btn btn-small btn-buy" disabled={busy !== null} onClick={() => void buy(def)} data-testid={`shop-confirm-${def.id}`}>
-                        Confirm {priceText(priceOf(def))}
-                      </button>
-                      <button type="button" className="btn btn-small btn-ghost" disabled={busy !== null} onClick={() => setConfirming(null)} data-testid={`shop-cancel-${def.id}`}>
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button type="button" className="btn btn-small" disabled={lock !== null || busy !== null} onClick={() => setConfirming(def.id)} data-testid={`shop-buy-${def.id}`}>
-                        Buy {priceText(priceOf(def))}
-                      </button>
-                      {lock && (
-                        <span className="shop-lock muted" data-testid={`shop-lock-${def.id}`}>
-                          {lock}
-                        </span>
-                      )}
-                    </>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <ul className="shop-grid">{items.map((def) => renderItem(def, v))}</ul>
       </section>
     );
+  };
+
+  /** The looks that can not be bought: given for reaching a ranked tier, finishing a season high, or winning the weekly team race. They are shown tier by tier (the ring, the title and the banner of a tier together). */
+  const earnedItems = (kind: 'ranked' | 'team', order: readonly string[]): CosmeticDef[] => {
+    const all = COSMETICS.filter((c) => c.earn === kind);
+    const first = order.map((id) => all.find((c) => c.id === id)).filter((c): c is CosmeticDef => c !== undefined);
+    return [...first, ...all.filter((c) => !order.includes(c.id))];
+  };
+  const renderEarned = (v: ShopView) => {
+    const groups: { key: string; label: string; hint: string; items: CosmeticDef[] }[] = [
+      { key: 'ranked', label: 'Earned in ranked 1v1', hint: 'Reach a tier, or finish a season on the podium. Given at the end of the season.', items: earnedItems('ranked', [...LEAGUE_LOOKS.flatMap((l) => l.items), ...SEASON_PODIUM_LOOKS, ...SEASON_CHAMPION_LOOKS]) },
+      { key: 'team', label: 'Earned with your team', hint: 'Be in the team that wins the weekly team race.', items: earnedItems('team', TEAM_CHAMPION_LOOKS) },
+    ];
+    return groups.map((g) => (
+      <section className={`card shop-section shop-earned shop-earned-${g.key}`} key={g.key} aria-label={g.label} data-testid={`shop-earned-${g.key}`}>
+        <h3>
+          {g.label} <span className="h2-note">{g.hint}</span>
+        </h3>
+        <ul className="shop-grid">{g.items.map((def) => renderItem(def, v))}</ul>
+      </section>
+    ));
   };
 
   return (
@@ -218,6 +273,8 @@ export function ShopScreen() {
       )}
 
       {view && SLOTS.map((slot) => renderSlot(slot.id, slot.label, slot.hint, view))}
+      {view && PROFILE_SLOTS.map((slot) => renderSlot(slot.id, slot.label, slot.hint, view))}
+      {view && renderEarned(view)}
 
       {view && (
         <section className="card shop-head shop-screen-only" aria-label="For your screen only" data-testid="shop-gear-head">

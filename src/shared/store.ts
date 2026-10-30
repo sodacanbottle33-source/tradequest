@@ -11,12 +11,14 @@ import { badgeById } from './badgeCatalog';
 import { playBadgeShow } from './badgeShow';
 import type { Gear, Look } from './cosmeticCatalog';
 import { awayStore } from './awayStore';
+import { earnedNotice, marketEventNotice, predictedNotice } from './extrasUtil';
+import { extrasStore } from './extrasStore';
 import { billboardStore } from './billboardStore';
 import { goalNotice } from './goalUtil';
 import { goalsStore } from './goalsStore';
 import { logoStore } from './logoStore';
 import { profileStore } from './profileStore';
-import type { Account, Announcement, BanNotice, BillboardSlotView, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, FriendsState, GoalsEvent, Health, LimitNotice, LimitOrder, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, TradingPause, User } from './types';
+import type { Account, Announcement, BanNotice, BillboardSlotView, CallEnded, CallSignal, CallState, CallView, ChallengesState, ChatMessage, ChatView, ChatYou, EarnedEvent, FriendsState, GoalsEvent, Health, LimitNotice, LimitOrder, MarketEventPush, Match, NewsItem, MessagesView, OverviewRow, PmConversation, PmMessage, PmSendResult, PositionNotice, PredictedEvent, TradingPause, User } from './types';
 
 /** A pop-up about a position the market closed by itself. */
 export interface Toast extends ToastText {
@@ -280,6 +282,8 @@ export class SharedStore {
         // Today's goals (asking also pays any goal finished while the page was closed) and the "while you were away" card.
         void goalsStore.load();
         void awayStore.load();
+        void extrasStore.loadPredict();
+        void extrasStore.loadEvents();
       }
     });
     es.addEventListener('tick', (e) => this.onTick(JSON.parse((e as MessageEvent<string>).data) as TickPayload));
@@ -303,6 +307,14 @@ export class SharedStore {
     es.addEventListener('role_changed', (e) => this.onRoleChanged(JSON.parse((e as MessageEvent<string>).data) as { role: string }));
     // A daily goal (or the bonus for all three, or a streak look) was paid.
     es.addEventListener('goals', (e) => this.onGoals(JSON.parse((e as MessageEvent<string>).data) as GoalsEvent));
+    // Looks he earned (ranked 1v1 tiers and seasons, the weekly team race) were just given to him.
+    es.addEventListener('earned', (e) => this.onEarned(JSON.parse((e as MessageEvent<string>).data) as EarnedEvent));
+    // One of his daily guesses was judged.
+    es.addEventListener('predicted', (e) => this.onPredicted(JSON.parse((e as MessageEvent<string>).data) as PredictedEvent));
+    // A market event started (21:00 Tokyo time): every signed-in page hears it.
+    es.addEventListener('marketevent', (e) => this.onMarketEvent(JSON.parse((e as MessageEvent<string>).data) as MarketEventPush));
+    // Something about this player's team changed (a player joined or left, an invitation): the Teams page asks again.
+    es.addEventListener('teams', () => extrasStore.onTeams());
     // This player earned one or more achievement badges.
     es.addEventListener('badges', (e) => this.onBadges(JSON.parse((e as MessageEvent<string>).data) as { earned: string[] }));
     // A player paid for a new username: every list that shows the old name is brought up to date.
@@ -373,6 +385,27 @@ export class SharedStore {
     if (text) this.showToast('', text, TOAST_MS);
     void goalsStore.load();
     void this.refreshPrivate(false);
+  }
+
+  /** Looks he earned were given to him: say which (the Shop shows them, and he decides whether to wear them). */
+  private onEarned(d: EarnedEvent): void {
+    const text = earnedNotice(d);
+    if (text) this.showToast('', text, TOAST_MS);
+    this.set({ badgesVersion: this.state.badgesVersion + 1 }); // an open Shop asks again
+  }
+
+  /** One of his daily guesses was judged: say how it went and bring the card, the Goals number and his money up to date. */
+  private onPredicted(d: PredictedEvent): void {
+    this.showToast('', predictedNotice(d), TOAST_MS);
+    void extrasStore.loadPredict();
+    void goalsStore.load();
+    void this.refreshPrivate(false);
+  }
+
+  /** A market event started: say what, and bring the events strip up to date. */
+  private onMarketEvent(d: MarketEventPush): void {
+    this.showToast('', marketEventNotice(d), TOAST_MS);
+    void extrasStore.loadEvents();
   }
 
   /** The server gave this player one or more badges: say which, and make an open Badges page ask again. */
@@ -787,6 +820,7 @@ export class SharedStore {
       billboardStore.clearMine();
       goalsStore.clear();
       awayStore.clear();
+      extrasStore.clear();
       void this.recheckMe();
     }
   }
@@ -816,6 +850,8 @@ export class SharedStore {
     void profileStore.start();
     void goalsStore.load();
     void awayStore.load();
+    void extrasStore.loadPredict();
+    void extrasStore.loadEvents();
   }
 
   async signOut(): Promise<void> {
@@ -827,6 +863,7 @@ export class SharedStore {
       billboardStore.clearMine();
       goalsStore.clear();
       awayStore.clear();
+      extrasStore.clear();
       this.set({ user: null, banned: null, career: null, friends: null, challenges: null, challengeNote: null, chat: null, messages: null, pmOpen: null, pmThread: null, pmCompose: null, profileFor: null, limits: [], match: null, walletCents: 0, toasts: [] });
       for (const t of this.toastTimers.values()) clearTimeout(t);
       this.toastTimers.clear();

@@ -36,9 +36,10 @@ describe('what is for sale', () => {
     expect(priceText(25_000_000)).toBe('$250,000');
     expect(new Set(COSMETICS.map((c) => c.id)).size).toBe(COSMETICS.length);
     expect(new Set(COSMETICS.map((c) => `${c.slot}:${c.name}`)).size).toBe(COSMETICS.length);
-    const count = (slot: string) => COSMETICS.filter((c) => c.slot === slot).length;
+    // Counted among the things for sale: the earned ones (ranked play, the team race) are not sold and have their own checks in tests/server-looks.test.ts.
+    const count = (slot: string) => COSMETICS.filter((c) => c.slot === slot && c.earn === undefined).length;
     expect([count('color'), count('glow'), count('frame'), count('title')]).toEqual([8, 5, 10, 13]);
-    const letter: Record<string, string> = { color: 'c_', glow: 'g_', frame: 'f_', title: 't_', candles: 'cc_', shape: 'sh_', backdrop: 'bg_', effect: 'fx_', win: 'ws_' };
+    const letter: Record<string, string> = { color: 'c_', glow: 'g_', frame: 'f_', title: 't_', banner: 'bn_', pet: 'p_', candles: 'cc_', shape: 'sh_', backdrop: 'bg_', effect: 'fx_', win: 'ws_' };
     for (const c of COSMETICS) {
       expect(c.id.startsWith(letter[c.slot] as string)).toBe(true);
       expect([1, 2, 3, 4]).toContain(c.rarity);
@@ -341,7 +342,7 @@ describe('what an old database keeps', () => {
         }
       });
       d.run("INSERT INTO users(username, display_name, pw_hash, role, created_ms) VALUES ('a', 'a', 'x', 'player', 1)");
-      expect(migrate(d)).toEqual([27, 28, 29]);
+      expect(migrate(d)).toEqual([27, 28, 29, 30]);
       for (const t of ['user_cosmetics', 'user_looks']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n).toBe(0);
       d.run("INSERT INTO user_cosmetics(user_id, item, bought_ms, price_cents) VALUES (1, 'c_sky', 5, 200000)");
       expect(() => d.run("INSERT INTO user_cosmetics(user_id, item, bought_ms, price_cents) VALUES (1, 'c_sky', 6, 200000)")).toThrow();

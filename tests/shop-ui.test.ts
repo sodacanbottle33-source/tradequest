@@ -214,6 +214,7 @@ describe('The styles', () => {
       if (c.slot === 'frame') expect(css, c.id).toContain(`.pfp-frame.cos-${c.id}`);
       else if (c.slot === 'title') continue; // a title is only words under the name
       else if (isGearSlot(c.slot)) continue; // things for your own screen are checked in tests/gear-ui.test.ts (GEARUI-n)
+      else if (c.slot === 'banner' || c.slot === 'pet') continue; // banners and pets are checked in tests/looks-ui.test.ts (LOOKUI-n)
       else expect(css, c.id).toContain(`.pname.cos-${c.id}`);
     }
     for (const cls of ['.pfp-frame', '.pname-wrap', '.ptitle', '.shop-grid', '.shop-item', '.rar-chip', '.profile-card', '.profile-top', '.profile-facts']) expect(css, cls).toContain(cls);

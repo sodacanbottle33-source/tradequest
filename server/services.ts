@@ -25,6 +25,10 @@ import type { Billboard } from './billboard';
 import type { Away } from './away';
 import type { Daily } from './daily';
 import type { Ranked } from './ranked';
+import type { MarketEvents } from './events';
+import type { Predict } from './predict';
+import type { Teams } from './teams';
+import type { Trophies } from './trophies';
 import type { Shop } from './cosmetics';
 import type { CompanyPictures } from './companyPictures';
 import type { Profiles } from './profile';
@@ -64,6 +68,14 @@ export interface Services {
   readonly ranked: Ranked;
   /** Daily goals, the streak and the free looks for it (server/daily.ts). */
   readonly daily: Daily;
+  /** The trophy room: what a player has won, read from what the game keeps (server/trophies.ts). */
+  readonly trophies: Trophies;
+  /** Teams and the weekly team race (server/teams.ts). */
+  readonly teams: Teams;
+  /** The daily prediction: one featured stock a day, guess up or down (server/predict.ts). */
+  readonly predict: Predict;
+  /** Market events at 21:00 Tokyo time: a storm, a meme frenzy, a rally or a sell-off (server/events.ts). */
+  readonly events: MarketEvents;
   /** "While you were away": what changed since the player's last page closed (server/away.ts). */
   readonly away: Away;
   /** Friends, the player list and the richest-players leaderboard (server/social.ts). */

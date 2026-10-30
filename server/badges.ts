@@ -115,7 +115,24 @@ const RULES: Record<string, Rule> = {
   rank_diamond: () => 'SELECT user_id FROM ranked_player WHERE best_tier >= 4',
   season_podium: () => 'SELECT DISTINCT user_id FROM ranked_season_results WHERE place <= 3',
   season_champion: () => 'SELECT DISTINCT user_id FROM ranked_season_results WHERE place = 1',
+  // ---- the fourth batch (docs/world.md §36, §37, §38): the daily prediction, the weekly board's podium and teams
+  predict_1: () => "SELECT DISTINCT user_id FROM predictions WHERE result = 'win'",
+  // A run of right guesses in the order the days were played; a draw is left out of the count (it neither adds nor breaks). Days with no guess do not break a run either.
+  predict_run_3: () => predictRun(3),
+  predict_run_7: () => predictRun(7),
+  predict_25: () => "SELECT user_id FROM predictions WHERE result = 'win' GROUP BY user_id HAVING COUNT(*) >= 25",
+  weekly_podium: () => 'SELECT DISTINCT user_id FROM weekly_winners',
+  weekly_champion: () => 'SELECT DISTINCT user_id FROM weekly_winners WHERE place = 1',
+  team_player: () => 'SELECT user_id FROM team_members',
+  team_champion: () => 'SELECT DISTINCT user_id FROM team_week_members WHERE place = 1',
 };
+
+/** Players with at least `n` right guesses in a row (islands of consecutive wins among the judged guesses that were not draws). */
+function predictRun(n: number): string {
+  return `WITH j AS (SELECT user_id, result, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY day) AS rn FROM predictions WHERE result IN ('win', 'loss')),
+               w AS (SELECT user_id, rn - ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY rn) AS grp FROM j WHERE result = 'win')
+          SELECT user_id FROM w GROUP BY user_id, grp HAVING COUNT(*) >= ${n}`;
+}
 
 /** One closed trade with at least this much profit is a Home Run: $500 (the same size the game calls a huge win). */
 export const HOME_RUN_CENTS = 50_000;

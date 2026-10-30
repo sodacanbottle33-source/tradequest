@@ -1,9 +1,10 @@
 // Ranked 1v1 (docs/world.md §31). The arithmetic (tiers, points, the floor, the soft reset) is src/world/rankedRules.ts; this file keeps the players' points, settles them
 // inside the same transaction that settles a match, starts a new season every Monday 00:00 Tokyo time and answers the ladder.
 //
-// What counts: a match the lobby made between two REAL players who did not agree on it beforehand. A friend match (a challenge), a match against a bot, a cancelled match and
-// an abandoned one (both left) never move points. The same two players earn points from each other at most PAIR_LIMIT times an hour, so friends cannot trade wins.
-// Nothing here gives money, changes a price or an order: it is points and a name for them.
+// What counts: a match the lobby made between two REAL players who did not agree on it beforehand (a rematch right after such a match counts too, docs/world.md §35). A friend
+// match (a challenge), a match against a bot, a cancelled match and an abandoned one (both left) never move points. The same two players earn points from each other at most PAIR_LIMIT times an hour, so friends cannot trade wins.
+// Nothing here gives money, changes a price or an order: it is points and a name for them. At the end of a season the players who reached Gold, Platinum or Diamond (with at
+// least 5 ranked matches) are given the matching league looks, and the top places get the season looks (docs/world.md §34): looks only, never worn automatically.
 
 import {
   PAIR_LIMIT,
@@ -21,6 +22,7 @@ import {
   type PlayerResult,
   type RankTier,
 } from '../src/world';
+import { LEAGUE_LOOKS, SEASON_CHAMPION_LOOKS, SEASON_PODIUM_LOOKS, cosmeticById } from '../src/shared/cosmeticCatalog';
 import type { User } from './auth';
 import type { Logger } from './log';
 import { WEEK_MS, weekStartOf } from './social';
@@ -30,6 +32,16 @@ export interface RankedDeps {
   readonly db: Db;
   readonly now: () => number;
   readonly log: Logger;
+  /** Gives a player an earned look (the Shop's `award`); says whether it was new. Without it nothing is given. */
+  readonly award?: (userId: number, item: string, reason: string) => boolean;
+  /** Tells the pages of ONE player something (the "earned" pop-up). */
+  readonly tell?: (userId: number, event: string, data: unknown) => void;
+}
+
+/** What is told to a player's pages when a season ended and he earned looks. */
+export interface EarnedEvent {
+  readonly reason: string;
+  readonly items: readonly { readonly id: string; readonly name: string }[];
 }
 
 /** How many players the ladder shows. */
@@ -130,8 +142,10 @@ export class Ranked {
     const season = this.seasonNow();
     const stored = Number(db.get<{ value: string }>('SELECT value FROM meta WHERE key = ?', SEASON_KEY)?.value ?? 0);
     if (stored === season) return false;
+    const earned = new Map<number, { reason: string; items: string[] }>();
     db.tx(() => {
       if (stored > 0) {
+        this.awardLooks(stored, earned);
         const top = db.all<{ user_id: number; points: number; matches: number }>(
           `SELECT r.user_id, r.points, r.matches FROM ranked_player r JOIN users u ON u.id = r.user_id
             WHERE r.season_ms = ? AND r.matches >= ? AND u.role <> 'owner'
@@ -159,7 +173,54 @@ export class Ranked {
       }
       db.run('INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', SEASON_KEY, String(season));
     });
+    // Tell the players who earned something (after the transaction, so nobody hears about a look that was rolled back).
+    for (const [userId, got] of earned) {
+      const event: EarnedEvent = { reason: got.reason, items: got.items.map((id) => ({ id, name: cosmeticById(id)?.name ?? id })) };
+      this.d.tell?.(userId, 'earned', event);
+    }
     return stored > 0;
+  }
+
+  /**
+   * The looks of a season that just ended (call inside the season's closing transaction, before the points are reset): every player with enough matches is given the league
+   * looks of every tier up to the highest he reached, the top three the podium title and the winner the champion looks. A look he already has is not given twice.
+   * `earned` collects what was new, for the pop-up.
+   */
+  private awardLooks(season: number, earned: Map<number, { reason: string; items: string[] }>): void {
+    const award = this.d.award;
+    if (!award) return;
+    const { db } = this.d;
+    const note = (userId: number, reason: string, item: string): void => {
+      if (!award(userId, item, reason)) return;
+      const have = earned.get(userId) ?? { reason, items: [] };
+      have.items.push(item);
+      earned.set(userId, have);
+    };
+    const rows = db.all<{ user_id: number; peak_tier: number }>(
+      `SELECT r.user_id, r.peak_tier FROM ranked_player r JOIN users u ON u.id = r.user_id
+        WHERE r.season_ms = ? AND r.matches >= ? AND u.role <> 'owner'
+        ORDER BY r.user_id`,
+      season,
+      SEASON_MIN_MATCHES,
+    );
+    for (const r of rows) {
+      for (const league of LEAGUE_LOOKS) {
+        const at = RANK_TIERS.findIndex((t) => t.id === league.tier);
+        if (at < 0 || r.peak_tier < at) continue;
+        for (const item of league.items) note(r.user_id, 'a ranked season', item);
+      }
+    }
+    const top = db.all<{ user_id: number }>(
+      `SELECT r.user_id FROM ranked_player r JOIN users u ON u.id = r.user_id
+        WHERE r.season_ms = ? AND r.matches >= ? AND u.role <> 'owner'
+        ORDER BY r.points DESC, r.wins DESC, r.user_id LIMIT 3`,
+      season,
+      SEASON_MIN_MATCHES,
+    );
+    top.forEach((t, i) => {
+      for (const item of SEASON_PODIUM_LOOKS) note(t.user_id, 'a ranked season', item);
+      if (i === 0) for (const item of SEASON_CHAMPION_LOOKS) note(t.user_id, 'a ranked season', item);
+    });
   }
 
   // ---- settling a match ---------------------------------------------------------------------------------------------

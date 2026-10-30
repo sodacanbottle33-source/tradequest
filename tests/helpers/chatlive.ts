@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect } from 'vitest';
-import { createApp, type App } from '../../server/app';
+import { createApp, type App, type AppOptions } from '../../server/app';
 import { NEW_ACCOUNT_WAIT_MS } from '../../server/chat';
 import { loadConfig } from '../../server/config';
 import { Logger } from '../../server/log';
@@ -31,7 +31,7 @@ export interface Reply {
 }
 
 /** Call once at the top of a test file: it closes every server the test started after each test. */
-export function liveRig(prefix: string, owner = 'boss', companies = '12') {
+export function liveRig(prefix: string, owner = 'boss', companies = '12', extra: Partial<AppOptions> = {}) {
   const running: Running[] = [];
   const dirs: string[] = [];
   const streams: AbortController[] = [];
@@ -57,7 +57,7 @@ export function liveRig(prefix: string, owner = 'boss', companies = '12') {
     dirs.push(dir);
     const clock = new Clock();
     const config = loadConfig({ TQ_DATA_DIR: dir, TQ_COMPANIES: companies, TQ_WARMUP_DAYS: '1', TQ_PORT: '8787', TQ_OWNER: owner });
-    const app = createApp({ config, log: new Logger({ sink: null, now: clock.now }), worldSeed: 777, now: clock.now, flowGain: 0 });
+    const app = createApp({ config, log: new Logger({ sink: null, now: clock.now }), worldSeed: 777, now: clock.now, flowGain: 0, ...extra });
     const server = createServer(app.handler);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const r = { app, server, base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, dir, clock };

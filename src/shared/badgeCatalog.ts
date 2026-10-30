@@ -30,7 +30,7 @@ export const BADGE_GROUPS: readonly { readonly id: BadgeGroup; readonly label: s
   { id: 'launching', label: 'Launching' },
   { id: 'social', label: 'Friends and chat' },
   { id: 'learning', label: 'Learn and matches' },
-  { id: 'daily', label: 'Daily goals and ranked' },
+  { id: 'daily', label: 'Daily goals, ranked and teams' },
 ];
 
 export const TIER_NAMES: readonly string[] = ['', 'Bronze', 'Silver', 'Gold', 'Diamond'];
@@ -100,6 +100,15 @@ export const BADGES: readonly BadgeDef[] = [
   { id: 'rank_diamond', group: 'daily', tier: 4, icon: '💎', name: 'Diamond League', how: 'Reach Diamond in ranked 1v1.' },
   { id: 'season_podium', group: 'daily', tier: 3, icon: '🎖️', name: 'Podium Finish', how: 'Finish a ranked season in the top 3 (at least 5 ranked matches).' },
   { id: 'season_champion', group: 'daily', tier: 4, icon: '🌟', name: 'Season Champion', how: 'Finish a ranked season in 1st place (at least 5 ranked matches).' },
+  // ---- the daily prediction, the weekly board and teams (docs/world.md §36, §37, §38)
+  { id: 'predict_1', group: 'daily', tier: 1, icon: '🔮', name: 'First Guess', how: 'Get a daily prediction right.' },
+  { id: 'predict_run_3', group: 'daily', tier: 2, icon: '🎲', name: 'Hot Hand', how: 'Get 3 daily predictions right in a row.' },
+  { id: 'predict_run_7', group: 'daily', tier: 3, icon: '🧿', name: 'Seer', how: 'Get 7 daily predictions right in a row.' },
+  { id: 'predict_25', group: 'daily', tier: 4, icon: '📜', name: 'Market Prophet', how: 'Get 25 daily predictions right.' },
+  { id: 'weekly_podium', group: 'daily', tier: 3, icon: '📊', name: 'Weekly Podium', how: 'Finish a week in the top 3 of the weekly board.' },
+  { id: 'weekly_champion', group: 'daily', tier: 4, icon: '👑', name: 'Weekly Champion', how: 'Finish a week in 1st place on the weekly board.' },
+  { id: 'team_player', group: 'daily', tier: 1, icon: '🤝', name: 'Team Player', how: 'Join or start a team.' },
+  { id: 'team_champion', group: 'daily', tier: 4, icon: '🛡️', name: 'Team Champion', how: 'Be in the team that wins the weekly team race.' },
 ];
 
 const BY_ID = new Map(BADGES.map((b) => [b.id, b]));

@@ -13,6 +13,10 @@ import { Away } from './away';
 import { Challenges } from './challenges';
 import { Daily } from './daily';
 import { Ranked } from './ranked';
+import { MarketEvents } from './events';
+import { Predict } from './predict';
+import { Teams } from './teams';
+import { Trophies } from './trophies';
 import { Chat } from './chat';
 import { ChatPictures } from './chatPictures';
 import type { Config } from './config';
@@ -58,6 +62,9 @@ import { registerProfileRoutes } from './routes/profile';
 import { registerBillboardRoutes } from './routes/billboard';
 import { registerDailyRoutes } from './routes/daily';
 import { registerShopRoutes } from './routes/shop';
+import { registerPredictRoutes } from './routes/predict';
+import { registerTeamRoutes } from './routes/teams';
+import { registerTrophyRoutes } from './routes/trophies';
 import { registerCallRoutes } from './routes/calls';
 import { registerMessageRoutes } from './routes/messages';
 import { registerSocialRoutes } from './routes/social';
@@ -91,6 +98,8 @@ export interface AppOptions {
   readonly botWaitMs?: number;
   /** For tests: how long a player has to be away before the "while you were away" card is made (default 30 minutes). */
   readonly awayMinMs?: number;
+  /** Market events at 21:00 Tokyo time (the game turns this on in main.ts; tests of other things leave it out so nothing moves a price at that hour). */
+  readonly events?: boolean;
   /** The bots also trade in the main market with their own Career accounts (the game turns this on in main.ts; tests of other things leave it out). */
   readonly marketBots?: boolean;
   /** The fee on stock orders in Career, in basis points of the order's value (the game turns it on in main.ts with STOCK_FEE_BPS; tests of other things leave it at 0). */
@@ -280,7 +289,14 @@ export function createApp(options: AppOptions): App {
   });
   limitStep = (tick) => limits.step(tick);
   // Ranked 1v1: points for matches between two real players from the lobby; the match service settles them in the same transaction as the match.
-  const ranked = new Ranked({ db, now, log });
+  // At the end of a season the top players are given earned looks by the Shop (made a little further down) and told with a pop-up.
+  const ranked = new Ranked({
+    db,
+    now,
+    log,
+    award: (userId, item, reason) => shop.award(userId, item, reason),
+    tell: (userId, event, data) => hub.publishTo(userId, event, data),
+  });
   const matches = new MatchService({
     db,
     world,
@@ -407,6 +423,42 @@ export function createApp(options: AppOptions): App {
       badges.sweep(userId);
     },
   });
+  // The trophy room: everything a player has won, read from what the other parts keep.
+  const trophies = new Trophies({ db });
+  // The daily prediction: one featured stock a day, a guess up or down, judged when the day ends and paid like a goal.
+  const predict = new Predict({
+    db,
+    world,
+    now,
+    log,
+    pay: (userId, reward, nowMs, reason) => daily.payReward(userId, reward, nowMs, reason),
+    gaveCash: (userId, cents) => social.gave(userId, cents, 'daily prediction'),
+    publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
+    refreshBadges: (userId) => {
+      badges.sweep(userId);
+    },
+  });
+  // Market events at 21:00 Tokyo time: the same machinery as the owner's special events (headline + price move), run by the game in the owner's name. Off unless asked for.
+  const events = new MarketEvents({
+    db,
+    world,
+    now,
+    log,
+    admin,
+    enabled: options.events === true && newsService !== null,
+    publish: (event, data) => hub.publishSignedIn(event, data),
+  });
+  // Teams: a weekly race between teams, scored by the average weekly growth of their members. The winners are given earned looks and told with a pop-up.
+  const teams = new Teams({
+    db,
+    now,
+    log,
+    growth: () => social.weeklyGrowth(),
+    lastGrowth: () => social.lastWeekGrowth(),
+    playerRef: (username) => social.playerRef(username),
+    tell: (userId, event, data) => hub.publishTo(userId, event, data),
+    award: (userId, item, reason) => shop.award(userId, item, reason),
+  });
   // "While you were away": a picture of the account is taken when a player's last page closes, and compared when he comes back after a while.
   const away = new Away({ db, world, trading, social, daily, now, log, minAwayMs: options.awayMinMs });
   hub.onUserGone = (userId) => {
@@ -469,6 +521,10 @@ export function createApp(options: AppOptions): App {
     matches,
     ranked,
     daily,
+    trophies,
+    teams,
+    predict,
+    events,
     away,
     social,
     challenges,
@@ -511,6 +567,9 @@ export function createApp(options: AppOptions): App {
   registerShopRoutes(router, services);
   registerBillboardRoutes(router, services);
   registerDailyRoutes(router, services);
+  registerTrophyRoutes(router, services);
+  registerTeamRoutes(router, services);
+  registerPredictRoutes(router, services);
   registerCompanyPictureRoutes(router, services);
   registerBadgeRoutes(router, services);
   registerLearnRoutes(router, services);
@@ -543,6 +602,11 @@ export function createApp(options: AppOptions): App {
       social.rollWeek();
     } catch (error) {
       log.error('social', `Weekly board update failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
+      teams.rollWeek();
+    } catch (error) {
+      log.error('teams', `Weekly team race update failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     try {
       ranked.rollSeason();
@@ -696,7 +760,20 @@ export function createApp(options: AppOptions): App {
       badgeFirst.unref?.();
       badgeTimer = setInterval(sweepBadges, 45_000);
       badgeTimer.unref?.();
-      goalTimer = setInterval(() => daily.sweepMany(hub.userIds()), 20_000);
+      goalTimer = setInterval(() => {
+        daily.sweepMany(hub.userIds());
+        // The daily prediction is judged when its day ends, and the evening's market event starts at 21:00 Tokyo time.
+        try {
+          predict.sweep();
+        } catch (error) {
+          log.warn('predict', `The prediction sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        try {
+          events.sweep();
+        } catch (error) {
+          log.warn('events', `The market event sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }, 20_000);
       goalTimer.unref?.();
     },
     close() {
