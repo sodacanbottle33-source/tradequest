@@ -6,7 +6,7 @@ import { lessonPrice } from '../learn/generate';
 import { pctText } from '../learn/grade';
 import type { AiStatus, CoachReply, LearnState, LessonResult, LessonView } from '../learn/wire';
 import { api } from './api';
-import { canExplain, coachNote, gradeBanner, goodPercent, readWhyPref, statText, weakSpots, writeWhyPref, xpText } from './learnUtil';
+import { canExplain, coachNote, gradeBanner, goodPercent, overviewParts, readWhyPref, statText, weakSpots, writeWhyPref, xpText } from './learnUtil';
 import { MiniChart } from './MiniChart';
 import { problemText } from './playersUtil';
 
@@ -65,8 +65,8 @@ function AiLine({ ai }: { ai: AiStatus }) {
   return (
     <p className="hint" data-testid="learn-ai-line">
       {ai.enabled
-        ? `AI teacher is on: ${ai.leftToday} comment${ai.leftToday === 1 ? '' : 's'} left today.`
-        : 'The game explains every lesson itself. An AI teacher can be turned on by the owner of this server.'}
+        ? `AI overview is on: ${ai.leftToday} overview${ai.leftToday === 1 ? '' : 's'} left today.`
+        : 'The game explains every lesson itself. An AI overview can be turned on by the owner of this server.'}
     </p>
   );
 }
@@ -133,7 +133,7 @@ export function LessonsView({ state, onState, onRefresh, tutorialDone, onGoTutor
     }
   };
 
-  // After an answer, the AI teacher (when it is on and the player has comments left) says what it thinks. The grade is already decided.
+  // After an answer, the AI (when it is on and the player has overviews left) writes an overview of the lesson. The grade is already decided.
   const resultId = phase.kind === 'result' ? phase.result.lessonId : 0;
   const resultAi = phase.kind === 'result' ? phase.result.ai : null;
   const askCoach = async (lessonId: number) => {
@@ -284,7 +284,7 @@ function QuestionCard({
       {explain && (
         <div className="lesson-why">
           <label className="check-row">
-            <input type="checkbox" checked={why} onChange={(e) => onWhy(e.target.checked)} data-testid="lesson-why-toggle" /> Tell the AI teacher why I chose this (optional)
+            <input type="checkbox" checked={why} onChange={(e) => onWhy(e.target.checked)} data-testid="lesson-why-toggle" /> Tell the AI why I chose this (optional)
           </label>
           {why && (
             <>
@@ -367,6 +367,35 @@ function ResultCard({
           <span className="muted">You wrote:</span> {result.reason}
         </p>
       )}
+      {coach.status !== 'none' && (
+        <div className="coach-box overview-box" data-testid="lesson-coach" aria-live="polite">
+          <h4>AI overview</h4>
+          {coach.status === 'loading' && <p className="muted">The AI is writing your overview…</p>}
+          {coach.status === 'ok' && (
+            <>
+              <div className="overview-parts" data-testid="lesson-coach-text">
+                {overviewParts(coach.text).map((part, i) => (
+                  <div key={i} className="overview-part" data-testid={`lesson-overview-part-${i}`}>
+                    {part.label !== null && <h5 className="overview-label">{part.label}</h5>}
+                    <p>{part.text}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="hint">Written by an AI. It can be wrong. Your grade above was decided by the game&apos;s rules, not by the AI.</p>
+            </>
+          )}
+          {coach.status === 'note' && <p className="muted">{coach.text}</p>}
+          {coach.status === 'failed' && (
+            <p className="muted">
+              {coachNote('failed')}{' '}
+              <button type="button" className="link-btn" onClick={onRetryCoach} data-testid="lesson-coach-retry">
+                Try again
+              </button>
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="lesson-sections">
         {result.sections.map((s, i) => (
           <div key={s.title} className="lesson-section" data-testid={`lesson-section-${i}`}>
@@ -390,30 +419,6 @@ function ResultCard({
           </li>
         ))}
       </ul>
-
-      {coach.status !== 'none' && (
-        <div className="coach-box" data-testid="lesson-coach" aria-live="polite">
-          <h4>AI teacher</h4>
-          {coach.status === 'loading' && <p className="muted">The teacher is thinking…</p>}
-          {coach.status === 'ok' && (
-            <>
-              <p className="coach-text" data-testid="lesson-coach-text">
-                {coach.text}
-              </p>
-              <p className="hint">Written by an AI. It can be wrong. Your grade above was decided by the game&apos;s rules, not by the AI.</p>
-            </>
-          )}
-          {coach.status === 'note' && <p className="muted">{coach.text}</p>}
-          {coach.status === 'failed' && (
-            <p className="muted">
-              {coachNote('failed')}{' '}
-              <button type="button" className="link-btn" onClick={onRetryCoach} data-testid="lesson-coach-retry">
-                Try again
-              </button>
-            </p>
-          )}
-        </div>
-      )}
 
       <div className="lesson-actions">
         <button type="button" className="btn btn-primary" onClick={onNext} disabled={busy} data-testid="lesson-next">

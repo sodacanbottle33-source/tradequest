@@ -52,16 +52,45 @@ export function weakSpots(stats: readonly { readonly name: string; readonly seen
     .map((s) => s.name);
 }
 
-/** Whether the "tell the teacher why" box may be offered: the AI is on and this player has comments left today. */
+/** Whether the "tell the AI why" box may be offered: the AI is on and this player has overviews left today. */
 export function canExplain(ai: { readonly enabled: boolean; readonly leftToday: number }): boolean {
   return ai.enabled && ai.leftToday > 0;
 }
 
-/** What to say in the teacher's box when the server did not give a comment. */
+/** What to say in the AI overview's box when the server did not give an overview. */
 export function coachNote(reason: 'ok' | 'off' | 'limit' | 'failed'): string | null {
-  if (reason === 'limit') return "You have used today's AI comments. The notes above still explain this chart; the AI is back tomorrow.";
-  if (reason === 'failed') return 'The AI teacher could not answer just now. The notes above still explain this chart.';
+  if (reason === 'limit') return "You have used today's AI overviews. The notes below still explain this chart; the AI is back tomorrow.";
+  if (reason === 'failed') return 'The AI could not write the overview just now. The notes below still explain this chart.';
   return null;
+}
+
+/** The labels the AI is asked to start its parts with (src/learn/coach.ts OVERVIEW_LABELS; the browser keeps its own copy and never imports the prompt). */
+const OVERVIEW_LABELS = ['Chart', 'Your move', 'Plan', 'Next'] as const;
+
+export interface OverviewPart {
+  /** One of the four labels, or null for text without one. */
+  readonly label: string | null;
+  readonly text: string;
+}
+
+/**
+ * The AI overview as parts: every line that starts with one of the four labels and a colon becomes a part with that label, and any other line
+ * is a part without one. Plain text only: the page shows each part as text, so nothing the AI writes can become markup.
+ */
+export function overviewParts(text: string): OverviewPart[] {
+  const parts: OverviewPart[] = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line === '') continue;
+    const found = OVERVIEW_LABELS.find((l) => line.toLowerCase().startsWith(`${l.toLowerCase()}:`));
+    if (found) {
+      const body = line.slice(found.length + 1).trim();
+      if (body !== '') parts.push({ label: found, text: body });
+    } else {
+      parts.push({ label: null, text: line });
+    }
+  }
+  return parts;
 }
 
 /** How a grade is announced above the result. */

@@ -5,7 +5,7 @@
 // A lesson is made by code (src/learn): the chart, the right answer and what happens next. The whole lesson is stored when it starts, so it stays
 // the same until it is answered, even if the program is updated in between. The browser only gets the part the player may see; the part that
 // happens next comes back with the grade, once. Grading is decided here, by the code in src/learn/grade.ts, never by an AI. The optional AI
-// teacher (server/aiClient.ts) is asked afterwards, for a personal comment on an answer that is already graded; if it is off, over its daily
+// teacher (server/aiClient.ts) is asked afterwards, for an "AI overview" of an answer that is already graded; if it is off, over its daily
 // limit or fails, the player still has the built-in teaching text.
 
 import { randomInt } from 'node:crypto';
@@ -369,7 +369,21 @@ export class Learn {
     this.spend(me.id, 1);
     try {
       const scenario = JSON.parse(row.scenario) as Scenario;
-      const prompt = buildCoachPrompt({ scenario, choiceId: row.choice as string, grade: row.grade as Grade, results: resultsOf(scenario), reason: row.reason });
+      // The record is what the player has done so far (counting this lesson): lesson numbers and level only, never his name or his money.
+      const mine = this.stats(me.id).find((x) => x.key === statKeyOf(scenario));
+      const progress = this.progress(me.id);
+      const record = {
+        seen: mine?.seen ?? 0,
+        best: mine?.best ?? 0,
+        ok: mine?.ok ?? 0,
+        wrong: mine?.wrong ?? 0,
+        level: progress.level,
+        title: progress.title,
+        lessonsDone: progress.lessonsDone,
+        streak: progress.streak,
+        bestStreak: progress.bestStreak,
+      };
+      const prompt = buildCoachPrompt({ scenario, choiceId: row.choice as string, grade: row.grade as Grade, results: resultsOf(scenario), reason: row.reason, record });
       const text = cleanCoachText(await ai.complete(prompt.system, prompt.user));
       if (text === null) throw new Error('empty answer');
       this.d.db.run('UPDATE learn_lessons SET coach_text = ?, coach_ms = ? WHERE id = ? AND coach_text IS NULL', text, this.d.now(), row.id);
@@ -377,7 +391,7 @@ export class Learn {
     } catch (error) {
       // A failed comment does not use up the player's allowance. (The message holds no key and no answer text: see server/aiClient.ts.)
       this.spend(me.id, -1);
-      this.d.log.warn('learn', `The AI teacher did not answer: ${error instanceof Error ? error.message : String(error)}`);
+      this.d.log.warn('learn', `The AI overview did not answer: ${error instanceof Error ? error.message : String(error)}`);
       return { text: null, reason: 'failed', ai: this.aiStatus(me.id) };
     }
   }

@@ -5,7 +5,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildCoachPrompt, builtInCoach, cleanCoachText, cleanReason, COACH_SYSTEM, COACH_TEXT_MAX, REASON_MAX } from '../src/learn/coach';
+import { buildCoachPrompt, builtInCoach, cleanCoachText, cleanReason, COACH_TEXT_MAX, OVERVIEW_LABELS, OVERVIEW_SYSTEM, REASON_MAX, stopIdeaOf, type CoachRecord } from '../src/learn/coach';
 import { CURATED } from '../src/world/catalogData';
 import { MEME_SEEDS } from '../src/world/memecoins';
 import { generate, generateDirection, generateSize, OUTCOME_CANDLES, lessonPrice, VISIBLE_CANDLES, type DirectionScenario, type SizeScenario } from '../src/learn/generate';
@@ -375,13 +375,14 @@ describe('the teaching text', () => {
     expect(Array.from(cleanReason('😀'.repeat(400)) as string)).toHaveLength(REASON_MAX);
   });
 
-  it('LEARN-28: what the AI writes is cleaned: plain text, no markdown marks, at most 900 characters, cut at a sentence', () => {
+  it('LEARN-28: what the AI writes is cleaned: plain text, no markdown marks, at most 1,600 characters, cut at a sentence', () => {
     expect(cleanCoachText(undefined)).toBeNull();
     expect(cleanCoachText('   \n ')).toBeNull();
     expect(cleanCoachText('**Good** job! # Next `step`')).toBe('Good job! Next step');
     expect(cleanCoachText('one\n\n\n\n\ntwo')).toBe('one\n\ntwo');
     const sentence = 'This is a short sentence about the chart. ';
     const out = cleanCoachText(sentence.repeat(60)) as string;
+    expect(COACH_TEXT_MAX).toBe(1600);
     expect(Array.from(out).length).toBeLessThanOrEqual(COACH_TEXT_MAX);
     expect(out.endsWith('.')).toBe(true);
     const noStops = cleanCoachText('a'.repeat(2000)) as string;
@@ -394,7 +395,7 @@ describe('the teaching text', () => {
     const s = generateDirection('breakout', 31);
     const results = directionResults(s);
     const p = buildCoachPrompt({ scenario: s, choiceId: 'short', grade: 'wrong', results, reason: 'it always drops here' });
-    expect(p.system).toBe(COACH_SYSTEM);
+    expect(p.system).toBe(OVERVIEW_SYSTEM);
     expect(p.system).toContain('never change them');
     expect(p.system).toContain('<player_reason>');
     expect(p.system).toContain('No markdown');
@@ -404,7 +405,7 @@ describe('the teaching text', () => {
     expect(p.user).toContain('Grade (already decided by the game): wrong.');
     expect(p.user).toContain("Player's reason: <player_reason>it always drops here</player_reason>");
     expect(p.user.match(/<player_reason>/g)).toHaveLength(1);
-    expect(p.user.length).toBeLessThan(2500);
+    expect(p.user.length).toBeLessThan(3600);
     const none = buildCoachPrompt({ scenario: s, choiceId: 'buy', grade: 'best', results, reason: null });
     expect(none.user).toContain('The player did not write a reason.');
     expect(none.user).not.toContain('<player_reason>');
@@ -416,6 +417,142 @@ describe('the teaching text', () => {
     const zp = buildCoachPrompt({ scenario: z, choiceId: 'o0', grade: z.options[0]?.grade ?? 'wrong', results: sizeResults(z), reason: null });
     expect(zp.user).toContain('Lesson: how much to risk');
     expect(zp.user).toContain('Best answer:');
+  });
+
+  it("LEARN-69: the AI overview is asked for in four labelled parts; the prompt carries the chart's real prices, a stop-loss price, what each choice would have done and the player's record, and nothing about who he is", () => {
+    expect(OVERVIEW_LABELS).toEqual(['Chart', 'Your move', 'Plan', 'Next']);
+    for (const label of OVERVIEW_LABELS) expect(OVERVIEW_SYSTEM).toContain(`"${label}:"`);
+    expect(OVERVIEW_SYSTEM).toContain('8 to 12 short sentences');
+    expect(OVERVIEW_SYSTEM).toContain('twelve-year-old');
+    const s = generateDirection('breakout', 31);
+    const results = directionResults(s);
+    const record: CoachRecord = { seen: 4, best: 2, ok: 1, wrong: 1, level: 3, title: 'Apprentice', lessonsDone: 12, streak: 2, bestStreak: 5 };
+    const p = buildCoachPrompt({ scenario: s, choiceId: 'short', grade: 'wrong', results, reason: null, record });
+    const ceiling = lessonPrice(s.asset.kind, line(s, 'ceiling'));
+    expect(p.user).toContain('The chart: an invented company, 40 candles of one day each.');
+    expect(p.user).toContain(`ceiling at ${ceiling}`);
+    expect(p.user).toContain(`Stop-loss idea for the best trade: just under ${ceiling}`);
+    expect(p.user).toContain('The 8 closing prices after the answer:');
+    expect(p.user).toContain('Buy would have ended at');
+    expect(p.user).toContain('Short would have ended at');
+    expect(p.user).toContain("The player's record on this kind of chart: seen 4 times, best answer 2, fair 1, wrong 1.");
+    expect(p.user).toContain('The player overall: level 3 (Apprentice), 12 lessons done, streak 2, best streak 5.');
+    // No record given: no record lines.
+    expect(buildCoachPrompt({ scenario: s, choiceId: 'buy', grade: 'best', results, reason: null }).user).not.toContain("The player's record");
+    // A memecoin chart is described as one, in hours; the sizing lesson lists its options with what happened to each.
+    const pumpScenario = generateDirection('pump-fade', 31);
+    const pump = buildCoachPrompt({ scenario: pumpScenario, choiceId: 'wait', grade: 'best', results: directionResults(pumpScenario), reason: null });
+    expect(pump.user).toContain('an invented memecoin, 40 candles of one hour each');
+    const z = generateSize(31);
+    const zp = buildCoachPrompt({ scenario: z, choiceId: 'o0', grade: 'wrong', results: sizeResults(z), reason: null });
+    expect(zp.user.match(/Option "/g)).toHaveLength(3);
+    // Who he is stays out: the prompt has no place for a name or an account.
+    expect(p.user).not.toMatch(/username|password|cash balance|account/i);
+  });
+
+  it('LEARN-70: the stop-loss idea sits behind the right line on the right side, and is not given where there is no such price', () => {
+    const behind: Partial<Record<PatternId, readonly [string, 'under' | 'above']>> = {
+      'pullback-up': ['last low', 'under'],
+      'bounce-down': ['last high', 'above'],
+      'double-top': ['two peaks', 'above'],
+      'double-bottom': ['two lows', 'under'],
+      'range-top': ['ceiling', 'above'],
+      'range-bottom': ['floor', 'under'],
+      breakout: ['ceiling', 'under'],
+      breakdown: ['floor', 'above'],
+    };
+    for (const id of PATTERN_IDS) {
+      for (const seed of SEEDS.slice(0, 25)) {
+        const s = generateDirection(id, seed);
+        const stop = stopIdeaOf(s);
+        if (id === 'choppy') {
+          expect(stop).toBeNull();
+          continue;
+        }
+        expect(stop, id).not.toBeNull();
+        const found = stop as NonNullable<typeof stop>;
+        const rule = behind[id];
+        if (rule) {
+          expect(found.price).toBe(line(s, rule[0]));
+          expect(found.side).toBe(rule[1]);
+        } else if (id === 'head-shoulders') {
+          expect(found.price).toBe(high(s, 35)); // above the right shoulder
+          expect(found.side).toBe('above');
+        } else {
+          expect(found.price).toBe(Math.max(...s.visible.map((c) => c.h))); // above the top of the spike
+          expect(found.side).toBe('above');
+        }
+        expect(found.away).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+});
+
+describe('restless charts (the charts move like a market, not like a ruler)', () => {
+  const med = (a: number[]): number => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)] as number;
+  /** How wide the middle candle is, high to low, in percent. */
+  const rangeOf = (cs: readonly LCandle[]): number => med(cs.map((c) => (c.h / c.l - 1) * 100));
+  /** How often the closing price turns around. */
+  const flipsOf = (cs: readonly LCandle[]): number => {
+    const cl = cs.map((c) => c.c);
+    let n = 0;
+    for (let i = 2; i < cl.length; i += 1) if (((cl[i] as number) - (cl[i - 1] as number)) * ((cl[i - 1] as number) - (cl[i - 2] as number)) < 0) n += 1;
+    return n;
+  };
+  const charts = PATTERN_IDS.flatMap((id) => SEEDS.map((seed) => generateDirection(id, seed)));
+  const stocks = charts.filter((c) => c.asset.kind === 'stock');
+  const coins = charts.filter((c) => c.asset.kind === 'coin');
+
+  it('LEARN-65: every chart has real wiggle: stocks swing a few percent a candle, memecoins far more, and the price keeps turning around', () => {
+    expect(coins.length).toBeGreaterThan(200);
+    for (const c of stocks) expect(rangeOf(c.visible)).toBeGreaterThan(1.8);
+    for (const c of coins) expect(rangeOf(c.visible)).toBeGreaterThan(5.5);
+    const stockRange = med(stocks.map((c) => rangeOf(c.visible)));
+    const coinRange = med(coins.map((c) => rangeOf(c.visible)));
+    expect(stockRange).toBeGreaterThan(3);
+    expect(coinRange).toBeGreaterThan(stockRange * 2.2);
+    // Not a ruler: the old charts ran along straight lines and turned around about 7 times; these turn around again and again.
+    expect(med(stocks.map((c) => flipsOf(c.visible)))).toBeGreaterThanOrEqual(14);
+  });
+
+  it('LEARN-66: what happens next is restless too: it wanders off the straight line to its end, and still ends exactly where the lesson says', () => {
+    const wander = (c: DirectionScenario): number => {
+      const start = last(c.visible).c;
+      const end = last(c.outcome).c;
+      let dev = 0;
+      c.outcome.forEach((x, i) => {
+        dev = Math.max(dev, Math.abs(x.c - (start + ((end - start) * (i + 1)) / OUTCOME_CANDLES)) / start);
+      });
+      return dev * 100;
+    };
+    expect(med(stocks.map(wander))).toBeGreaterThan(1.8);
+    expect(med(coins.map(wander))).toBeGreaterThan(3.5);
+    expect(med(stocks.map((c) => rangeOf(c.outcome)))).toBeGreaterThan(1.5);
+    for (const c of charts.slice(0, 400)) expect(Math.abs((last(c.outcome).c / last(c.visible).c - 1) * 100 - c.outcomePct)).toBeLessThan(0.06);
+  });
+
+  it('LEARN-67: the noise never hides a mark: every label sits on the highest high or the lowest low around it, and the lines that name one extreme sit on it exactly', () => {
+    for (const c of charts) {
+      for (const m of c.marks) {
+        const near = c.visible.slice(Math.max(0, m.index - 2), m.index + 3);
+        const at = c.visible[m.index] as LCandle;
+        if (m.side === 'above') expect(Math.max(...near.map((x) => x.h))).toBeLessThanOrEqual(at.h * 1.013);
+        else expect(Math.min(...near.map((x) => x.l))).toBeGreaterThanOrEqual(at.l * 0.987);
+      }
+      if (c.pattern === 'pullback-up') expect(line(c, 'last low')).toBe(Math.min(...[33, 34, 35, 36, 37].map((i) => (c.visible[i] as LCandle).l)));
+      if (c.pattern === 'double-top') expect(line(c, 'two peaks')).toBe(Math.max(high(c, 13), high(c, 31)));
+    }
+  });
+
+  it('LEARN-68: the sizing lesson keeps its exact shake and its restless climb: the deepest point is the one the numbers say, and it comes at the start', () => {
+    for (const seed of SEEDS.slice(0, 120)) {
+      const s = generateSize(seed);
+      const deepest = s.dir > 0 ? Math.min(...s.outcome.map((c) => c.l)) : Math.max(...s.outcome.map((c) => c.h));
+      expect(Math.abs(deepest / s.entry - 1)).toBeCloseTo(s.adverse, 3);
+      const at = s.outcome.findIndex((c) => (s.dir > 0 ? c.l === deepest : c.h === deepest));
+      expect(at).toBeLessThanOrEqual(1);
+      expect(med(s.outcome.map((c) => (c.h / c.l - 1) * 100))).toBeGreaterThan(1.2);
+    }
   });
 });
 

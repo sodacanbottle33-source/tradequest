@@ -3,8 +3,8 @@
 // never sees it. Two kinds of service are understood:
 //   • "anthropic": the Claude Messages API (https://api.anthropic.com).
 //   • "openai":    any service that speaks the OpenAI chat format (OpenAI, and many others with a free or cheap plan); give TQ_AI_BASE_URL and TQ_AI_MODEL.
-// The AI only ever receives text the game wrote (the facts of a graded lesson plus the player's short "why", inside a tag) and can only give text back:
-// it has no tools, no access to accounts, money or the database, and its text is cut to a few hundred characters and shown as plain text.
+// The AI only ever receives text the game wrote (the facts of a graded lesson, the player's lesson record and his short "why", inside a tag) and can only give
+// text back: it has no tools, no access to accounts, money or the database, and its text (the "AI overview" of a lesson) is cut to a page and shown as plain text.
 
 export type AiProvider = 'anthropic' | 'openai';
 
@@ -14,7 +14,7 @@ export interface AiSettings {
   readonly apiKey: string;
   readonly model: string;
   readonly baseUrl: string;
-  /** How many comments one player can ask for per day, and how many everybody together. */
+  /** How many overviews one player can ask for per day, and how many everybody together. */
   readonly perUserDaily: number;
   readonly globalDaily: number;
   readonly timeoutMs: number;
@@ -41,8 +41,8 @@ export interface AiClient {
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-haiku-5-5';
 export const DEFAULT_PER_USER_DAILY = 15;
 export const DEFAULT_GLOBAL_DAILY = 300;
-export const AI_TIMEOUT_MS = 12_000;
-export const AI_MAX_TOKENS = 350;
+export const AI_TIMEOUT_MS = 20_000;
+export const AI_MAX_TOKENS = 700;
 
 function int(env: NodeJS.ProcessEnv, name: string, fallback: number, min: number, max: number): number {
   const raw = env[name];
@@ -83,7 +83,7 @@ export function loadAiSettings(env: NodeJS.ProcessEnv = process.env): AiSettings
     perUserDaily: int(env, 'TQ_AI_PER_USER_DAILY', DEFAULT_PER_USER_DAILY, 1, 1000),
     globalDaily: int(env, 'TQ_AI_GLOBAL_DAILY', DEFAULT_GLOBAL_DAILY, 1, 1_000_000),
     timeoutMs: AI_TIMEOUT_MS,
-    maxTokens: AI_MAX_TOKENS,
+    maxTokens: int(env, 'TQ_AI_MAX_TOKENS', AI_MAX_TOKENS, 200, 4000),
   };
   Object.defineProperty(settings, 'apiKey', { value: key, enumerable: false });
   return settings as AiSettings;

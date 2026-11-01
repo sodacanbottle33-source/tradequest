@@ -1,4 +1,4 @@
-// LEARN-56 … LEARN-64 — the Learn screens: the small decisions they make (pure helpers) and source-level checks that the browser only asks and
+// LEARN-56 … LEARN-64 and LEARN-71 — the Learn screens: the small decisions they make (pure helpers) and source-level checks that the browser only asks and
 // shows: it never generates a lesson, never grades, never sees the AI key, shows the AI's words only as plain text, and every class it uses is styled.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -13,6 +13,7 @@ import {
   gradeBanner,
   learnSeen,
   markLearnSeen,
+  overviewParts,
   readWhyPref,
   statText,
   tutorialLabel,
@@ -62,9 +63,34 @@ describe('Learn screens: small decisions', () => {
     expect(canExplain({ enabled: false, leftToday: 5 })).toBe(false);
     expect(coachNote('ok')).toBeNull();
     expect(coachNote('off')).toBeNull();
-    expect(coachNote('limit')).toMatch(/used today's AI comments/);
-    expect(coachNote('failed')).toMatch(/could not answer just now/);
+    expect(coachNote('limit')).toMatch(/used today's AI overviews/);
+    expect(coachNote('failed')).toMatch(/could not write the overview just now/);
     for (const r of ['limit', 'failed'] as const) expect(coachNote(r)).not.toMatch(/\b(error|500|401|key|status)\b/i);
+  });
+
+  it('LEARN-71: the AI overview is split into its four labelled parts; other lines stay as plain parts; empty parts are dropped; it is always plain text', () => {
+    const text = [
+      'Chart: The price ran up to $12.40 and stopped at the ceiling.',
+      'Your move: You bought, and that was the best move.',
+      '',
+      'plan: Put the stop-loss just under $12.40.',
+      'Next: Keep practising ranges.',
+      'Something else the AI said.',
+      'Next:   ',
+    ].join('\n');
+    expect(overviewParts(text)).toEqual([
+      { label: 'Chart', text: 'The price ran up to $12.40 and stopped at the ceiling.' },
+      { label: 'Your move', text: 'You bought, and that was the best move.' },
+      { label: 'Plan', text: 'Put the stop-loss just under $12.40.' },
+      { label: 'Next', text: 'Keep practising ranges.' },
+      { label: null, text: 'Something else the AI said.' },
+    ]);
+    expect(overviewParts('')).toEqual([]);
+    expect(overviewParts('Just one line with a colon: inside.')).toEqual([{ label: null, text: 'Just one line with a colon: inside.' }]);
+    // Whatever comes back stays text: the parts are strings and the screen shows them as text, never as markup.
+    const odd = overviewParts('Chart: <img src=x onerror=alert(1)>');
+    expect(odd).toEqual([{ label: 'Chart', text: '<img src=x onerror=alert(1)>' }]);
+    expect(read('src', 'shared', 'LessonsView.tsx')).toContain('overviewParts(');
   });
 
   it('LEARN-60: how a grade is announced, and the XP text', () => {
