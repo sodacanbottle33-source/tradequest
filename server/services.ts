@@ -8,6 +8,7 @@ import type { Calls } from './calls';
 import type { Challenges } from './challenges';
 import type { Chat } from './chat';
 import type { ChatPictures } from './chatPictures';
+import type { Comments } from './comments';
 import type { Config } from './config';
 import type { Launches } from './launch';
 import type { Learn } from './learn';
@@ -86,6 +87,8 @@ export interface Services {
   readonly chat: Chat;
   /** Pictures sent in the chats: rules, limits, expiry and the owner's switch (server/chatPictures.ts). */
   readonly chatPictures: ChatPictures;
+  /** Comments, answers and likes on every company (server/comments.ts). */
+  readonly comments: Comments;
   /** Private chats: 1-to-1 and groups (private or public), requests, blocking and reports (server/messages.ts). */
   readonly messages: Messages;
   /** Changing your username (server/rename.ts). */

@@ -1269,6 +1269,48 @@ CREATE TABLE market_events (
 );
 `,
   },
+  {
+    version: 31,
+    name: 'comments on companies: comments, answers, likes, reports',
+    sql: `
+-- Comments on companies (server/comments.ts, docs/world.md §40). A comment belongs to one company (every stock and memecoin ever listed is a row of companies) and to the player
+-- who wrote it. An answer has parent_id = the comment at the top of its thread (there is one level of answers). A deleted comment keeps its row (deleted_ms) so a report about it
+-- can still be closed; a player's comments go when his account is deleted, a company's comments are never deleted because companies are never deleted.
+CREATE TABLE company_comments (
+  id         INTEGER PRIMARY KEY,
+  company_id INTEGER NOT NULL REFERENCES companies(id),
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  parent_id  INTEGER REFERENCES company_comments(id) ON DELETE CASCADE,
+  body       TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 1200),
+  created_ms INTEGER NOT NULL,
+  deleted_ms INTEGER,
+  deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX company_comments_by_company ON company_comments(company_id, parent_id, id DESC);
+CREATE INDEX company_comments_by_parent ON company_comments(parent_id, id) WHERE parent_id IS NOT NULL;
+CREATE INDEX company_comments_by_user ON company_comments(user_id, id DESC);
+
+-- One like per player and comment.
+CREATE TABLE comment_likes (
+  comment_id INTEGER NOT NULL REFERENCES company_comments(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_ms INTEGER NOT NULL,
+  PRIMARY KEY (comment_id, user_id)
+) WITHOUT ROWID;
+
+-- Players report comments; the owner and the moderators see the open reports on the admin Chat tab. One report per player and comment.
+CREATE TABLE comment_reports (
+  id          INTEGER PRIMARY KEY,
+  comment_id  INTEGER NOT NULL REFERENCES company_comments(id) ON DELETE CASCADE,
+  reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_ms  INTEGER NOT NULL,
+  resolved_ms INTEGER,
+  UNIQUE (comment_id, reporter_id)
+);
+CREATE INDEX comment_reports_open ON comment_reports(resolved_ms, comment_id);
+CREATE INDEX comment_reports_by_reporter ON comment_reports(reporter_id, created_ms);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

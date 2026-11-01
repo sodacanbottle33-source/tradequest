@@ -1117,6 +1117,80 @@ export interface AdminChatView {
   readonly picturesOn: boolean;
 }
 
+// ---- comments on companies (docs/world.md §40) -------------------------------------------------------------------------------
+
+/** One comment, or one answer to a comment. */
+export interface CommentLine {
+  readonly id: number;
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: Role;
+  readonly text: string;
+  readonly createdMs: number;
+  readonly likes: number;
+  /** You liked it (always false when signed out). */
+  readonly liked: boolean;
+  /** You wrote it. */
+  readonly mine: boolean;
+}
+
+export interface CommentItem extends CommentLine {
+  /** The answers to it, oldest first. */
+  readonly replies: readonly CommentLine[];
+}
+
+/** Whether the player can write comments now, and if not, why and until when (the server's own words are in `message`). */
+export interface CommentYou {
+  readonly canWrite: boolean;
+  readonly reason: 'signed_out' | 'muted' | 'banned' | null;
+  readonly untilMs: number | null;
+  readonly message: string | null;
+}
+
+export interface CommentsView {
+  readonly ticker: string;
+  readonly name: string;
+  /** Newest first. */
+  readonly comments: readonly CommentItem[];
+  /** There are older comments than the last one shown. */
+  readonly more: boolean;
+  /** All the comments and answers on this company that can be seen. */
+  readonly total: number;
+  readonly you: CommentYou;
+  readonly limits: { readonly maxLength: number; readonly gapMs: number };
+}
+
+/** One line of the "Recent comments" list of the whole market. */
+export interface RecentComment {
+  readonly id: number;
+  readonly ticker: string;
+  readonly company: string;
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: Role;
+  readonly text: string;
+  readonly createdMs: number;
+  readonly likes: number;
+  /** An answer to another comment. */
+  readonly reply: boolean;
+}
+
+export interface AdminCommentReport {
+  readonly commentId: number;
+  readonly ticker: string;
+  readonly text: string;
+  readonly username: string;
+  readonly displayName: string;
+  readonly createdMs: number;
+  readonly reporters: number;
+  readonly firstReportedMs: number;
+  readonly restriction: 'mute' | 'ban' | null;
+}
+
+export interface AdminCommentsView {
+  readonly reports: readonly AdminCommentReport[];
+}
+
 // ---- private chats (one player, or a small group of friends) -------------------------------------------------------------------
 
 export interface PmPerson {

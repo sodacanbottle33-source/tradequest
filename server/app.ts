@@ -19,6 +19,7 @@ import { Teams } from './teams';
 import { Trophies } from './trophies';
 import { Chat } from './chat';
 import { ChatPictures } from './chatPictures';
+import { Comments } from './comments';
 import type { Config } from './config';
 import { CircuitBreaker } from './breaker';
 import { Liquidator, type PositionClosed } from './liquidation';
@@ -55,6 +56,7 @@ import { registerEarningsRoutes } from './routes/earnings';
 import { registerLimitRoutes } from './routes/limits';
 import { registerNewsRoutes } from './routes/news';
 import { registerChatRoutes } from './routes/chat';
+import { registerCommentRoutes } from './routes/comments';
 import { registerLearnRoutes } from './routes/learn';
 import { registerBadgeRoutes } from './routes/badges';
 import { registerCompanyPictureRoutes } from './routes/companyPictures';
@@ -364,6 +366,8 @@ export function createApp(options: AppOptions): App {
     publishTo: (userId, event, data) => hub.publishTo(userId, event, data),
     audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
   });
+  // Comments on every company. Reports are closed, and comments deleted, by the owner and the moderators; every such action goes to the admin log once.
+  const comments = new Comments({ db, log, now, audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail) });
   // Private chats. Only the members of a conversation can read it; the owner sees only what players report (written to the admin log when closed).
   const messages = new Messages({
     db,
@@ -530,6 +534,7 @@ export function createApp(options: AppOptions): App {
     challenges,
     chat,
     chatPictures,
+    comments,
     messages,
     renames,
     shop,
@@ -562,6 +567,7 @@ export function createApp(options: AppOptions): App {
   registerLobbyRoutes(router, services);
   registerSocialRoutes(router, services);
   registerChatRoutes(router, services);
+  registerCommentRoutes(router, services);
   registerMessageRoutes(router, services);
   registerProfileRoutes(router, services);
   registerShopRoutes(router, services);

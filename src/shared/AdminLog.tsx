@@ -55,6 +55,10 @@ function describe(e: Entry): string {
       return `let ${e.target} write in the chat again`;
     case 'chat_dismiss':
       return `closed the reports about a chat message (${e.target})`;
+    case 'comment_delete':
+      return `removed a comment by ${String(d.author)} (${e.target})`;
+    case 'comment_dismiss':
+      return `closed the reports about a comment (${e.target})`;
     case 'pm_dismiss':
       return `closed the reports about a private message (${e.target})`;
     case 'chat_pictures':

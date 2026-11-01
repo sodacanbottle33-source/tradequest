@@ -28,6 +28,7 @@ import { MessagesScreen } from './MessagesScreen';
 import { pmBadge } from './messagesUtil';
 import { NewsList } from './NewsList';
 import { NewsScreen } from './NewsScreen';
+import { RecentComments } from './RecentComments';
 import { PlayersScreen } from './PlayersScreen';
 import { Notices } from './Notices';
 import { EarningsScreen } from './EarningsScreen';
@@ -312,6 +313,7 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
               {s.user && <EventsStrip onOpen={openCompany} />}
               {careerTab === 'market' && <DailyQuoteCard />}
               <MarketScreen key={careerTab} kind={careerTab === 'coins' ? 'coins' : 'stocks'} onOpen={openCompany} selected={ticker} />
+              <RecentComments onOpen={openCompany} />
             </>
           ))}
         {shown === 'career' && careerTab === 'earnings' && <EarningsScreen onOpen={openCompany} />}

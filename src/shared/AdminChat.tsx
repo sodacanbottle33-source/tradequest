@@ -1,5 +1,6 @@
 // The "Chat" tab of the admin panel: the messages players reported, and everybody who is muted or banned from the chat. The owner can also
 // moderate straight from the Chat screen (Moderate on a message). Every action is written once to the admin log.
+// The reported comments on companies (docs/world.md §40) are listed on the same tab, with the same buttons (delete the comment, mute or ban the writer, dismiss).
 // The same tab is the Chat section of the moderators' page (`staff`): a moderator sees the same public-chat reports (not those about the owner or other
 // moderators, and never the private-chat reports), can delete, mute for up to 7 days and close reports, but cannot ban from the chat for good or lift
 // what the owner decided.
@@ -9,20 +10,22 @@ import { newRequestId, whenText } from './adminUtil';
 import { MUTE_CHOICES } from './chatUtil';
 import { MessagePicture } from './ChatPicture';
 import { problemText } from './playersUtil';
-import type { AdminChatView, AdminPrivateView } from './types';
+import type { AdminChatView, AdminCommentsView, AdminPrivateView } from './types';
 
 export function AdminChat({ staff = false }: { staff?: boolean }) {
   const [view, setView] = useState<AdminChatView | null>(null);
   const [priv, setPriv] = useState<AdminPrivateView | null>(null);
+  const [comments, setComments] = useState<AdminCommentsView | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
       // Private-chat reports are the owner's alone; a moderator's page never asks for them.
-      const [chat, reports] = await Promise.all([api.adminChat(), staff ? Promise.resolve(null) : api.adminPrivateReports()]);
+      const [chat, reports, onCompanies] = await Promise.all([api.adminChat(), staff ? Promise.resolve(null) : api.adminPrivateReports(), api.adminComments()]);
       setView(chat);
       setPriv(reports);
+      setComments(onCompanies);
     } catch (e) {
       setMessage({ kind: 'error', text: problemText(e) });
     }
@@ -145,6 +148,75 @@ export function AdminChat({ staff = false }: { staff?: boolean }) {
         )}
       </section>
 
+
+      <section className="card" aria-label="Reported comments" data-testid="admin-comments">
+        <h2>
+          Reported comments <span className="h2-note">{comments ? comments.reports.length : ''}</span>
+        </h2>
+        {comments !== null && comments.reports.length === 0 && (
+          <p className="hint" data-testid="admin-comments-none">
+            Nobody has reported a comment on a company. You can also moderate straight from a company page: press Moderate under a comment.
+          </p>
+        )}
+        {comments !== null && comments.reports.length > 0 && (
+          <div className="table-wrap">
+            <table className="trades" data-testid="admin-comment-reports">
+              <thead>
+                <tr>
+                  <th>Comment</th>
+                  <th>Player</th>
+                  <th className="num">Reports</th>
+                  <th>What to do</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comments.reports.map((r) => (
+                  <tr key={r.commentId} data-testid={`admin-comment-report-${r.commentId}`}>
+                    <td className="chat-text">
+                      <span className="tag">{r.ticker}</span> {r.text}
+                      <div className="muted">{whenText(r.createdMs)}</div>
+                    </td>
+                    <td>
+                      {r.displayName}
+                      {r.restriction && <span className="tag">{r.restriction === 'ban' ? 'Banned' : 'Muted'}</span>}
+                    </td>
+                    <td className="num">{r.reporters}</td>
+                    <td>
+                      <span className="people-actions">
+                        <button type="button" className="btn btn-small btn-sell" disabled={busy} onClick={() => void run('Comment deleted.', () => api.adminCommentDelete({ requestId: newRequestId(), commentId: r.commentId }))} data-testid={`admin-comment-delete-${r.commentId}`}>
+                          Delete
+                        </button>
+                        {MUTE_CHOICES.map((c) => (
+                          <button
+                            key={c.minutes}
+                            type="button"
+                            className="btn btn-small"
+                            disabled={busy || r.restriction === 'ban'}
+                            onClick={() => void run(`${r.displayName} is muted for ${c.label}.`, () => api.adminChatMute({ requestId: newRequestId(), username: r.username, minutes: c.minutes }))}
+                            data-testid={`admin-comment-mute-${c.minutes}-${r.commentId}`}
+                          >
+                            Mute {c.label}
+                          </button>
+                        ))}
+                        {!staff && (
+                          <button type="button" className="btn btn-small btn-sell" disabled={busy} onClick={() => void run(`${r.displayName} is banned from the chat.`, () => api.adminChatBan({ requestId: newRequestId(), username: r.username }))} data-testid={`admin-comment-ban-${r.commentId}`}>
+                            Ban from chat
+                          </button>
+                        )}
+                        <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => void run('Report closed.', () => api.adminCommentDismiss({ requestId: newRequestId(), commentId: r.commentId }))} data-testid={`admin-comment-dismiss-${r.commentId}`}>
+                          Dismiss
+                        </button>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="hint">Muting or banning someone from the chat also stops them from writing comments. They can still read, like and play.</p>
+      </section>
+
       {!staff && (
       <section className="card" aria-label="Reported private messages" data-testid="admin-private">
         <h2>
@@ -245,7 +317,7 @@ export function AdminChat({ staff = false }: { staff?: boolean }) {
             </table>
           </div>
         )}
-        <p className="hint">Muting or banning someone from the chat never stops them from playing, trading or reading the chat. Spam is slowed down for everybody automatically.</p>
+        <p className="hint">Muting or banning someone from the chat never stops them from playing, trading or reading the chat, but it also stops their comments on companies. Spam is slowed down for everybody automatically.</p>
       </section>
     </div>
   );

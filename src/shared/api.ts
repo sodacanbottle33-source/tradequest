@@ -6,6 +6,7 @@ import type { CoachReply, LearnState, LessonResult, LessonView, TutorialReply } 
 import type {
   Account,
   AdminChatView,
+  AdminCommentsView,
   AdminPrivateView,
   Announcement,
   BanNotice,
@@ -14,6 +15,9 @@ import type {
   ChatMessage,
   ChatView,
   ChatYou,
+  CommentLine,
+  CommentsView,
+  CommentYou,
   AdminSpeed,
   AdminState,
   AdminStyle,
@@ -28,6 +32,7 @@ import type {
   TeamsView,
   TrophyRoom,
   PlayerProfile,
+  RecentComment,
   ShopBuy,
   ShopView,
   Book,
@@ -211,6 +216,16 @@ export const api = {
   /** Deletes a message you wrote yourself. */
   chatDelete: (messageId: number) => request<{ ok: boolean }>('POST', '/api/chat/delete', { messageId }),
 
+  // Comments on companies. Anybody can read; a signed-in player writes, answers, likes and reports.
+  comments: (ticker: string, beforeId?: number, limit = 20) => request<CommentsView>('GET', `/api/comments/${enc(ticker)}?limit=${limit}${beforeId === undefined ? '' : `&before=${beforeId}`}`),
+  recentComments: (limit = 20) => request<{ comments: RecentComment[] }>('GET', `/api/comments/recent?limit=${limit}`),
+  /** A comment on a company, or (with `parentId`) an answer to a comment. */
+  commentPost: (ticker: string, text: string, parentId?: number) => request<{ comment: CommentLine; you: CommentYou }>('POST', '/api/comments/post', parentId === undefined ? { ticker, text } : { ticker, text, parentId }),
+  commentLike: (commentId: number) => request<{ liked: boolean; likes: number }>('POST', '/api/comments/like', { commentId }),
+  commentReport: (commentId: number) => request<{ ok: boolean }>('POST', '/api/comments/report', { commentId }),
+  /** Deletes a comment you wrote yourself. */
+  commentDelete: (commentId: number) => request<{ ok: boolean }>('POST', '/api/comments/delete', { commentId }),
+
   // Profile pictures and who is online (any signed-in player). A picture is shown at /api/avatar/<username>?v=<version>.
   avatars: () => request<{ avatars: Record<string, number> }>('GET', '/api/avatars'),
   setAvatar: (image: string) => request<{ version: number }>('POST', '/api/profile/avatar', { image }),
@@ -312,6 +327,10 @@ export const api = {
   adminChatMute: (body: { requestId: string; username: string; minutes: number; reason?: string }) => request<{ ok: boolean; duplicate: boolean; username: string; untilMs: number }>('POST', '/api/admin/chat/mute', body),
   adminChatBan: (body: { requestId: string; username: string; reason?: string }) => request<{ ok: boolean; duplicate: boolean; username: string }>('POST', '/api/admin/chat/ban', body),
   adminChatLift: (body: { requestId: string; username: string }) => request<{ ok: boolean; duplicate: boolean; username: string }>('POST', '/api/admin/chat/lift', body),
+  // The owner and the moderators: the comments players reported.
+  adminComments: () => request<AdminCommentsView>('GET', '/api/admin/comments'),
+  adminCommentDelete: (body: { requestId: string; commentId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/comments/delete', body),
+  adminCommentDismiss: (body: { requestId: string; commentId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/comments/dismiss', body),
   adminPrivateReports: () => request<AdminPrivateView>('GET', '/api/admin/private-reports'),
   adminPrivateDismiss: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/private-reports/dismiss', body),
   adminState: (q = '') => request<AdminState>('GET', `/api/admin/state${q.trim() === '' ? '' : `?q=${enc(q.trim())}`}`),

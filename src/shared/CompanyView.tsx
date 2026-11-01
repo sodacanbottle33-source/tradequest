@@ -1,7 +1,8 @@
-// One company: price, market cap, the facts about it, a live chart, the order book, trading, and its news.
+// One company: price, market cap, the facts about it, a live chart, its comments, the order book, trading, and its news.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { CompanyChart } from './CompanyChart';
+import { CommentsPanel } from './CommentsPanel';
 import { CompanyLogo } from './CompanyLogo';
 import { CompanyPictureBox } from './CompanyPictureTools';
 import { EarningsPanel } from './EarningsPanel';
@@ -269,6 +270,8 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
       <section className="card chart-card" aria-label={`${detail.ticker} chart`}>
         {live ? <CompanyChart ticker={detail.ticker} name={detail.name} price={price} /> : <p className="hint">The chart appears when {detail.ticker} starts trading.</p>}
       </section>
+
+      <CommentsPanel ticker={detail.ticker} />
 
       <aside className="side company-side">
         <TradePanel
