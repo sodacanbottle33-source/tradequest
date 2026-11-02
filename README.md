@@ -447,10 +447,15 @@ The **Market** tab also has:
 
 Price moves cannot be undone. A price move is saved in the database as a news story, so it is replayed exactly after a server restart: prices come out the same as if the server had never stopped. The first start with this version upgrades the database to schema 13 (5 added the owner tools, 6 the player price impact, 7 bans and account resets, 8 companies made by the owner, 9 a trade-strength column that the game no longer uses, 10 automatic trading pauses, 11 leverage: debt on positions, leverage and liquidation flags on trades, 12 memecoins, short selling, stop-loss and take-profit, 13 the memecoin trading fee: a fee column on trades). In a world that already exists the 30 coins are added once, and they list about 10 minutes after the first start; nothing that exists changes. An older version of the program cannot open it afterwards, so copy the `data` folder before you upgrade if you want to keep the option.
 
+## Being found on Google
+
+Three small files help Google find the site. `index.html` carries the **site-verification tag** that Google Search Console asked for (it proves the site is yours; it is a public tag, not a password). `public/robots.txt` lets search engines in, keeps them out of `/api/`, and names the sitemap. `public/sitemap.xml` lists the front page. Everything in `public/` is copied as it is to the top of the built site, and the server sends `.txt` as plain text and `.xml` as XML. If the site ever gets a new address (a custom domain, say), change the address in both files, then verify the new address in Search Console. A new site can take days to weeks to show up in Google, and no tool can promise first place.
+
 ## Project structure
 
 ```
 docs/            rules.md (the spec), test-cases.md, dependencies.md
+public/          files copied as they are to the top of the built site: robots.txt, sitemap.xml
 src/engine/      the trading engine — pure TypeScript, no React, fully tested
   constants.ts   all parameters (start cash, candle counts, volatility…)
   money.ts       integer-cent rounding helpers
