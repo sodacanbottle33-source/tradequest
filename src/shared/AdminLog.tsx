@@ -37,6 +37,8 @@ function describe(e: Entry): string {
       return `reset the Career account of ${e.target} (it had ${formatCents(num('netWorthBeforeCents'))} net worth and ${num('positions')} holding${num('positions') === 1 ? '' : 's'})${d.note ? ` (${String(d.note)})` : ''}`;
     case 'announce':
       return d.text ? `posted the announcement “${String(d.text)}”` : 'took the announcement down';
+    case 'black_monday':
+      return 'started Black Monday by hand (the crash and its week-long recovery)';
     case 'pause':
       return `paused ALL trading${d.reason ? ` (${String(d.reason)})` : ''}`;
     case 'unpause':

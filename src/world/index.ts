@@ -10,6 +10,7 @@ export * from './candles';
 export * from './newsText';
 export * from './fundamentals';
 export * from './newsgen';
+export * from './blackMonday';
 export * from './matchRules';
 export * from './rankedRules';
 export * from './memecoins';

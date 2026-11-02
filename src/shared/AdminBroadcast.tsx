@@ -1,11 +1,14 @@
-// Owner tools that speak to everybody: an announcement banner at the top of every page, and a "pause all trading" switch.
-// The server keeps both; this screen only sends requests and shows what the server says is set.
+// Owner tools that speak to everybody: an announcement banner at the top of every page, a "pause all trading" switch, and the button
+// that starts Black Monday now (the game starts it by itself every October 19). The server keeps all three; this screen only sends
+// requests and shows what the server says is set.
 import { useState } from 'react';
 import { ApiError, api } from './api';
 import { newRequestId, whenText } from './adminUtil';
 import type { AdminState } from './types';
 
 const MAX = 200;
+/** The word to type before Black Monday starts (the server checks it too). */
+const BLACK_MONDAY_WORD = 'BLACK MONDAY';
 type Message = { kind: 'ok' | 'error'; text: string } | null;
 
 function problem(error: unknown): string {
@@ -18,6 +21,8 @@ export function AdminBroadcast({ state, reload }: { state: AdminState | null; re
   const [confirmPause, setConfirmPause] = useState<string | null>(null); // the request id, once "Pause all trading" was pressed
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message>(null);
+  const [word, setWord] = useState('');
+  const [bmMessage, setBmMessage] = useState<Message>(null);
 
   const announcement = state?.announcement ?? null;
   const paused = state?.paused ?? null;
@@ -63,6 +68,22 @@ export function AdminBroadcast({ state, reload }: { state: AdminState | null; re
       await api.adminPause({ requestId: newRequestId(), paused: false });
       return 'Trading is open again.';
     });
+
+  const blackMonday = async () => {
+    if (busy || word.trim().toUpperCase() !== BLACK_MONDAY_WORD) return;
+    setBusy(true);
+    setBmMessage(null);
+    try {
+      await api.adminBlackMonday({ requestId: newRequestId(), confirm: word.trim() });
+      setWord('');
+      setBmMessage({ kind: 'ok', text: 'Black Monday has started. The news story appears in a moment and prices begin to fall.' });
+      await reload();
+    } catch (error) {
+      setBmMessage({ kind: 'error', text: problem(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <>
@@ -135,6 +156,31 @@ export function AdminBroadcast({ state, reload }: { state: AdminState | null; re
         {message && (
           <p className={message.kind === 'ok' ? 'notice success' : 'notice error'} role="status" data-testid="admin-broadcast-message">
             {message.text}
+          </p>
+        )}
+      </section>
+
+      <section className="card" aria-label="Black Monday">
+        <h2>
+          Black Monday <span className="h2-note">every October 19, or start it now</span>
+        </h2>
+        <p className="hint" data-testid="admin-bm-hint">
+          Every October 19 (Tokyo time) the whole market crashes at a surprise hour, like the real crash of 1987, and then takes about a week to recover. A normal stock falls about 20% in 6 hours;
+          big safe stocks fall less, small risky ones and memecoins fall more. Players who borrowed money can be forced out. You can start it now to see it. It cannot be undone, and it cannot
+          start while another Black Monday is still running.
+        </p>
+        <fieldset className="admin-fields" disabled={busy}>
+          <label className="qty-label" htmlFor="adm-bm-word">
+            Type {BLACK_MONDAY_WORD} to confirm
+          </label>
+          <input id="adm-bm-word" className="qty-input" type="text" autoComplete="off" value={word} onChange={(e) => setWord(e.target.value)} data-testid="admin-bm-word" />
+          <button type="button" className="btn btn-sell" disabled={word.trim().toUpperCase() !== BLACK_MONDAY_WORD} onClick={() => void blackMonday()} data-testid="admin-bm-start">
+            Start Black Monday now
+          </button>
+        </fieldset>
+        {bmMessage && (
+          <p className={bmMessage.kind === 'ok' ? 'notice success' : 'notice error'} role="status" data-testid="admin-bm-message">
+            {bmMessage.text}
           </p>
         )}
       </section>

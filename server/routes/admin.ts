@@ -43,6 +43,12 @@ export function registerAdminRoutes(router: Router, s: Services, admin: Admin): 
     return admin.shock(user, input);
   });
 
+  router.post('/api/admin/black-monday', async (ctx) => {
+    const user = owner(ctx);
+    const b = await ctx.body();
+    return admin.blackMonday(user, { requestId: b.requestId, confirm: b.confirm });
+  });
+
   router.post('/api/admin/halt', async (ctx) => {
     const user = owner(ctx);
     const b = await ctx.body();

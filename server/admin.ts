@@ -14,6 +14,7 @@ import {
   TICKS_PER_HOUR,
   TICK_MS,
   adminDraft,
+  blackMondayPair,
   cycleOfTick,
   effectiveDuration,
   fill,
@@ -62,7 +63,7 @@ export const ANNOUNCEMENT_MAX = 200;
 const ANNOUNCEMENT_KEY = 'announcement';
 
 /** Every kind of entry in the admin log. */
-export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin' | 'chat_delete' | 'chat_mute' | 'chat_ban' | 'chat_lift' | 'chat_dismiss' | 'pm_dismiss' | 'avatar_remove' | 'company_pic_set' | 'company_pic_remove' | 'kick' | 'mod_appoint' | 'mod_remove' | 'chat_pictures' | 'comment_delete' | 'comment_dismiss';
+export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin' | 'chat_delete' | 'chat_mute' | 'chat_ban' | 'chat_lift' | 'chat_dismiss' | 'pm_dismiss' | 'avatar_remove' | 'company_pic_set' | 'company_pic_remove' | 'kick' | 'mod_appoint' | 'mod_remove' | 'chat_pictures' | 'comment_delete' | 'comment_dismiss' | 'black_monday';
 
 export interface Announcement {
   readonly text: string;
@@ -96,6 +97,8 @@ const OWN_LISTING_SECONDS = Math.round((OWN_LISTING_DELAY_TICKS * TICK_MS) / 100
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,64}$/;
 const SPECIAL_SLOT = 900;
+/** The word the owner types before Black Monday is started by hand. */
+export const BLACK_MONDAY_CONFIRM = 'BLACK MONDAY';
 
 export interface ShockInput {
   readonly requestId: string;
@@ -489,6 +492,39 @@ export class Admin {
     // Only now, after the story is safely stored, does the running world learn about it.
     world.scheduleEvent(news.eventOfDraft(draft));
     return { ok: true, duplicate: false, ticker: company.ticker, newsId, percent: input.percent, startsAtTick: draft.startTick, priceBeforeCents: priceBefore };
+  }
+
+  // ---- Black Monday, on demand -------------------------------------------------------------------------------------
+
+  /**
+   * Starts Black Monday now (docs/world.md §41): the same two stories the game writes by itself every October 19, stored as ordinary news with the
+   * source 'admin', so the price engine and a restart treat them like any other. It is refused while a Black Monday is still running (its recovery
+   * takes 7 days), so a double click or a second run can never pile a second crash on top of the first.
+   */
+  blackMonday(admin: User, input: { requestId: unknown; confirm: unknown }): Record<string, unknown> {
+    const { db, world, news } = this.d;
+    if (!news) throw new HttpError(503, 'news_off', 'The news system is switched off, so special events are not available.');
+    const requestId = this.requestId(input.requestId);
+    if (typeof input.confirm !== 'string' || input.confirm.trim().toUpperCase() !== BLACK_MONDAY_CONFIRM) {
+      throw new HttpError(400, 'bad_request', `Type ${BLACK_MONDAY_CONFIRM} to confirm.`);
+    }
+    if (this.seen(requestId, 'black_monday', 'market')) return { ok: true, duplicate: true };
+    // Any Black Monday story that has not ended yet blocks it: one running, one that was just started (its first tick is a few ticks away), and one the game has
+    // already written ahead for October 19. The check reads the stored stories, so it holds across a restart too.
+    const now = Math.max(world.sim.tick, world.currentTick());
+    const running = db.get<{ key: string }>("SELECT key FROM news_items WHERE key LIKE 'bm:%' AND end_tick > ? LIMIT 1", now);
+    if (running) throw new HttpError(409, 'already_running', 'A Black Monday is already running or is about to start. Its recovery takes about a week; wait until it is over.');
+    const startTick = world.earliestEventStart();
+    const drafts = blackMondayPair({ keyBase: `bm:now:${requestId}`, cycle: cycleOfTick(startTick), startTick });
+    db.tx(() => {
+      for (const d of drafts) {
+        if (news.addSpecial(d, this.d.now()) === null) throw new HttpError(409, 'request_id_reused', 'That requestId was already used.');
+      }
+      this.record(requestId, admin, 'black_monday', 'market', { startTick });
+    });
+    // Only now, after both stories are safely stored, does the running world learn about them.
+    for (const d of drafts) world.scheduleEvent(news.eventOfDraft(d));
+    return { ok: true, duplicate: false, startsAtTick: startTick };
   }
 
   // ---- trading halts -----------------------------------------------------------------------------------------------

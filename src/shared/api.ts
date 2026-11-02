@@ -336,6 +336,7 @@ export const api = {
   adminState: (q = '') => request<AdminState>('GET', `/api/admin/state${q.trim() === '' ? '' : `?q=${enc(q.trim())}`}`),
   adminShock: (body: { requestId: string; ticker: string; percent: number; style: AdminStyle; speed: AdminSpeed; headline?: string; body?: string; breaking?: boolean }) =>
     request<{ ok: boolean; duplicate: boolean; ticker: string; startsAtTick: number; priceBeforeCents: number }>('POST', '/api/admin/shock', body),
+  adminBlackMonday: (body: { requestId: string; confirm: string }) => request<{ ok: boolean; duplicate: boolean; startsAtTick?: number }>('POST', '/api/admin/black-monday', body),
   adminHalt: (body: { requestId: string; ticker: string; halted: boolean; reason?: string }) => request<{ ok: boolean; ticker: string; halted: boolean }>('POST', '/api/admin/halt', body),
   adminBan: (body: { requestId: string; username: string; reason?: string; hours?: number | null }) => request<{ ok: boolean; duplicate: boolean; username: string; untilMs: number | null }>('POST', '/api/admin/ban', body),
   adminUnban: (body: { requestId: string; username: string }) => request<{ ok: boolean; duplicate: boolean; username: string }>('POST', '/api/admin/unban', body),

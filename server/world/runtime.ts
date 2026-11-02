@@ -79,6 +79,8 @@ export interface MarkRow {
 export interface NewsContext {
   readonly worldSeed: number;
   readonly companies: readonly Company[];
+  /** The instant (ms) of tick 0. With it the news can place stories on calendar dates (Black Monday, October 19). Tests may leave it out. */
+  readonly genesisMs?: number;
 }
 
 /** What the world needs from the news system (docs/world.md §7). */
@@ -264,7 +266,7 @@ export class WorldRuntime {
       }
     });
     this.companies = catalog;
-    this.options.news?.bind?.({ worldSeed: this.worldSeed, companies: catalog });
+    this.options.news?.bind?.({ worldSeed: this.worldSeed, companies: catalog, genesisMs: this.genesisMs });
     const n = catalog.length;
     this.stats = new RollingStats(n);
     this.hour = new Rollup(n, CANDLES_PER_HOUR);
@@ -459,7 +461,7 @@ export class WorldRuntime {
     const ownEvents: WorldEvent[] = [];
     const news = this.options.news;
     if (news) {
-      news.bind?.({ worldSeed: this.worldSeed, companies: catalog });
+      news.bind?.({ worldSeed: this.worldSeed, companies: catalog, genesisMs: this.genesisMs });
       news.ensureThrough(this.loadedThrough);
       const events = news.eventsStartingIn(company.listingTick, this.loadedThrough);
       for (const e of events) {

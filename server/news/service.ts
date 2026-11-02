@@ -8,6 +8,7 @@ import {
   CATEGORY_LABEL,
   MIN_ITEMS_PER_CYCLE,
   NEWS_CYCLE_TICKS,
+  blackMondayDrafts,
   companyCycleDrafts,
   cycleOfTick,
   effectiveDuration,
@@ -121,6 +122,8 @@ export class NewsService implements NewsHooks {
   private readonly now: () => number;
   private readonly onGenerate: ((cycle: number) => void) | undefined;
   private worldSeed = 0;
+  /** The instant of tick 0, when the world told us (Black Monday needs the calendar); null in a test world that did not. */
+  private genesisMs: number | null = null;
   private companies: readonly Company[] = [];
   private genThrough = new Int32Array(0);
   private marketCycles = new Set<number>();
@@ -138,6 +141,7 @@ export class NewsService implements NewsHooks {
 
   bind(context: NewsContext): void {
     this.worldSeed = context.worldSeed;
+    this.genesisMs = context.genesisMs ?? null;
     this.companies = context.companies;
     this.genThrough = new Int32Array(context.companies.length).fill(-1);
     for (const r of this.db.all<{ company_id: number; generated_through: number }>('SELECT company_id, generated_through FROM news_company_state')) {
@@ -236,6 +240,8 @@ export class NewsService implements NewsHooks {
         if (!this.marketCycles.has(cycle)) {
           let market = 0;
           for (const d of marketCycleDrafts(this.worldSeed, this.companies, cycle)) market += this.insert(d, started);
+          // Black Monday (October 19 each year): the crash and its slow recovery are two more market-wide stories of the day they begin in.
+          if (this.genesisMs !== null) for (const d of blackMondayDrafts(this.worldSeed, this.genesisMs, cycle)) market += this.insert(d, started);
           this.db.run('INSERT OR IGNORE INTO news_cycles(cycle, generated_ms, items, companies) VALUES (?, ?, ?, ?)', cycle, started, market + total, companiesTouched);
           total += market;
           marketDone = true;
