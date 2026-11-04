@@ -110,6 +110,8 @@ export interface SharedState {
   readonly toasts: readonly Toast[];
   /** Counts up each time the server says this player earned a badge, so an open Badges page asks again. */
   readonly badgesVersion: number;
+  /** The window for logging in or creating an account, when it is open (any button can open it; the profile menu draws it). */
+  readonly authDialog: 'login' | 'register' | null;
 }
 
 const INITIAL: SharedState = {
@@ -147,6 +149,7 @@ const INITIAL: SharedState = {
   walletCents: 0,
   toasts: [],
   badgesVersion: 0,
+  authDialog: null,
 };
 
 const MAX_NEWS = 400;
@@ -788,6 +791,15 @@ export class SharedStore {
     if (this.state.profileFor !== null) this.set({ profileFor: null });
   }
 
+  /** "Log in" and "Create free account" buttons (the top bar, the welcome box...) open the same window. Nothing to open when signed in. */
+  openAuth(mode: 'login' | 'register'): void {
+    if (!this.state.user && this.state.authDialog !== mode) this.set({ authDialog: mode });
+  }
+
+  closeAuth(): void {
+    if (this.state.authDialog !== null) this.set({ authDialog: null });
+  }
+
   async refreshAccount(): Promise<void> {
     await this.refreshPrivate(false);
   }
@@ -838,7 +850,7 @@ export class SharedStore {
 
   async signIn(mode: 'login' | 'register', username: string, password: string): Promise<void> {
     const res = mode === 'login' ? await api.login(username, password) : await api.register(username, password);
-    this.set({ user: res.user, banned: null });
+    this.set({ user: res.user, banned: null, authDialog: null });
     // The server decides who a live stream belongs to when it opens. A stream opened before sign-in is anonymous and would
     // never get this player's match updates, so open a new one now.
     if (this.started) this.openStream();

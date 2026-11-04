@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadAiSettings, type AiSettings } from './aiClient';
+import { loadPaypalSettings, type PaypalSettings } from './paypal';
 
 /** A file in the data folder holding the owner's username (written by `npm run owner -- <username>`). */
 export const OWNER_FILE = 'owner.txt';
@@ -43,6 +44,10 @@ export interface Config {
   readonly ai: AiSettings | null;
   /** Why the AI teacher is off although a setting for it was given (a wrong value), or null. A wrong AI setting never stops the game from starting. */
   readonly aiProblem: string | null;
+  /** PayPal TEST payments for Shop looks (TQ_PAYPAL_CLIENT_ID and TQ_PAYPAL_SECRET, server/paypal.ts). Null = off, which is the default: then nothing about PayPal is shown. */
+  readonly paypal: PaypalSettings | null;
+  /** Why PayPal is off although a setting for it was given (a wrong value), or null. A wrong PayPal setting never stops the game from starting. */
+  readonly paypalProblem: string | null;
   readonly logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
 
@@ -104,6 +109,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   } catch (error) {
     ai.problem = error instanceof Error ? error.message : String(error);
   }
+  // PayPal is optional too, and the same rule holds: a wrong value turns it off and says why.
+  const paypal: { settings: PaypalSettings | null; problem: string | null } = { settings: null, problem: null };
+  try {
+    paypal.settings = loadPaypalSettings(env);
+  } catch (error) {
+    paypal.problem = error instanceof Error ? error.message : String(error);
+  }
   return {
     port: int(env, 'TQ_PORT', 8787, 1, 65535),
     host: env.TQ_HOST && env.TQ_HOST !== '' ? env.TQ_HOST : '127.0.0.1',
@@ -119,6 +131,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     iceServers: iceServersOf(env.TQ_ICE_SERVERS),
     ai: ai.settings,
     aiProblem: ai.problem,
+    paypal: paypal.settings,
+    paypalProblem: paypal.problem,
     logLevel: level as Config['logLevel'],
   };
 }

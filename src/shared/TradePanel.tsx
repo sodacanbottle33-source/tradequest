@@ -121,7 +121,7 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
   const [goodFor, setGoodFor] = useState<GoodFor>('1d');
   const [limitEstimate, setLimitEstimate] = useState<LimitEstimate | null>(null);
   const [spendText, setSpendText] = useState('');
-  const { limits } = useShared();
+  const { limits, user: signedInUser } = useShared();
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
@@ -430,6 +430,16 @@ export function TradePanel({ ticker, name, trading, bid, ask, account, kind, blo
         )}
       </div>
       {blocked && <p className="notice info">{blocked}</p>}
+      {blocked && !signedInUser && (
+        <div className="trade-auth" data-testid="trade-auth">
+          <button type="button" className="btn btn-small btn-primary" onClick={() => sharedStore.openAuth('register')} data-testid="trade-register">
+            Create free account
+          </button>
+          <button type="button" className="btn btn-small" onClick={() => sharedStore.openAuth('login')} data-testid="trade-login">
+            Log in
+          </button>
+        </div>
+      )}
       {!trading && <p className="notice info">This company is not trading yet.</p>}
       <form onSubmit={submit}>
         <fieldset disabled={disabled} className="order-fields">

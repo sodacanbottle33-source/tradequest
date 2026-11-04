@@ -40,6 +40,7 @@ import { TeamsScreen } from './TeamsScreen';
 import { BadgeUnlockLayer } from './BadgeUnlock';
 import { WinBurstLayer } from './WinBurst';
 import { sharedStore, useShared } from './store';
+import { WelcomeCard } from './WelcomeCard';
 
 type CareerTab = 'market' | 'coins' | 'earnings' | 'launch' | 'goals' | 'learn' | 'players' | 'teams' | 'chat' | 'messages' | 'shop' | 'account';
 const CAREER_TABS: [CareerTab, string][] = [
@@ -56,6 +57,9 @@ const CAREER_TABS: [CareerTab, string][] = [
   ['shop', 'Shop'],
   ['account', 'My account'],
 ];
+
+/** Career tabs that put the log in / create account form on the page themselves, so the welcome box would only say it twice. */
+const OWN_FORM_TABS: readonly CareerTab[] = ['goals', 'launch', 'players', 'teams', 'chat', 'messages', 'shop', 'account'];
 
 export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) => void }) {
   const s = useShared();
@@ -148,6 +152,14 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
 
   // (While a match is starting or running Career is closed altogether, so there is no Launch tab to hide then either.)
   const careerTab: CareerTab = chosenTab;
+  // The welcome box for somebody who is not logged in: on the market, the coins, earnings, Learn, 1v1 and News (not on a company page,
+  // where the trade box has its own two buttons, and not where the page already shows the form).
+  const showWelcome =
+    s.authChecked &&
+    s.conn === 'online' &&
+    !s.user &&
+    !s.banned &&
+    (shown === 'battle' || shown === 'news' || (shown === 'career' && !OWN_FORM_TABS.includes(careerTab) && !((careerTab === 'market' || careerTab === 'coins') && ticker !== null)));
   const careerTabs = CAREER_TABS;
   // Friend requests waiting for an answer: shown as a number on the Players tab.
   const requests = s.friends?.incoming.length ?? 0;
@@ -209,6 +221,8 @@ export function SharedApp({ mode, onMode }: { mode: Mode; onMode: (mode: Mode) =
           )}
         </section>
       )}
+
+      {showWelcome && <WelcomeCard />}
 
       <Notices />
       <AwayCard onGoals={goGoals} />

@@ -17,6 +17,8 @@ async function main(): Promise<void> {
   const log = new Logger({ level: config.logLevel });
   if (config.ai) log.info('learn', `The AI teacher is on (${config.ai.provider}, model ${config.ai.model}): at most ${config.ai.perUserDaily} comments per player and ${config.ai.globalDaily} in total per day.`);
   else if (config.aiProblem) log.warn('learn', `The AI teacher is OFF because its settings are wrong: ${config.aiProblem} The lessons still work with the built-in teacher.`);
+  if (config.paypal) log.info('account', 'PayPal TEST payments are on for Shop looks (PayPal sandbox only: no real money moves).');
+  else if (config.paypalProblem) log.warn('account', `PayPal test payments are OFF because their settings are wrong: ${config.paypalProblem}`);
   const backup = backupSettingsFromEnv(process.env);
   const store = backup ? storeFromSettings(backup) : null;
   let restored = false; // the store already holds exactly the world that was just loaded from it

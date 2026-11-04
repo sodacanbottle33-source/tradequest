@@ -31,6 +31,7 @@ import type { Predict } from './predict';
 import type { Teams } from './teams';
 import type { Trophies } from './trophies';
 import type { Shop } from './cosmetics';
+import type { Paypal } from './paypal';
 import type { CompanyPictures } from './companyPictures';
 import type { Profiles } from './profile';
 import type { NewsScheduler } from './news/scheduler';
@@ -95,6 +96,8 @@ export interface Services {
   readonly renames: Renames;
   /** The Shop: things to wear, bought with Career cash, and what each player wears (server/cosmetics.ts). */
   readonly shop: Shop;
+  /** PayPal TEST payments for Shop looks; off unless the owner set TQ_PAYPAL_CLIENT_ID and TQ_PAYPAL_SECRET (server/paypal.ts). */
+  readonly paypal: Paypal;
   /** The billboard: three places that show a company its launcher paid for (server/billboard.ts). */
   readonly billboard: Billboard;
   /** Profile pictures and who is online (server/profile.ts). */

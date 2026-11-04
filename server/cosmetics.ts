@@ -15,7 +15,7 @@
 // What a player has on his own screen is told to nobody but him (GET /api/gear, and the "gear" event of the live stream to his own other pages).
 
 import { badgeById } from '../src/shared/badgeCatalog';
-import { ALL_SLOT_IDS, COSMETICS, cleanGear, cleanLook, cosmeticById, gearIsEmpty, isGearSlot, isLookSlot, lookIsEmpty, priceOf, priceText, type Gear, type GearSlot, type Look, type LookSlot } from '../src/shared/cosmeticCatalog';
+import { ALL_SLOT_IDS, COSMETICS, cleanGear, cleanLook, cosmeticById, gearIsEmpty, isGearSlot, isLookSlot, lookIsEmpty, priceOf, priceText, type CosmeticDef, type Gear, type GearSlot, type Look, type LookSlot } from '../src/shared/cosmeticCatalog';
 import { petStageOf } from '../src/shared/petCatalog';
 import type { User } from './auth';
 import type { Logger } from './log';
@@ -145,6 +145,27 @@ export class Shop {
     const marks = NEEDED_BADGES.map(() => '?').join(', ');
     const have = db.all<{ badge: string }>(`SELECT badge FROM user_badges WHERE user_id = ? AND badge IN (${marks})`, me.id, ...NEEDED_BADGES).map((r) => r.badge);
     return { cashCents: this.accountOf(me.id)?.cash ?? 0, owned: owned.filter((id) => cosmeticById(id) !== undefined), equipped: this.lookOf(me.id), gear: this.gearOf(me.id), badges: have };
+  }
+
+  /**
+   * The checks every purchase must pass before it is paid in ANY way (Career cash in `buy` below, PayPal test money in server/paypal.ts): a real thing, one that is for sale (not an
+   * earned one), that he does not own yet, whose badge he has, and he is not a computer player. Throws a ShopError; returns the thing. Takes no money and changes nothing.
+   */
+  checkBuyable(me: User, rawItem: unknown): CosmeticDef {
+    if (typeof rawItem !== 'string') throw new ShopError('bad_request', 'item must be the id of something in the Shop.', 400);
+    const def = cosmeticById(rawItem);
+    if (!def) throw new ShopError('no_such_item', 'There is nothing like that in the Shop.', 404);
+    if (def.earn !== undefined) throw new ShopError('not_for_sale', `${def.name} cannot be bought. ${def.how ?? 'It is earned.'}`, 403, { how: def.how ?? null });
+    if (this.isBot(me.id)) throw new ShopError('cannot_buy', 'Computer players do not shop.', 403);
+    if (def.requiresBadge !== undefined) this.d.refreshBadges?.(me.id);
+    if (this.d.db.get('SELECT 1 AS x FROM user_cosmetics WHERE user_id = ? AND item = ?', me.id, def.id)) {
+      throw new ShopError('already_owned', `You already own ${def.name}. You can wear it from the Shop.`, 409);
+    }
+    if (def.requiresBadge !== undefined && !this.d.db.get('SELECT 1 AS x FROM user_badges WHERE user_id = ? AND badge = ?', me.id, def.requiresBadge)) {
+      const need = badgeById(def.requiresBadge)?.name ?? def.requiresBadge;
+      throw new ShopError('badge_needed', `${def.name} is only for players who have earned the "${need}" badge.`, 403, { badge: def.requiresBadge });
+    }
+    return def;
   }
 
   /** Buys one thing and puts it on. Everything is checked again inside one transaction, so two clicks at once can never charge twice. */

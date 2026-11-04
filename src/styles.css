@@ -1862,6 +1862,185 @@ code {
   z-index: 1;
 }
 
+/* ---------- Log in / create account: easy to find (top bar buttons, welcome box, the form's two tabs) ---------- */
+.profile.signed-out {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.auth-cta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.auth-cta .btn {
+  white-space: nowrap;
+}
+.auth-cta-login {
+  background: transparent;
+  border-color: var(--primary);
+  color: var(--text);
+}
+.auth-cta-create {
+  font-weight: 700;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .auth-cta-create {
+    animation: ctaPulse 2.6s ease-out infinite;
+  }
+  .auth-cta-create:hover,
+  .auth-cta-create:focus-visible {
+    animation: none;
+  }
+}
+@keyframes ctaPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+}
+
+.welcome-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 18px;
+  border-color: var(--primary);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), var(--panel) 65%);
+}
+.welcome-main {
+  flex: 1 1 340px;
+  min-width: 0;
+}
+.welcome-card .welcome-title {
+  margin: 0 0 12px;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.welcome-steps {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.welcome-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+}
+.welcome-num {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+.welcome-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.welcome-actions {
+  flex: 0 1 240px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  text-align: center;
+}
+.welcome-create {
+  padding: 14px 18px;
+  font-size: 17px;
+  font-weight: 700;
+}
+.welcome-have {
+  color: var(--muted);
+  font-size: 13px;
+}
+.welcome-login {
+  padding: 10px 14px;
+  border-color: var(--primary);
+}
+@media (max-width: 560px) {
+  .welcome-card .welcome-title {
+    font-size: 18px;
+  }
+  .welcome-actions {
+    flex-basis: 100%;
+  }
+}
+
+.trade-auth {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.auth-card h2 {
+  font-size: 18px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.auth-tabs {
+  display: flex;
+  margin: 0 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+.modal .auth-tabs {
+  margin-right: 46px; /* room for the close button */
+}
+.auth-tab {
+  flex: 1 1 0;
+  padding: 10px 8px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.auth-tab:hover {
+  color: var(--text);
+}
+.auth-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--primary);
+}
+.auth-tab:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.auth-fieldhint {
+  margin: -2px 0 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* ---------- Launch tab (any player launches a coin or a stock and can rug pull it) ---------- */
 .launch-layout {
   display: flex;
@@ -4497,6 +4676,53 @@ code {
   gap: 6px;
   flex-wrap: wrap;
   min-height: 32px;
+}
+.btn-paypal {
+  background: #ffc439;
+  border-color: #ffc439;
+  color: #111827;
+  font-weight: 700;
+}
+.btn-paypal:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.paypal-test-tag {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+.paypal-banner {
+  opacity: 1;
+}
+.paypal-pay {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+/* While the PayPal window is open the card takes the whole row, so PayPal's button has room on a phone too. */
+.shop-item.paying {
+  grid-column: 1 / -1;
+}
+.paypal-pay-line {
+  margin: 0;
+  font-size: 13px;
+}
+.paypal-box {
+  min-height: 40px;
+}
+.paypal-wait {
+  margin: 0;
+  font-size: 12px;
+}
+.paypal-problem {
+  opacity: 1;
 }
 .shop-wearing {
   color: var(--up);

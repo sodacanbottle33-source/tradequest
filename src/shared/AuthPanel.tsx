@@ -1,9 +1,12 @@
-// Sign in / create an account. The server checks everything; this form only sends what was typed.
+// Log in / create an account. The server checks everything (the username and password rules, the limits, who is banned); this form only
+// sends what was typed and shows the server's answer. Two big tabs at the top say which of the two you are doing.
 import { useState, type FormEvent } from 'react';
 import { sharedStore } from './store';
 
-export function AuthPanel({ initialMode = 'login', autoFocus = false }: { initialMode?: 'login' | 'register'; autoFocus?: boolean }) {
-  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
+type AuthMode = 'login' | 'register';
+
+export function AuthPanel({ initialMode = 'login', autoFocus = false }: { initialMode?: AuthMode; autoFocus?: boolean }) {
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -23,18 +26,37 @@ export function AuthPanel({ initialMode = 'login', autoFocus = false }: { initia
     }
   };
 
+  const switchTo = (next: AuthMode) => {
+    setMode(next);
+    setError(null);
+  };
+
   return (
-    <section className="card auth-card" aria-label="Sign in">
-      <h2>{mode === 'login' ? 'Sign in' : 'Create your account'}</h2>
-      <p className="hint">
-        The market is the same for every player and never stops. Your Career account ($1,000 to start) is saved on the
-        server, so it is still there when you come back.
+    <section className="card auth-card" aria-label="Log in or create an account" data-testid="auth-panel">
+      <div className="auth-tabs" role="tablist" aria-label="Log in or create an account">
+        <button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'auth-tab active' : 'auth-tab'} onClick={() => switchTo('login')} data-testid="auth-tab-login">
+          Log in
+        </button>
+        <button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'auth-tab active' : 'auth-tab'} onClick={() => switchTo('register')} data-testid="auth-tab-register">
+          Create account
+        </button>
+      </div>
+      <h2>{mode === 'login' ? 'Welcome back' : 'Create your free account'}</h2>
+      <p className="hint" data-testid="auth-hint">
+        {mode === 'login'
+          ? 'Type the username and password you picked when you made your account. Your money and your shares are saved on the server.'
+          : 'It is free and takes about 10 seconds. No email needed. You start with $1,000 of pretend money.'}
       </p>
       <form onSubmit={submit} className="auth-form">
         <label className="qty-label" htmlFor="auth-user">
           Username
         </label>
         <input id="auth-user" className="qty-input" type="text" autoComplete="username" autoFocus={autoFocus} value={username} onChange={(e) => setUsername(e.target.value)} />
+        {mode === 'register' && (
+          <span className="auth-fieldhint" data-testid="auth-user-hint">
+            3 to 20 letters, numbers or underscores. Other players will see it.
+          </span>
+        )}
         <label className="qty-label" htmlFor="auth-pass">
           Password
         </label>
@@ -46,19 +68,24 @@ export function AuthPanel({ initialMode = 'login', autoFocus = false }: { initia
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
+        {mode === 'register' && (
+          <span className="auth-fieldhint" data-testid="auth-pass-hint">
+            8 to 72 characters. Remember it: there is no "forgot password" button.
+          </span>
+        )}
         {error && (
           <p className="notice error" role="alert">
             {error}
           </p>
         )}
-        <button type="submit" className="btn btn-primary btn-wide" disabled={busy || username.trim() === '' || password === ''}>
-          {mode === 'login' ? 'Sign in' : 'Create account'}
+        <button type="submit" className="btn btn-primary btn-wide" disabled={busy || username.trim() === '' || password === ''} data-testid="auth-submit">
+          {busy ? 'One moment…' : mode === 'login' ? 'Log in' : 'Create my account'}
         </button>
       </form>
       <p className="small-print">
         {mode === 'login' ? 'New here? ' : 'Already have an account? '}
-        <button type="button" className="link-btn" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(null); }}>
-          {mode === 'login' ? 'Create an account' : 'Sign in'}
+        <button type="button" className="link-btn" onClick={() => switchTo(mode === 'login' ? 'register' : 'login')} data-testid="auth-switch">
+          {mode === 'login' ? 'Create a free account' : 'Log in'}
         </button>
       </p>
     </section>

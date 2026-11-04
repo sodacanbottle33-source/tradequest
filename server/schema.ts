@@ -1311,6 +1311,27 @@ CREATE INDEX comment_reports_open ON comment_reports(resolved_ms, comment_id);
 CREATE INDEX comment_reports_by_reporter ON comment_reports(reporter_id, created_ms);
 `,
   },
+  {
+    version: 32,
+    name: 'PayPal test payments for Shop looks',
+    sql: `
+-- PayPal TEST payments (server/paypal.ts, docs/world.md §43). One row per order the server made at PayPal for one Shop look. The primary key is PayPal's own order id, so the same
+-- order can never be written (or paid out) twice. Status: created (made, not yet paid), granting (paid and checked, the look is being given), granted (the look is the player's),
+-- paid_not_granted (paid, but he already owned the look: nothing more to give; kept so the owner can see it). Only new table: nothing that exists is changed.
+CREATE TABLE paypal_orders (
+  id           TEXT PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item         TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+  status       TEXT NOT NULL CHECK (status IN ('created', 'granting', 'granted', 'paid_not_granted')),
+  capture_id   TEXT,
+  created_ms   INTEGER NOT NULL,
+  updated_ms   INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX paypal_orders_by_user ON paypal_orders(user_id, created_ms DESC);
+CREATE INDEX paypal_orders_by_status ON paypal_orders(status, created_ms);
+`,
+  },
 ];
 
 export function currentVersion(db: Db): number {

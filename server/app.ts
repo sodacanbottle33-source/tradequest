@@ -39,6 +39,7 @@ import { Messages } from './messages';
 import { Renames } from './rename';
 import { Billboard } from './billboard';
 import { Shop } from './cosmetics';
+import { Paypal, createPaypalClient, type PaypalClient } from './paypal';
 import { Bankruptcies } from './bankruptcy';
 import { CompanyPictures } from './companyPictures';
 import { Profiles } from './profile';
@@ -63,6 +64,7 @@ import { registerCompanyPictureRoutes } from './routes/companyPictures';
 import { registerProfileRoutes } from './routes/profile';
 import { registerBillboardRoutes } from './routes/billboard';
 import { registerDailyRoutes } from './routes/daily';
+import { registerPaypalRoutes } from './routes/paypal';
 import { registerShopRoutes } from './routes/shop';
 import { registerPredictRoutes } from './routes/predict';
 import { registerTeamRoutes } from './routes/teams';
@@ -110,6 +112,8 @@ export interface AppOptions {
   readonly aiClient?: AiClient | null;
   /** For tests: the dice of the lesson chooser (a whole number below n). */
   readonly learnRandom?: (n: number) => number;
+  /** For tests: the PayPal to use instead of the one the settings describe (null = off). `clientId` is the public ID the page's PayPal button gets. */
+  readonly paypal?: { readonly client: PaypalClient; readonly clientId: string } | null;
   /** Folder with the built web app (npm run build), served by the same server. */
   readonly staticDir?: string;
   /** Extra setup after the services exist (news, lobby). */
@@ -408,6 +412,9 @@ export function createApp(options: AppOptions): App {
       badges.sweep(userId);
     },
   });
+  // PayPal TEST payments for Shop looks: off unless the owner set TQ_PAYPAL_CLIENT_ID and TQ_PAYPAL_SECRET (server/paypal.ts); `options.paypal` lets a test plug in its own.
+  const paypalParts = options.paypal !== undefined ? options.paypal : config.paypal ? { client: createPaypalClient(config.paypal), clientId: config.paypal.clientId } : null;
+  const paypal = new Paypal({ db, now, log, shop, client: paypalParts?.client ?? null, clientId: paypalParts?.clientId ?? '' });
   // The billboard: three places that show a company its launcher paid for with Career cash (gone, like the Shop). Everybody, signed in or not, sees it.
   const billboard = new Billboard({
     db,
@@ -540,6 +547,7 @@ export function createApp(options: AppOptions): App {
     messages,
     renames,
     shop,
+    paypal,
     billboard,
     profiles,
     companyPictures,
@@ -573,6 +581,7 @@ export function createApp(options: AppOptions): App {
   registerMessageRoutes(router, services);
   registerProfileRoutes(router, services);
   registerShopRoutes(router, services);
+  registerPaypalRoutes(router, services);
   registerBillboardRoutes(router, services);
   registerDailyRoutes(router, services);
   registerTrophyRoutes(router, services);

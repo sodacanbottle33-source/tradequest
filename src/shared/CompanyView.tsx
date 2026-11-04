@@ -284,7 +284,7 @@ export function CompanyView({ ticker, onBack, onTicker, trade }: Props) {
           kind={trade ? trade.kind : 'career'}
           spotOnly={pool != null}
           closeOnly={bankrupt}
-          blocked={pool?.dead ? `${detail.ticker} is dead: its developer took all the money out of the pool. Nothing can be bought or sold.` : bankrupt && !heldHere ? BANKRUPT_MESSAGE(detail.ticker) : halted ? (autoPause ? PAUSED_MESSAGE(detail.ticker, autoPause) : HALTED_MESSAGE(detail.ticker)) : trade && trade.kind === 'match' && launched ? LAUNCHED_MESSAGE : trade ? trade.blocked : user ? null : 'Sign in on the My account tab to trade with your Career money.'}
+          blocked={pool?.dead ? `${detail.ticker} is dead: its developer took all the money out of the pool. Nothing can be bought or sold.` : bankrupt && !heldHere ? BANKRUPT_MESSAGE(detail.ticker) : halted ? (autoPause ? PAUSED_MESSAGE(detail.ticker, autoPause) : HALTED_MESSAGE(detail.ticker)) : trade && trade.kind === 'match' && launched ? LAUNCHED_MESSAGE : trade ? trade.blocked : user ? null : 'Log in or create a free account to trade with your Career money.'}
           onTraded={(r) => {
             if (trade) trade.onTraded(r);
             else void sharedStore.refreshAccount();

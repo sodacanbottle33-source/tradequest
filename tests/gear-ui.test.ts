@@ -179,7 +179,7 @@ describe('Every look is drawn', () => {
     expect(screen).toMatch(/data-testid="shop-gear-head"/);
     expect(screen).toMatch(/Other players cannot see them/);
     expect(screen).toMatch(/profileStore\.setGear\(out\.gear\)/); // after buying and after wearing the chart changes at once
-    expect(screen.match(/profileStore\.setGear\(out\.gear\)/g)).toHaveLength(2);
+    expect(screen.match(/profileStore\.setGear\(out\.gear\)/g)).toHaveLength(3); // buying with Career cash, wearing, and a finished PayPal test payment
     // One row of pictures for a win style stays on one line (it is only a sample), and the pieces never block a click.
     expect(gearCss).toMatch(/\.win-dots\s*\{[^}]*flex-wrap:\s*nowrap/);
   });

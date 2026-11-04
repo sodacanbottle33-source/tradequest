@@ -1,5 +1,6 @@
-// The profile button at the top right, like the one in Claude: click it and a small menu opens. Signed out it offers "Log in" and
-// "Create account" (the form opens in a window on top of the page); signed in it shows who you are and offers "My account",
+// The profile button at the top right, like the one in Claude: click it and a small menu opens. Signed out, two big buttons sit next to it,
+// "Log in" and "Create free account", and the menu offers the same two (the form opens in a window on top of the page, drawn here; any
+// button on the page can open it through sharedStore.openAuth). Signed in it shows who you are and offers "My account",
 // the Admin panel (only for the owner), "Moderation" (only for a moderator the owner chose) and "Log out". Whether somebody is the
 // owner or a moderator is decided by the server; this menu only shows what the server said.
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
@@ -146,9 +147,8 @@ function AuthDialog({ mode, onClose }: { mode: 'login' | 'register'; onClose: ()
 }
 
 export function ProfileMenu({ onAccount, onShop, onAdmin, onMod, onLoggedOut }: Props) {
-  const { user } = useShared();
+  const { user, authDialog } = useShared();
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<'login' | 'register' | null>(null);
   const [busy, setBusy] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -177,7 +177,7 @@ export function ProfileMenu({ onAccount, onShop, onAdmin, onMod, onLoggedOut }: 
 
   // A successful log in closes the window by itself.
   useEffect(() => {
-    if (user) setDialog(null);
+    if (user) sharedStore.closeAuth();
   }, [user]);
 
   const initial = (user?.displayName ?? '?').slice(0, 1).toUpperCase();
@@ -212,7 +212,17 @@ export function ProfileMenu({ onAccount, onShop, onAdmin, onMod, onLoggedOut }: 
   };
 
   return (
-    <div className="profile" ref={wrap}>
+    <div className={user ? 'profile' : 'profile signed-out'} ref={wrap}>
+      {!user && (
+        <div className="auth-cta" data-testid="auth-cta">
+          <button type="button" className="btn btn-small auth-cta-login" onClick={() => sharedStore.openAuth('login')} data-testid="header-login">
+            Log in
+          </button>
+          <button type="button" className="btn btn-small btn-primary auth-cta-create" onClick={() => sharedStore.openAuth('register')} data-testid="header-register">
+            Create free account
+          </button>
+        </div>
+      )}
       <button
         ref={button}
         type="button"
@@ -277,10 +287,10 @@ export function ProfileMenu({ onAccount, onShop, onAdmin, onMod, onLoggedOut }: 
                   <span className="muted">Log in to trade with your Career money.</span>
                 </div>
               </div>
-              <button type="button" role="menuitem" className="menu-item" onClick={choose(() => setDialog('login'))} data-testid="menu-login">
+              <button type="button" role="menuitem" className="menu-item" onClick={choose(() => sharedStore.openAuth('login'))} data-testid="menu-login">
                 Log in
               </button>
-              <button type="button" role="menuitem" className="menu-item" onClick={choose(() => setDialog('register'))} data-testid="menu-register">
+              <button type="button" role="menuitem" className="menu-item" onClick={choose(() => sharedStore.openAuth('register'))} data-testid="menu-register">
                 Create account
               </button>
             </>
@@ -288,7 +298,7 @@ export function ProfileMenu({ onAccount, onShop, onAdmin, onMod, onLoggedOut }: 
         </div>
       )}
 
-      {dialog && !user && <AuthDialog mode={dialog} onClose={() => setDialog(null)} />}
+      {authDialog && !user && <AuthDialog key={authDialog} mode={authDialog} onClose={() => sharedStore.closeAuth()} />}
     </div>
   );
 }

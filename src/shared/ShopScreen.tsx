@@ -2,6 +2,7 @@
 // under the name (everybody sees these); and things for your own screen only: candle colours and shapes, a chart background and effect, and a style for the party after a
 // win. The server decides everything (what a thing costs, who may buy it, what is worn); this page shows the catalog (src/shared/cosmeticCatalog.ts)
 // and the server's answer about the player, and asks the server to buy and to wear. Buying always asks twice ("Buy" then "Confirm"), because the money is gone for good.
+// Where the owner switched PayPal TEST payments on (docs/world.md §43; the real game does not), each look that can be bought also has a "PayPal" button: PayPal's free test mode, no real money.
 import { useEffect, useState, type CSSProperties } from 'react';
 import { api } from './api';
 import { AuthPanel } from './AuthPanel';
@@ -10,14 +11,16 @@ import { COSMETICS, GEAR_SLOTS, LEAGUE_LOOKS, PROFILE_SLOTS, RARITY_NAMES, SEASO
 import { formatCents } from './format';
 import { ChartSample, WinSample } from './GearSamples';
 import { PET_EGG, petById, petLabel } from './petCatalog';
+import { PaypalPay } from './PaypalPay';
+import { paypalMoneyText, paypalPriceOf } from './paypalCatalog';
 import { PlayerName } from './PlayerName';
 import { problemText } from './playersUtil';
 import { profileStore } from './profileStore';
 import { RoleBadge } from './RoleBadge';
-import { boughtText, lockReason } from './shopUtil';
+import { boughtText, lockReason, paypalPaidText, paypalLock } from './shopUtil';
 import { Skeleton } from './Skeleton';
 import { sharedStore, useShared } from './store';
-import type { ShopView } from './types';
+import type { PaypalConfig, PaypalPaid, ShopView } from './types';
 
 /** What a thing looks like, drawn with the same classes the real thing uses (the Goals page shows its free looks the same way). */
 export function Sample({ def, name }: { def: CosmeticDef; name: string }) {
@@ -73,6 +76,8 @@ export function ShopScreen() {
   const [note, setNote] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [paypal, setPaypal] = useState<PaypalConfig | null>(null);
+  const [paying, setPaying] = useState<string | null>(null);
   const userId = user?.id ?? 0;
 
   useEffect(() => {
@@ -93,7 +98,33 @@ export function ShopScreen() {
     };
   }, [userId, badgesVersion]);
 
+  // Is PayPal TEST mode on here? (Only the owner's demo copy has it; anywhere else this stays off and nothing about PayPal is drawn.)
+  useEffect(() => {
+    if (userId === 0) return undefined;
+    let alive = true;
+    api
+      .paypalConfig()
+      .then((c) => {
+        if (alive) setPaypal(c);
+      })
+      .catch(() => {
+        if (alive) setPaypal({ enabled: false });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [userId]);
+
   if (!user) return <AuthPanel />;
+
+  /** A PayPal test payment finished: the server already checked it with PayPal and gave the look, so show what it says. */
+  const paid = (def: CosmeticDef, out: PaypalPaid) => {
+    setView({ cashCents: out.cashCents, owned: out.owned, equipped: out.equipped, gear: out.gear, badges: out.badges });
+    profileStore.setGear(out.gear);
+    setNote(paypalPaidText(def.name, out.amountCents, out.already));
+    setError(null);
+    setPaying(null);
+  };
 
   const buy = async (def: CosmeticDef) => {
     if (busy) return;
@@ -138,8 +169,10 @@ export function ShopScreen() {
     const lock = owned ? null : lockReason(def, v);
     const asking = confirming === def.id;
     const earnedOnly = def.earn !== undefined;
+    // PayPal is offered where the look can be bought at all (a badge it needs is still needed; Career cash is not).
+    const viaPaypal = paypal?.enabled === true && !owned && !earnedOnly && paypalLock(def, v) === null;
     return (
-      <li className={`shop-item rar-${def.rarity}${worn ? ' worn' : ''}`} key={def.id} data-testid={`shop-item-${def.id}`} data-owned={owned} data-worn={worn}>
+      <li className={`shop-item rar-${def.rarity}${worn ? ' worn' : ''}${paying === def.id && paypal !== null ? ' paying' : ''}`} key={def.id} data-testid={`shop-item-${def.id}`} data-owned={owned} data-worn={worn}>
         <div className="shop-sample-box">
           <Sample def={def} name={user.displayName} />
         </div>
@@ -170,6 +203,8 @@ export function ShopScreen() {
             <span className="shop-lock muted" data-testid={`shop-earn-${def.id}`}>
               {def.how}
             </span>
+          ) : paying === def.id && paypal !== null ? (
+            <PaypalPay config={paypal} def={def} onPaid={(out) => paid(def, out)} onCancel={() => setPaying(null)} />
           ) : asking ? (
             <>
               <button type="button" className="btn btn-small btn-buy" disabled={busy !== null} onClick={() => void buy(def)} data-testid={`shop-confirm-${def.id}`}>
@@ -184,6 +219,11 @@ export function ShopScreen() {
               <button type="button" className="btn btn-small" disabled={lock !== null || busy !== null} onClick={() => setConfirming(def.id)} data-testid={`shop-buy-${def.id}`}>
                 Buy {priceText(priceOf(def))}
               </button>
+              {viaPaypal && (
+                <button type="button" className="btn btn-small btn-paypal" disabled={busy !== null} onClick={() => { setConfirming(null); setPaying(def.id); }} data-testid={`shop-paypal-${def.id}`}>
+                  PayPal {paypalMoneyText(paypalPriceOf(def))} <span className="paypal-test-tag">TEST</span>
+                </button>
+              )}
               {lock && (
                 <span className="shop-lock muted" data-testid={`shop-lock-${def.id}`}>
                   {lock}
@@ -253,6 +293,11 @@ export function ShopScreen() {
             </strong>
           </div>
         </div>
+        {paypal?.enabled === true && (
+          <p className="notice info paypal-banner" data-testid="paypal-banner">
+            <strong>PayPal TEST MODE.</strong> Next to each look there is a PayPal button too. It is PayPal's free test mode: you pay with a made-up PayPal test account, and no real money is ever taken.
+          </p>
+        )}
         {note && (
           <p className="notice success" role="status" data-testid="shop-note">
             {note}

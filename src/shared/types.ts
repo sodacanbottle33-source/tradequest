@@ -1432,6 +1432,31 @@ export interface ShopBuy extends ShopView {
   readonly priceCents: number;
 }
 
+/** Whether PayPal TEST payments are switched on, and what the page needs to draw the PayPal buttons (docs/world.md §43). When it is off nothing about PayPal is shown. */
+export interface PaypalConfig {
+  readonly enabled: boolean;
+  /** Always the free test mode ("sandbox"): real money is not supported. */
+  readonly env?: 'sandbox';
+  /** The PayPal client ID of the owner's test app. It is public by design (the PayPal button needs it); the secret never leaves the server. */
+  readonly clientId?: string;
+  readonly currency?: 'USD';
+}
+
+/** A test order the server made at PayPal for one look: the page hands `orderId` to the PayPal button. */
+export interface PaypalOrderStarted {
+  readonly orderId: string;
+  readonly item: string;
+  readonly amountCents: number;
+}
+
+/** The answer to a finished PayPal test payment: the new Shop view plus what was bought. `already` is true when the same order had been finished before. */
+export interface PaypalPaid extends ShopView {
+  readonly item: string;
+  readonly orderId: string;
+  readonly amountCents: number;
+  readonly already: boolean;
+}
+
 /** A player's profile card (docs/world.md §29). What he wears comes from the page's list of looks. */
 export interface PlayerProfile {
   readonly username: string;

@@ -573,8 +573,8 @@ describe('storage and wiring', () => {
       }
       for (const id of [1, 2]) d.run("INSERT INTO users(id, username, display_name, pw_hash, role, created_ms) VALUES (?, ?, ?, 'x', 'player', 1)", id, `u${id}`, `u${id}`);
       d.run("INSERT INTO companies(id, ticker, name, listing_tick, listed_ms) VALUES (1, 'AAA', 'Alpha', 0, 1)");
-      expect(migrate(d)).toEqual([31]);
-      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(31);
+      expect(migrate(d)).toEqual([31, 32]);
+      expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(32);
       expect(migrate(d)).toEqual([]);
       for (const t of ['company_comments', 'comment_likes', 'comment_reports']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n).toBe(0);
       // A comment is 1 to 1200 characters, by a real player, on a real company.
