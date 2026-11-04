@@ -1,7 +1,8 @@
 // PayPal TEST payments for Shop looks (server/paypal.ts, server/routes/paypal.ts, src/shared/paypalCatalog.ts, docs/world.md §43). The REAL PayPal client code runs here against a pretend
 // PayPal on this computer (tests/helpers/fakePaypal.ts), so nothing talks to the internet. The rules checked: it is off unless the owner sets two settings and can never be pointed at
 // real-money PayPal; the server (never the page) picks the price, the look and the player; a look is given only when PayPal confirms a finished payment of exactly the right amount
-// for this player and this look; the same order cannot give twice; and the secret never appears in an answer, the log or the database.
+// for this player and this look; the same order cannot give twice; and the secret never appears in an answer, the log or the database. Even with the settings, PayPal stays hidden until the
+// owner presses the PayPal ON/OFF button (PP-25 … PP-30).
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +16,7 @@ import { Db } from '../server/sqlite';
 import { COSMETICS, type CosmeticDef } from '../src/shared/cosmeticCatalog';
 import { PAYPAL_PRICE_CENTS, centsOfPaypalValue, paypalAmountValue, paypalMoneyText, paypalPriceOf } from '../src/shared/paypalCatalog';
 import { FAKE_CLIENT_ID, FAKE_SECRET, startFakePaypal, type FakePaypal } from './helpers/fakePaypal';
-import { LONG, db, idOf, liveRig, type Running } from './helpers/chatlive';
+import { LONG, db, idOf, liveRig, requestId, type Running } from './helpers/chatlive';
 
 // The app is made once per test with a client that is handed to the pretend PayPal of THAT test.
 let fake!: FakePaypal;
@@ -34,6 +35,12 @@ const settingsFor = (base: string): PaypalSettings => loadPaypalSettings({ TQ_PA
 
 const on = liveRig('paypal', 'boss', '12', { paypal: { client, clientId: FAKE_CLIENT_ID }, log: new Logger({ sink: (line) => lines.push(line) }) });
 const off = liveRig('paypal-off');
+/** A server with the two PayPal settings AND the owner's button pressed to ON (it starts OFF; the button has its own tests below). */
+async function bootOn(): Promise<Running> {
+  const r = await on.boot();
+  r.app.services.paypal.setSwitch(true);
+  return r;
+}
 
 beforeEach(async () => {
   lines.length = 0;
@@ -147,7 +154,7 @@ describe('the prices', () => {
   });
 
   it('PP-4: the price is the server\'s: each rarity makes an order for its own amount in US dollars, and nothing the page adds changes it', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     for (const rarity of [1, 2, 3, 4]) {
       // (Every Legendary look for sale needs a badge, so he is given that badge first.)
@@ -189,7 +196,7 @@ describe('who may use it', () => {
   }, LONG);
 
   it('PP-6: when PayPal is on, every route needs a signed-in player, and the page only learns the public client ID (never the secret)', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     expect((await config(r)).status).toBe(401);
     expect((await start(r, undefined, lookOf(1))).status).toBe(401);
@@ -201,7 +208,7 @@ describe('who may use it', () => {
   }, LONG);
 
   it('PP-7: only the player an order was made for can finish it; somebody else\'s order looks like one that does not exist; badly written ids never reach PayPal', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const bob = await on.signUp(r, 'bob');
     const item = lookOf(1);
@@ -220,7 +227,7 @@ describe('who may use it', () => {
 
 describe('what can be bought', () => {
   it('PP-8: a look that cannot be bought with Career cash cannot be bought with PayPal either, and PayPal is not even asked', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const earned = COSMETICS.find((c) => c.earn !== undefined) as CosmeticDef;
     const badged = COSMETICS.find((c) => c.requiresBadge !== undefined) as CosmeticDef;
@@ -240,7 +247,7 @@ describe('what can be bought', () => {
   }, LONG);
 
   it('PP-9: a look that needs a badge can be bought with PayPal by a player who has the badge, at the Legendary test price', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const badged = COSMETICS.find((c) => c.requiresBadge !== undefined) as CosmeticDef;
     db(r).run('INSERT OR IGNORE INTO user_badges(user_id, badge, earned_ms) VALUES (?, ?, ?)', idOf(r, 'alice'), badged.requiresBadge as string, r.clock.now());
@@ -252,7 +259,7 @@ describe('what can be bought', () => {
   }, LONG);
 
   it('PP-10: paying with PayPal gives the look and wears it, takes no Career cash, and the same order can never give it twice', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const item = lookOf(3);
     const orderId = await approved(r, alice, item);
@@ -277,7 +284,7 @@ describe('what can be bought', () => {
   }, LONG);
 
   it('PP-11: a player cannot be charged for a look he bought another way after starting the order: it is refused before any money is taken', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const item = lookOf(1);
     const orderId = await approved(r, alice, item);
@@ -289,7 +296,7 @@ describe('what can be bought', () => {
   }, LONG);
 
   it('PP-12: if the look becomes his while PayPal is taking the payment, the payment is recorded as paid-but-not-given (no second copy), and finishing again just says so', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const item = lookOf(2);
     const orderId = await approved(r, alice, item);
@@ -305,7 +312,7 @@ describe('what can be bought', () => {
   }, LONG);
 
   it('PP-13: an order that was being given when the server stopped is finished by trying again (the look is his, the row becomes granted, nothing is taken twice)', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const item = lookOf(1);
     const orderId = await approved(r, alice, item);
@@ -324,7 +331,7 @@ describe('what can be bought', () => {
 
 describe('a payment that is not good gives nothing', () => {
   it('PP-14: before the buyer approves, nothing is given; after approving, the same order works', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const item = lookOf(1);
     const made = await start(r, alice, item);
@@ -337,7 +344,7 @@ describe('a payment that is not good gives nothing', () => {
   }, LONG);
 
   it('PP-15: a wrong amount, a wrong currency, another player\'s custom_id, or a payment that is not COMPLETED gives nothing; fixed, the same order then works', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const cases: [string, () => void][] = [
       ['less money', () => (fake.behave.amountOverride = '0.01')],
@@ -373,7 +380,7 @@ describe('a payment that is not good gives nothing', () => {
   }, LONG);
 
   it('PP-16: a payment the buyer\'s bank declines says so (402), gives nothing, and the same order can be tried again', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const item = lookOf(1);
     const orderId = await approved(r, alice, item);
@@ -389,7 +396,7 @@ describe('a payment that is not good gives nothing', () => {
   }, LONG);
 
   it('PP-17: when PayPal is down or refuses our sign-in, the player gets a plain "try again" (502) with nothing from PayPal in it, nothing is given, and nothing is kept', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const item = lookOf(1);
     fake.behave.refuseToken = true;
@@ -417,7 +424,7 @@ describe('a payment that is not good gives nothing', () => {
   }, LONG);
 
   it('PP-18: two clicks at once take the payment once: one finishes it, the other is told it is already being finished', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const item = lookOf(2);
     const orderId = await approved(r, alice, item);
@@ -434,7 +441,7 @@ describe('a payment that is not good gives nothing', () => {
 
 describe('keeping secrets and tidy records', () => {
   it('PP-19: the secret appears nowhere: not in any answer, the log, or the database', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const seen: string[] = [];
     const note = (res: { json: any }) => seen.push(JSON.stringify(res.json));
@@ -460,7 +467,7 @@ describe('keeping secrets and tidy records', () => {
   }, LONG);
 
   it('PP-20: unpaid orders older than three days are swept when the next one is made; paid ones are kept as the record', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const paid = await approved(r, alice, lookOf(1));
     expect((await finish(r, alice, paid)).status).toBe(200);
@@ -481,7 +488,7 @@ describe('keeping secrets and tidy records', () => {
   }, LONG);
 
   it('PP-21: at most 10 orders are started and 20 finished per player per minute', async () => {
-    const r = await on.boot();
+    const r = await bootOn();
     const alice = await on.signUp(r, 'alice');
     const bob = await on.signUp(r, 'bob');
     const items = COSMETICS.filter((c) => c.earn === undefined && c.requiresBadge === undefined).map((c) => c.id);
@@ -583,5 +590,150 @@ describe('the PayPal client and the database', () => {
       d.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  }, LONG);
+});
+
+describe('the owner\'s PayPal ON/OFF button', () => {
+  const adminGet = (r: Running, cookie?: string) => on.call(r, '/api/admin/paypal', { cookie });
+  const press = (r: Running, cookie: string | undefined, body: Record<string, unknown>) => on.call(r, '/api/admin/paypal', { method: 'POST', cookie, body });
+  const logRows = (r: Running) => db(r).all<{ action: string; target: string; detail_json: string }>("SELECT action, target, detail_json FROM admin_log WHERE action = 'paypal_switch' ORDER BY id");
+  const flag = (r: Running) => db(r).get<{ value: string }>("SELECT value FROM meta WHERE key = 'paypal_on'")?.value ?? null;
+
+  it('PP-25: with the two settings but the button not pressed, PayPal starts OFF: the page is told so, no order can be started, PayPal is never called', async () => {
+    const r = await on.boot();
+    const alice = await on.signUp(r, 'alice');
+    expect(r.app.services.paypal.configured()).toBe(true);
+    expect(r.app.services.paypal.enabled()).toBe(false);
+    expect((await config(r, alice)).json).toEqual({ enabled: false });
+    expect(code(await start(r, alice, lookOf(1)))).toEqual([404, 'paypal_off']);
+    expect(code(await finish(r, alice, 'ORDER000001X'))).toEqual([404, 'no_such_order']); // finishing only looks in our own records, so it still answers plainly
+    expect(fake.calls).toEqual([]);
+    expect(rows(r)).toEqual([]);
+    expect(flag(r)).toBeNull();
+    const boss = await on.signUp(r, 'boss');
+    expect((await adminGet(r, boss)).json).toEqual({ configured: true, on: false, showing: false, env: 'sandbox', orders: {} });
+    // The Shop is untouched.
+    expect((await shop(r, alice)).cashCents).toBe(100_000);
+  }, LONG);
+
+  it('PP-26: only the owner may look at or press the button: nobody signed out, no ordinary player, and the answers never hold a secret or the client ID', async () => {
+    const r = await on.boot();
+    const alice = await on.signUp(r, 'alice');
+    const boss = await on.signUp(r, 'boss');
+    for (const [cookie, want] of [[undefined, 401], [alice, 403]] as const) {
+      expect((await adminGet(r, cookie)).status).toBe(want);
+      expect((await press(r, cookie, { requestId: requestId(), on: true })).status).toBe(want);
+    }
+    expect(code(await press(r, alice, { requestId: requestId(), on: true }))).toEqual([403, 'owner_only']);
+    expect(code(await adminGet(r, alice))).toEqual([403, 'owner_only']);
+    // Nothing changed, nothing was logged.
+    expect(flag(r)).toBeNull();
+    expect(logRows(r)).toEqual([]);
+    const seen = await adminGet(r, boss);
+    expect(seen.status).toBe(200);
+    const text = JSON.stringify([seen.json, (await press(r, boss, { requestId: requestId(), on: true })).json]);
+    expect(text).not.toContain(FAKE_SECRET);
+    expect(text).not.toContain(FAKE_CLIENT_ID);
+  }, LONG);
+
+  it('PP-27: the owner switches PayPal on and the page sees it at once; a payment then works; switching off hides it again and stops NEW orders, but an order already started can still be finished', async () => {
+    const r = await on.boot();
+    const alice = await on.signUp(r, 'alice');
+    const boss = await on.signUp(r, 'boss');
+    const item = lookOf(1);
+    const turnedOn = await press(r, boss, { requestId: requestId(), on: true });
+    expect(turnedOn.status).toBe(200);
+    expect(turnedOn.json).toEqual({ ok: true, duplicate: false, configured: true, on: true, showing: true, env: 'sandbox', orders: {} });
+    expect((await config(r, alice)).json).toEqual({ enabled: true, env: 'sandbox', clientId: FAKE_CLIENT_ID, currency: 'USD' });
+    expect(flag(r)).toBe('1');
+    // One order is started and approved; another is started and not yet approved.
+    const first = await approved(r, alice, item);
+    const second = await approved(r, alice, lookOf(2));
+    const turnedOff = await press(r, boss, { requestId: requestId(), on: false });
+    expect(turnedOff.json).toEqual({ ok: true, duplicate: false, configured: true, on: false, showing: false, env: 'sandbox', orders: { created: 2 } });
+    expect(flag(r)).toBeNull();
+    expect((await config(r, alice)).json).toEqual({ enabled: false });
+    expect(code(await start(r, alice, lookOf(3)))).toEqual([404, 'paypal_off']);
+    // The buyer approved before the owner pressed OFF: the money was approved, so the look is still given.
+    const done = await finish(r, alice, first);
+    expect(done.status).toBe(200);
+    expect(done.json.owned).toContain(item);
+    expect(rows(r).map((x) => [x.id, x.status])).toEqual([[first, 'granted'], [second, 'created']]);
+    expect(cashOf(r, 'alice')).toBe(100_000);
+    // Switched on again, the page sees it again, and the other order can be finished too.
+    expect((await press(r, boss, { requestId: requestId(), on: true })).json.showing).toBe(true);
+    expect((await config(r, alice)).json.enabled).toBe(true);
+    expect((await finish(r, alice, second)).status).toBe(200);
+    expect((await adminGet(r, boss)).json.orders).toEqual({ granted: 2 });
+  }, LONG);
+
+  it('PP-28: the button\'s state lives in the database, not in memory: a flag written there is followed at once, and removing it switches PayPal off', async () => {
+    const r = await on.boot();
+    const alice = await on.signUp(r, 'alice');
+    db(r).run("INSERT INTO meta(key, value) VALUES ('paypal_on', '1')");
+    expect((await config(r, alice)).json.enabled).toBe(true);
+    // Anything but a clean "1" is OFF.
+    for (const odd of ['0', '', 'true', 'yes', '11']) {
+      db(r).run("UPDATE meta SET value = ? WHERE key = 'paypal_on'", odd);
+      expect((await config(r, alice)).json).toEqual({ enabled: false });
+    }
+    db(r).run("DELETE FROM meta WHERE key = 'paypal_on'");
+    expect(r.app.services.paypal.enabled()).toBe(false);
+  }, LONG);
+
+  it('PP-29: a press needs a true/false answer and a request id; a repeated press is not done twice; every real press is written once to the admin log', async () => {
+    const r = await on.boot();
+    const boss = await on.signUp(r, 'boss');
+    for (const body of [{ requestId: requestId() }, { requestId: requestId(), on: 'yes' }, { requestId: requestId(), on: 1 }, { requestId: requestId(), on: null }, { requestId: requestId(), on: 'true' }]) {
+      expect(code(await press(r, boss, body))).toEqual([400, 'bad_request']);
+    }
+    for (const body of [{ on: true }, { requestId: 'x', on: true }, { requestId: 12345678, on: true }]) {
+      expect((await press(r, boss, body)).status).toBe(400);
+    }
+    expect(flag(r)).toBeNull();
+    expect(logRows(r)).toEqual([]);
+
+    const id = requestId();
+    const one = await press(r, boss, { requestId: id, on: true });
+    expect([one.status, one.json.duplicate, one.json.on]).toEqual([200, false, true]);
+    const again = await press(r, boss, { requestId: id, on: true });
+    expect([again.status, again.json.duplicate, again.json.on]).toEqual([200, true, true]);
+    await press(r, boss, { requestId: requestId(), on: false });
+    // The first press is sent again late: it is a repeat, so it does not switch PayPal back on.
+    const late = await press(r, boss, { requestId: id, on: true });
+    expect([late.json.duplicate, late.json.on]).toEqual([true, false]);
+    expect(flag(r)).toBeNull();
+    expect(logRows(r).map((x) => [x.action, x.target, JSON.parse(x.detail_json)])).toEqual([
+      ['paypal_switch', 'on', { on: true }],
+      ['paypal_switch', 'off', { on: false }],
+    ]);
+    expect(JSON.stringify(logRows(r))).not.toContain(FAKE_SECRET);
+    expect(JSON.stringify(logRows(r))).not.toContain(FAKE_CLIENT_ID);
+    // The owner sees the same two lines in the admin panel's log.
+    const state = await on.call(r, '/api/admin/state', { cookie: boss });
+    expect(JSON.stringify(state.json)).toContain('paypal_switch');
+  }, LONG);
+
+  it('PP-30: without the two settings PayPal cannot be switched ON (409, nothing written), can always be switched OFF, and a flag left behind still shows nothing to players', async () => {
+    const r = await off.boot();
+    const alice = await off.signUp(r, 'alice');
+    const boss = await off.signUp(r, 'boss');
+    expect(r.app.services.paypal.configured()).toBe(false);
+    expect((await off.call(r, '/api/admin/paypal', { cookie: boss })).json).toEqual({ configured: false, on: false, showing: false, env: 'sandbox', orders: {} });
+    const refused = await off.call(r, '/api/admin/paypal', { method: 'POST', cookie: boss, body: { requestId: requestId(), on: true } });
+    expect(code(refused)).toEqual([409, 'paypal_not_set_up']);
+    expect(refused.json.error.message).toMatch(/TQ_PAYPAL_CLIENT_ID/);
+    expect(db(r).get('SELECT value FROM meta WHERE key = ?', 'paypal_on')).toBeUndefined();
+    expect(db(r).all("SELECT id FROM admin_log WHERE action = 'paypal_switch'")).toEqual([]);
+    // A flag left in the database (the settings were taken away later) shows nothing to players and can be switched off.
+    db(r).run("INSERT INTO meta(key, value) VALUES ('paypal_on', '1')");
+    expect((await off.call(r, '/api/paypal/config', { cookie: alice })).json).toEqual({ enabled: false });
+    const stale = (await off.call(r, '/api/admin/paypal', { cookie: boss })).json;
+    expect([stale.configured, stale.on, stale.showing]).toEqual([false, true, false]);
+    const cleared = await off.call(r, '/api/admin/paypal', { method: 'POST', cookie: boss, body: { requestId: requestId(), on: false } });
+    expect([cleared.status, cleared.json.on]).toEqual([200, false]);
+    expect(db(r).get('SELECT value FROM meta WHERE key = ?', 'paypal_on')).toBeUndefined();
+    // With no settings an order cannot be finished either.
+    expect(code(await off.call(r, '/api/paypal/capture', { method: 'POST', cookie: alice, body: { orderId: 'ORDER000001X' } }))).toEqual([404, 'paypal_off']);
   }, LONG);
 });

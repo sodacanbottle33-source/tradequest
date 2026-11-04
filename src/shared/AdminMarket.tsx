@@ -1,9 +1,10 @@
-// Owner tools for the market: the price-impact dial, an announcement and a pause-all switch (AdminBroadcast), moving a company's
+// Owner tools for the market: the price-impact dial, an announcement and a pause-all switch (AdminBroadcast), the PayPal ON/OFF button (AdminPaypal), moving a company's
 // price (rug pull, crash, pump), and stopping or resuming trading in one company.
 // Nothing here changes a price by itself: the server turns the request into a special news story and the market plays it out.
 import { useMemo, useState } from 'react';
 import { ApiError, api } from './api';
 import { AdminBroadcast } from './AdminBroadcast';
+import { AdminPaypal } from './AdminPaypal';
 import { newRequestId, parsePercent } from './adminUtil';
 import { formatBps, formatCents } from './format';
 import { sharedStore, useShared } from './store';
@@ -130,6 +131,8 @@ export function AdminMarket({ state, reload }: { state: AdminState | null; reloa
       </section>
 
       <AdminBroadcast state={state} reload={reload} />
+
+      <AdminPaypal />
 
       <section className="card" aria-label="Move a price">
         <h2>

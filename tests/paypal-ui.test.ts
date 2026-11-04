@@ -1,6 +1,6 @@
 // PAYUI-1 … PAYUI-6 — the PayPal TEST button on the Shop page (docs/world.md §43). The rules are the server's (tests/server-paypal.test.ts). Here the page only has to: draw nothing about
 // PayPal unless the server says PayPal is on, send the server only a look's id (never a price or a player), load PayPal's script from paypal.com only when a button is opened, say plainly
-// that it is test money, and have a style rule for everything it draws.
+// that it is test money, and have a style rule for everything it draws. PAYUI-7 is the owner's PayPal ON/OFF card in the admin panel.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -20,6 +20,9 @@ function code(file: string): string {
 const shopScreen = code(src('shared', 'ShopScreen.tsx'));
 const payButton = code(src('shared', 'PaypalPay.tsx'));
 const apiSource = code(src('shared', 'api.ts'));
+const adminPaypal = code(src('shared', 'AdminPaypal.tsx'));
+const adminMarket = code(src('shared', 'AdminMarket.tsx'));
+const adminLog = code(src('shared', 'AdminLog.tsx'));
 const css = readFileSync(src('styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
 
 describe('the PayPal button on the Shop page', () => {
@@ -125,5 +128,29 @@ describe('the PayPal button on the Shop page', () => {
     const own = css.slice(from, to);
     expect(own).not.toMatch(/url\(|@import|animation|transition|@keyframes/);
     expect(own).toMatch(/\.btn-paypal\s*\{[^}]*background:\s*#ffc439/);
+  });
+
+  it('PAYUI-7: the owner\'s PayPal ON/OFF card asks the server, sends only true/false with a request id, cannot switch ON without the codes, says what is set, and is in the admin panel and the admin log', () => {
+    expect(apiSource).toContain("adminPaypal: () => request<AdminPaypalView>('GET', '/api/admin/paypal')");
+    expect(apiSource).toContain("adminPaypalSwitch: (body: { requestId: string; on: boolean }) => request<AdminPaypalView & { ok: boolean; duplicate: boolean }>('POST', '/api/admin/paypal', body)");
+    expect(adminPaypal).toMatch(/api\.adminPaypal\(\)/);
+    expect(adminPaypal).toMatch(/api\.adminPaypalSwitch\(\{ requestId: newRequestId\(\), on \}\)/);
+    expect(adminPaypal).toMatch(/onClick=\{\(\) => void press\(!view\.on\)\}/); // the button asks for the opposite of what the server says now
+    expect(adminPaypal).toMatch(/disabled=\{busy \|\| \(!view\.on && !view\.configured\)\}/); // no codes: ON is not offered; OFF always is
+    expect(adminPaypal).toMatch(/setView\(out\)/); // what the card shows after a press is what the SERVER answered
+    for (const id of ['admin-paypal', 'admin-paypal-state', 'admin-paypal-orders', 'admin-paypal-toggle', 'admin-paypal-message']) expect(adminPaypal).toContain(`data-testid="${id}"`);
+    expect(adminPaypal).toContain('Switch PayPal on');
+    expect(adminPaypal).toContain('Switch PayPal off');
+    expect(adminPaypal).toMatch(/no real money is ever taken/);
+    expect(adminPaypal).toMatch(/TQ_PAYPAL_CLIENT_ID and TQ_PAYPAL_SECRET/); // it names the two settings (their names, never their values)
+    expect(adminPaypal).not.toMatch(/clientId|client-id|client_secret|api-m\.|paypal\.com\/sdk|localStorage/);
+    // It sits on the owner's Market tab, and the log words the press.
+    expect(adminMarket).toMatch(/import \{ AdminPaypal \} from '\.\/AdminPaypal';/);
+    expect(adminMarket).toMatch(/<AdminPaypal \/>/);
+    expect(adminLog).toContain("case 'paypal_switch':");
+    expect(adminLog).toMatch(/switched PayPal test payments off/);
+    expect(adminLog).toMatch(/switched PayPal test payments on/);
+    // Only classes that already have a style rule.
+    for (const m of adminPaypal.matchAll(/className=\{?"([^"]+)"/g)) for (const c of (m[1] as string).split(/\s+/)) expect(css, c).toMatch(new RegExp(`\\.${c}[\\s{,:.\\[>]`));
   });
 });

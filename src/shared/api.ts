@@ -7,6 +7,7 @@ import type {
   Account,
   AdminChatView,
   AdminCommentsView,
+  AdminPaypalView,
   AdminPrivateView,
   Announcement,
   BanNotice,
@@ -329,6 +330,10 @@ export const api = {
   adminChat: () => request<AdminChatView>('GET', '/api/admin/chat'),
   /** The owner switches pictures in all chats off or on (text keeps working). */
   adminChatPictures: (body: { requestId: string; on: boolean }) => request<{ ok: boolean; duplicate: boolean; picturesOn: boolean }>('POST', '/api/admin/chat/pictures', body),
+  /** The owner's PayPal ON/OFF button: what is set up and whether it is on. */
+  adminPaypal: () => request<AdminPaypalView>('GET', '/api/admin/paypal'),
+  /** The owner switches PayPal test payments on or off for players (on needs the two PayPal settings on the server). */
+  adminPaypalSwitch: (body: { requestId: string; on: boolean }) => request<AdminPaypalView & { ok: boolean; duplicate: boolean }>('POST', '/api/admin/paypal', body),
   adminChatDelete: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/chat/delete', body),
   adminChatDismiss: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/chat/dismiss', body),
   adminChatMute: (body: { requestId: string; username: string; minutes: number; reason?: string }) => request<{ ok: boolean; duplicate: boolean; username: string; untilMs: number }>('POST', '/api/admin/chat/mute', body),

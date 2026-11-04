@@ -5,6 +5,9 @@
 // real game) shows nothing about PayPal at all. The secret lives only in the server's memory: it is never written to the database, the log or any answer, and the browser never sees it
 // (the client ID is public by design: the PayPal button needs it).
 //
+// Even with the two settings, PayPal stays hidden until the OWNER presses the PayPal ON/OFF button in the admin panel (docs/world.md §43): it starts OFF. While it is off the Shop shows
+// nothing about PayPal and no new order can be started; an order a player had already started can still be finished (he may have paid in the PayPal window a moment before).
+//
 // How a payment goes (PayPal "Orders v2"; the server decides everything, the page only shows the PayPal button):
 //   1. POST /api/paypal/orders {item}: the server checks the look can be bought (the same checks as the Shop's Career-cash buy), works out the price itself from the look's rarity
 //      (src/shared/paypalCatalog.ts), asks PayPal to make an order for exactly that amount, and keeps a row in `paypal_orders` (PayPal's own order id is the key).
@@ -26,6 +29,8 @@ import type { Db } from './sqlite';
 /** PayPal's test servers. Nothing else is accepted (except this very computer, for the tests): there is deliberately no way to point TradeQuest at PayPal's real-money servers. */
 export const PAYPAL_SANDBOX_API = 'https://api-m.sandbox.paypal.com';
 export const PAYPAL_TIMEOUT_MS = 20_000;
+/** The owner's switch is this row of `meta` (present and "1" = on). No row = off, which is what a new database has. */
+export const SWITCH_KEY = 'paypal_on';
 /** An order that was made but never paid is forgotten after this long. */
 export const UNPAID_KEEP_MS = 3 * 24 * 60 * 60 * 1000;
 
@@ -264,14 +269,35 @@ export class Paypal {
 
   constructor(private readonly d: PaypalDeps) {}
 
-  enabled(): boolean {
+  /** Whether the server has the two PayPal settings (a client is made). Without them there is nothing the owner's switch could turn on. */
+  configured(): boolean {
     return this.d.client !== null;
+  }
+
+  /** The owner's ON/OFF button. A new database says off. */
+  switchedOn(): boolean {
+    return this.d.db.get<{ value: string }>('SELECT value FROM meta WHERE key = ?', SWITCH_KEY)?.value === '1';
+  }
+
+  setSwitch(on: boolean): void {
+    if (on) this.d.db.run('INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', SWITCH_KEY, '1');
+    else this.d.db.run('DELETE FROM meta WHERE key = ?', SWITCH_KEY);
+  }
+
+  /** PayPal is showing to players: the settings are there AND the owner switched it on. */
+  enabled(): boolean {
+    return this.configured() && this.switchedOn();
   }
 
   /** What the page needs to know. When PayPal is off it is only `{enabled: false}`. */
   publicConfig(): PaypalConfig {
-    if (this.d.client === null) return { enabled: false };
+    if (!this.enabled()) return { enabled: false };
     return { enabled: true, env: 'sandbox', clientId: this.d.clientId, currency: PAYPAL_CURRENCY };
+  }
+
+  /** What the owner's panel shows. */
+  adminView(): { configured: boolean; on: boolean; showing: boolean; env: 'sandbox'; orders: Record<string, number> } {
+    return { configured: this.configured(), on: this.switchedOn(), showing: this.enabled(), env: 'sandbox', orders: this.counts() };
   }
 
   private client(): PaypalClient {
@@ -295,6 +321,8 @@ export class Paypal {
 
   /** Step 1: makes the PayPal order for one look and remembers it for this player. */
   async createOrder(me: User, rawItem: unknown): Promise<PaypalOrderStarted> {
+    // A new order starts only while PayPal is showing (the owner's switch is on).
+    if (!this.enabled()) throw new PaypalError('paypal_off', 'PayPal test payments are not switched on here.', 404);
     const client = this.client();
     const def = this.d.shop.checkBuyable(me, rawItem);
     const amountCents = paypalPriceOf(def);
@@ -306,7 +334,10 @@ export class Paypal {
     return { orderId: made.id, item: def.id, amountCents };
   }
 
-  /** Step 3: takes the payment, checks PayPal's answer, and gives the look. Only the player the order was made for may finish it. */
+  /**
+   * Step 3: takes the payment, checks PayPal's answer, and gives the look. Only the player the order was made for may finish it. It works whenever the settings are there, even if the owner
+   * switched PayPal off after the order was started (the buyer may have approved a moment before): switching off stops NEW orders, it never strands a paid one.
+   */
   async capture(me: User, rawOrderId: unknown): Promise<PaypalPaid> {
     const client = this.client();
     if (typeof rawOrderId !== 'string' || !ORDER_ID.test(rawOrderId)) throw new PaypalError('bad_request', 'orderId must be the id of a PayPal order made for you.', 400);

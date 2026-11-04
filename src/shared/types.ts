@@ -1442,6 +1442,19 @@ export interface PaypalConfig {
   readonly currency?: 'USD';
 }
 
+/** What the owner's PayPal ON/OFF button shows (docs/world.md §43): are the two PayPal settings on the server, is the button ON, do players see PayPal right now, and how many test orders there are by state. */
+export interface AdminPaypalView {
+  /** The server has the PayPal client ID and secret. Without them PayPal cannot be switched on. */
+  readonly configured: boolean;
+  /** The owner's button. */
+  readonly on: boolean;
+  /** Players see PayPal right now (configured and on). */
+  readonly showing: boolean;
+  readonly env: 'sandbox';
+  /** Test orders by state: created, granting, granted, paid_not_granted. */
+  readonly orders: Readonly<Record<string, number>>;
+}
+
 /** A test order the server made at PayPal for one look: the page hands `orderId` to the PayPal button. */
 export interface PaypalOrderStarted {
   readonly orderId: string;
