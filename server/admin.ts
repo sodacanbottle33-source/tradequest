@@ -63,7 +63,7 @@ export const ANNOUNCEMENT_MAX = 200;
 const ANNOUNCEMENT_KEY = 'announcement';
 
 /** Every kind of entry in the admin log. */
-export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin' | 'chat_delete' | 'chat_mute' | 'chat_ban' | 'chat_lift' | 'chat_dismiss' | 'pm_dismiss' | 'avatar_remove' | 'company_pic_set' | 'company_pic_remove' | 'kick' | 'mod_appoint' | 'mod_remove' | 'chat_pictures' | 'comment_delete' | 'comment_dismiss' | 'black_monday' | 'paypal_switch';
+export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin' | 'chat_delete' | 'chat_mute' | 'chat_ban' | 'chat_lift' | 'chat_dismiss' | 'pm_dismiss' | 'avatar_remove' | 'company_pic_set' | 'company_pic_remove' | 'kick' | 'mod_appoint' | 'mod_remove' | 'chat_pictures' | 'comment_delete' | 'comment_dismiss' | 'black_monday';
 
 export interface Announcement {
   readonly text: string;

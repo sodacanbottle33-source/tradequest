@@ -65,8 +65,6 @@ function describe(e: Entry): string {
       return `closed the reports about a private message (${e.target})`;
     case 'chat_pictures':
       return d.on === false ? 'switched pictures in chats off' : 'switched pictures in chats on';
-    case 'paypal_switch':
-      return d.on === false ? 'switched PayPal test payments off' : 'switched PayPal test payments on';
     case 'avatar_remove':
       return `removed the profile picture of ${e.target}`;
     case 'company_pic_set':

@@ -1313,11 +1313,10 @@ CREATE INDEX comment_reports_by_reporter ON comment_reports(reporter_id, created
   },
   {
     version: 32,
-    name: 'PayPal test payments for Shop looks',
+    name: 'an empty table that nothing uses (left from a removed PayPal test)',
     sql: `
--- PayPal TEST payments (server/paypal.ts, docs/world.md §43). One row per order the server made at PayPal for one Shop look. The primary key is PayPal's own order id, so the same
--- order can never be written (or paid out) twice. Status: created (made, not yet paid), granting (paid and checked, the look is being given), granted (the look is the player's),
--- paid_not_granted (paid, but he already owned the look: nothing more to give; kept so the owner can see it). Only new table: nothing that exists is changed.
+-- Version 32 only adds an EMPTY table that nothing reads or writes any more. It came with a PayPal test-payment feature that was taken out again. It stays so that a database that is
+-- already at version 32 still opens with this program, and so the version numbers stay in one line. Nothing that exists is changed. (One row per PayPal order, PayPal's order id is the key.)
 CREATE TABLE paypal_orders (
   id           TEXT PRIMARY KEY,
   user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

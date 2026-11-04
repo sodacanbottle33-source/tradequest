@@ -669,7 +669,7 @@ describe('storage and wiring', () => {
         d.exec(`PRAGMA user_version = ${x.version}`);
       }
       d.run("INSERT INTO users(id, username, display_name, pw_hash, role, created_ms) VALUES (1, 'u1', 'u1', 'x', 'player', 1)");
-      expect(migrate(d)).toEqual([23, 24, 25, 26, 27, 28, 29, 30, 31, 32]); // (32 adds the PayPal test-payment table; 31 adds the comment tables; 30 adds banners, pets, rematch, trophies, teams, the daily prediction and market events; 29 adds ranked 1v1, daily goals and the away card; 28 adds the Shop's own-screen gear and the billboard; 27 adds the Shop; 26 adds public groups, pictures and the username log; 25 adds the empty moderator and badge tables; 24 adds the empty company-picture table)
+      expect(migrate(d)).toEqual([23, 24, 25, 26, 27, 28, 29, 30, 31, 32]); // (32 adds one empty table that nothing uses; 31 adds the comment tables; 30 adds banners, pets, rematch, trophies, teams, the daily prediction and market events; 29 adds ranked 1v1, daily goals and the away card; 28 adds the Shop's own-screen gear and the billboard; 27 adds the Shop; 26 adds public groups, pictures and the username log; 25 adds the empty moderator and badge tables; 24 adds the empty company-picture table)
       expect(d.get<{ user_version: number }>('PRAGMA user_version')?.user_version).toBe(32);
       for (const t of ['learn_progress', 'learn_pattern_stats', 'learn_lessons', 'learn_ai_usage']) expect(d.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n).toBe(0);
       expect(() => d.run('INSERT INTO learn_progress(user_id, xp, updated_ms) VALUES (1, -5, 1)')).toThrow();

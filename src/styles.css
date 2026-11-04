@@ -4677,53 +4677,6 @@ code {
   flex-wrap: wrap;
   min-height: 32px;
 }
-.btn-paypal {
-  background: #ffc439;
-  border-color: #ffc439;
-  color: #111827;
-  font-weight: 700;
-}
-.btn-paypal:hover:not(:disabled) {
-  filter: brightness(1.06);
-}
-.paypal-test-tag {
-  display: inline-block;
-  padding: 0 6px;
-  border-radius: 999px;
-  border: 1px solid currentColor;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  vertical-align: middle;
-}
-.paypal-banner {
-  opacity: 1;
-}
-.paypal-pay {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-  min-width: 0;
-}
-/* While the PayPal window is open the card takes the whole row, so PayPal's button has room on a phone too. */
-.shop-item.paying {
-  grid-column: 1 / -1;
-}
-.paypal-pay-line {
-  margin: 0;
-  font-size: 13px;
-}
-.paypal-box {
-  min-height: 40px;
-}
-.paypal-wait {
-  margin: 0;
-  font-size: 12px;
-}
-.paypal-problem {
-  opacity: 1;
-}
 .shop-wearing {
   color: var(--up);
   font-weight: 700;

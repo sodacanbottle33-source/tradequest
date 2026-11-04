@@ -7,7 +7,6 @@ import type {
   Account,
   AdminChatView,
   AdminCommentsView,
-  AdminPaypalView,
   AdminPrivateView,
   Announcement,
   BanNotice,
@@ -34,9 +33,6 @@ import type {
   TrophyRoom,
   PlayerProfile,
   RecentComment,
-  PaypalConfig,
-  PaypalOrderStarted,
-  PaypalPaid,
   ShopBuy,
   ShopView,
   Book,
@@ -284,10 +280,6 @@ export const api = {
   shop: () => request<ShopView>('GET', '/api/shop'),
   buyItem: (item: string) => request<ShopBuy>('POST', '/api/shop/buy', { item }),
   equipItem: (slot: string, item: string | null) => request<{ equipped: Look; gear: Gear }>('POST', '/api/shop/equip', { slot, item }),
-  // PayPal TEST payments for Shop looks (docs/world.md §43): whether they are on, start an order for one look, and finish it after the buyer approved it in the PayPal window.
-  paypalConfig: () => request<PaypalConfig>('GET', '/api/paypal/config'),
-  paypalCreate: (item: string) => request<PaypalOrderStarted>('POST', '/api/paypal/orders', { item }),
-  paypalCapture: (orderId: string) => request<PaypalPaid>('POST', '/api/paypal/capture', { orderId }),
   looks: () => request<{ looks: Record<string, Look> }>('GET', '/api/looks'),
   // What you have on your own screen (candles, chart, win style). Only yours: nobody can ask for another player's.
   gear: () => request<{ gear: Gear }>('GET', '/api/gear'),
@@ -330,10 +322,6 @@ export const api = {
   adminChat: () => request<AdminChatView>('GET', '/api/admin/chat'),
   /** The owner switches pictures in all chats off or on (text keeps working). */
   adminChatPictures: (body: { requestId: string; on: boolean }) => request<{ ok: boolean; duplicate: boolean; picturesOn: boolean }>('POST', '/api/admin/chat/pictures', body),
-  /** The owner's PayPal ON/OFF button: what is set up and whether it is on. */
-  adminPaypal: () => request<AdminPaypalView>('GET', '/api/admin/paypal'),
-  /** The owner switches PayPal test payments on or off for players (on needs the two PayPal settings on the server). */
-  adminPaypalSwitch: (body: { requestId: string; on: boolean }) => request<AdminPaypalView & { ok: boolean; duplicate: boolean }>('POST', '/api/admin/paypal', body),
   adminChatDelete: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/chat/delete', body),
   adminChatDismiss: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/chat/dismiss', body),
   adminChatMute: (body: { requestId: string; username: string; minutes: number; reason?: string }) => request<{ ok: boolean; duplicate: boolean; username: string; untilMs: number }>('POST', '/api/admin/chat/mute', body),

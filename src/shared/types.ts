@@ -1432,44 +1432,6 @@ export interface ShopBuy extends ShopView {
   readonly priceCents: number;
 }
 
-/** Whether PayPal TEST payments are switched on, and what the page needs to draw the PayPal buttons (docs/world.md §43). When it is off nothing about PayPal is shown. */
-export interface PaypalConfig {
-  readonly enabled: boolean;
-  /** Always the free test mode ("sandbox"): real money is not supported. */
-  readonly env?: 'sandbox';
-  /** The PayPal client ID of the owner's test app. It is public by design (the PayPal button needs it); the secret never leaves the server. */
-  readonly clientId?: string;
-  readonly currency?: 'USD';
-}
-
-/** What the owner's PayPal ON/OFF button shows (docs/world.md §43): are the two PayPal settings on the server, is the button ON, do players see PayPal right now, and how many test orders there are by state. */
-export interface AdminPaypalView {
-  /** The server has the PayPal client ID and secret. Without them PayPal cannot be switched on. */
-  readonly configured: boolean;
-  /** The owner's button. */
-  readonly on: boolean;
-  /** Players see PayPal right now (configured and on). */
-  readonly showing: boolean;
-  readonly env: 'sandbox';
-  /** Test orders by state: created, granting, granted, paid_not_granted. */
-  readonly orders: Readonly<Record<string, number>>;
-}
-
-/** A test order the server made at PayPal for one look: the page hands `orderId` to the PayPal button. */
-export interface PaypalOrderStarted {
-  readonly orderId: string;
-  readonly item: string;
-  readonly amountCents: number;
-}
-
-/** The answer to a finished PayPal test payment: the new Shop view plus what was bought. `already` is true when the same order had been finished before. */
-export interface PaypalPaid extends ShopView {
-  readonly item: string;
-  readonly orderId: string;
-  readonly amountCents: number;
-  readonly already: boolean;
-}
-
 /** A player's profile card (docs/world.md §29). What he wears comes from the page's list of looks. */
 export interface PlayerProfile {
   readonly username: string;
