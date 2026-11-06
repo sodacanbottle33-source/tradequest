@@ -614,3 +614,43 @@ describe('storage and wiring', () => {
     expect(admin).toContain("'comment_delete' | 'comment_dismiss'");
   });
 });
+
+describe('deleting from the Recent comments list', () => {
+  it('COMMENT-26: the owner removes any comment that shows in "Recent comments" (a player\'s, a moderator\'s, an answer, his own) with the same route as under a chart; each is gone from the list at once and written once to the log; a moderator still cannot remove the owner\'s', async () => {
+    const r = await boot();
+    const { boss, mia, alice, bob } = await crew(r);
+    const [t1, t2] = tickers(r) as [string, string];
+    const player = (await write(r, alice, t1, 'alice words')).json.comment;
+    r.clock.advanceSeconds(20);
+    const answer = (await write(r, bob, t1, 'bob answers alice', player.id)).json.comment;
+    r.clock.advanceSeconds(20);
+    const modOwn = (await write(r, mia, t2, 'mia words')).json.comment;
+    r.clock.advanceSeconds(20);
+    const bossOwn = (await write(r, boss, t2, 'owner words')).json.comment;
+    const recent = async (): Promise<string[]> => (await call(r, '/api/comments/recent')).json.comments.map((c: any) => c.text);
+    expect((await recent()).sort()).toEqual(['alice words', 'bob answers alice', 'mia words', 'owner words']);
+    // A moderator cannot take the owner's line out of the list; it stays.
+    const refused = await staffCall(r, mia, 'delete', { commentId: bossOwn.id });
+    expect([refused.status, refused.json.error.code]).toEqual([403, 'cannot_moderate_staff']);
+    expect(await recent()).toContain('owner words');
+    // The owner can remove each kind, one by one.
+    const gone: string[] = [];
+    for (const [c, text] of [[answer, 'bob answers alice'], [modOwn, 'mia words'], [player, 'alice words'], [bossOwn, 'owner words']] as const) {
+      const out = await staffCall(r, boss, 'delete', { commentId: c.id });
+      expect([text, out.status, out.json.duplicate]).toEqual([text, 200, false]);
+      gone.push(text);
+      expect(await recent(), text).not.toContain(text);
+    }
+    expect(await recent()).toEqual([]);
+    expect(log(r).map((l) => [l.action, l.admin])).toEqual([['comment_delete', 'boss'], ['comment_delete', 'boss'], ['comment_delete', 'boss'], ['comment_delete', 'boss']]);
+    // A line that is already gone (two screens open): a clear answer, and the list is unchanged.
+    const late = await staffCall(r, boss, 'delete', { commentId: player.id });
+    expect(late.status).toBe(200);
+    const never = await staffCall(r, boss, 'delete', { commentId: 99_999 });
+    expect([never.status, never.json.error.code]).toEqual([404, 'no_such_comment']);
+    // Players and signed-out visitors never reach the route.
+    expect((await staffCall(r, alice, 'delete', { commentId: player.id })).status).toBeGreaterThanOrEqual(401);
+    expect((await call(r, '/api/admin/comments/delete', { method: 'POST', body: { requestId: requestId(), commentId: player.id } })).status).toBe(401);
+  }, LONG);
+});
+

@@ -1,4 +1,4 @@
-// COMMENT-20 … COMMENT-25 — the comment screens: the small decisions they make (pure helpers) and source-level checks that the browser only asks and shows: it never makes up
+// COMMENT-20 … COMMENT-26 — the comment screens: the small decisions they make (pure helpers) and source-level checks that the browser only asks and shows: it never makes up
 // a rule the server owns, shows every comment as plain text, talks to the server only through api.ts, and every class it uses is styled.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -120,6 +120,25 @@ describe('Comment screens: the browser only asks and shows', () => {
     for (const path of ['/api/comments/${enc(ticker)}', '/api/comments/recent', '/api/comments/post', '/api/comments/like', '/api/comments/report', '/api/comments/delete', '/api/admin/comments', '/api/admin/comments/delete', '/api/admin/comments/dismiss']) expect(api).toContain(path);
     // Muting the writer and banning him from the chat use the chat tools (they stop comments too).
     expect(read('src/shared/CommentsPanel.tsx')).toMatch(/api\.adminChatMute[\s\S]*api\.adminChatBan/);
+  });
+
+  it('COMMENT-26: the Recent comments list shows a Delete button to the owner only, asks once, sends the owner route with a fresh request id, then reads the list again', () => {
+    const list = code(read('src/shared/RecentComments.tsx'));
+    expect(list).toMatch(/const isOwner = user\?\.role === 'owner';/);
+    // Both the button and the question are behind the owner check; a moderator or a player sees neither.
+    expect(list).toMatch(/\{isOwner && asking !== c\.id && \(/);
+    expect(list).toMatch(/\{isOwner && asking === c\.id && \(/);
+    expect(list).not.toMatch(/moderator/);
+    expect(list).toContain('Delete this comment?');
+    expect(list).toContain('Yes, delete it');
+    expect(list).toMatch(/api\.adminCommentDelete\(\{ requestId: newRequestId\(\), commentId: id \}\)/);
+    // After the request (done, refused, or "that comment is gone") the list is read again; the answer of the server is shown as it is.
+    expect(list).toMatch(/finally \{[\s\S]{0,120}await load\(\);/);
+    expect(list).toMatch(/problemText\(e\)/);
+    for (const id of ['recent-delete-${c.id}', 'recent-delete-yes-${c.id}', 'recent-delete-no-${c.id}', 'recent-comments-note']) expect(list).toContain(id);
+    // Nothing is removed from the list by the screen itself.
+    expect(list).not.toMatch(/setItems\(\(?[a-z]*\)? ?=>/);
+    expect(list).not.toMatch(/\.filter\(/);
   });
 
   it('COMMENT-25: every class the comment screens use has a rule in styles.css, and the company page has a grid place for the panel on the wide and the narrow layout', () => {
