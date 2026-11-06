@@ -352,7 +352,7 @@ describe('Stop-loss and take-profit: setting them', () => {
     }
     expect(position()).toBeUndefined();
     expect(cash()).toBe(100_000);
-    for (const bad of [{ stopPrice: mid - 50 }, { stopPrice: mid }, { takePrice: mid + 50 }, { takePrice: mid }, { takePrice: 99 }]) {
+    for (const bad of [{ stopPrice: mid - 50 }, { stopPrice: mid }, { takePrice: mid + 50 }, { takePrice: mid }]) {
       const err = rejects(() => trading.placeOrder(order({ side: 'sell', short: true, qty: 5, ...bad })));
       expect(err.code).toBe('bad_exit');
     }
@@ -361,6 +361,13 @@ describe('Stop-loss and take-profit: setting them', () => {
     for (const bad of [0, -5, 1.5, Number.NaN]) {
       expect(rejects(() => trading.placeOrder(order({ side: 'buy', qty: 1, stopPrice: bad }))).code).toBe('bad_request');
     }
+    // The lowest price there is is one cent (it was $1.00 before the penny-stock update, when a take-profit of 99 cents was refused): a short may take profit
+    // at 99 cents, or at one cent, and the rule for what "below the market" means is the same.
+    expect(mid).toBeGreaterThan(99);
+    trading.placeOrder(order({ side: 'sell', short: true, qty: 5, takePrice: 99 }));
+    expect(position()).toMatchObject({ short: 1, take_cents: 99 });
+    trading.placeOrder(order({ side: 'sell', short: true, qty: 1, takePrice: 1 }));
+    expect(position()).toMatchObject({ short: 1, take_cents: 1 });
     // A short may have a stop above and a take below.
     trading.placeOrder(order({ side: 'sell', short: true, qty: 5, stopPrice: mid + 50, takePrice: mid - 50 }));
     expect(position()).toMatchObject({ short: 1, stop_cents: mid + 50, take_cents: mid - 50 });

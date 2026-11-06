@@ -34,6 +34,8 @@ export interface OpenOptions {
   worldSeed: number;
   /** Add the thirty memecoins to the world (once). */
   memecoins: boolean;
+  /** Add the six penny stocks to the world (once, after the coins). */
+  pennyStocks: boolean;
   /** Ready-made hooks, or a function that builds them once the database is open (a real NewsService needs the database). */
   news: NewsHooks | ((db: Db) => NewsHooks) | null;
 }
@@ -62,6 +64,7 @@ export function makeRig(clock: Clock = new Clock()): Rig {
         warmupDays: options.warmupDays ?? 1,
         worldSeed: options.worldSeed ?? 12345,
         memecoins: options.memecoins ?? false,
+        pennyStocks: options.pennyStocks ?? false,
         news: hooks,
       });
       world.init();

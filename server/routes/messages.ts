@@ -192,6 +192,13 @@ export function registerMessageRoutes(router: Router, s: Services): void {
     return HANDLED;
   });
 
+  /** The owner deletes a message that was reported (a private chat or a group): it disappears for everybody in the chat. */
+  router.post('/api/admin/private-reports/delete', async (ctx) => {
+    const user = owner(ctx);
+    const b = await ctx.body();
+    return guard(() => messages.removeReported(user, { requestId: b.requestId, messageId: b.messageId }));
+  });
+
   router.post('/api/admin/private-reports/dismiss', async (ctx) => {
     const user = owner(ctx);
     const b = await ctx.body();

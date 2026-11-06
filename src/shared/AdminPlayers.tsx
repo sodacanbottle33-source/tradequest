@@ -12,7 +12,7 @@ import { useShared } from './store';
 import type { AdminPlayer, AdminState } from './types';
 
 type Kind = 'cash' | 'coins' | 'shares';
-type Confirm = { type: 'ban' | 'reset' | 'mod'; id: string } | null;
+type Confirm = { type: 'ban' | 'reset' | 'mod' | 'rename'; id: string } | null;
 const QUICK = ['100', '1,000', '10,000', '100,000', '1,000,000'];
 const QUICK_SHARES = ['10', '100', '1,000', '10,000'];
 const BAN_LENGTHS: { label: string; hours: number | null }[] = [
@@ -42,12 +42,16 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
   const [qtyText, setQtyText] = useState('');
   const [note, setNote] = useState('');
   const [banReason, setBanReason] = useState('');
+  const [newName, setNewName] = useState('');
   const [banHours, setBanHours] = useState<number | null>(24);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
-  const players = state?.players ?? [];
+  // Somebody with a ban in force is not in the main list: the owner finds him on the Banned tab and can lift the ban there.
+  const [view, setView] = useState<'players' | 'banned'>('players');
+  const players = view === 'banned' ? (state?.bannedPlayers ?? []) : (state?.players ?? []);
+  const bannedCount = state?.bannedPlayers.length ?? 0;
   const player = players.find((p) => p.username === selected) ?? null;
   const cents = dollarsToCents(amountText);
   const trading = useMemo(() => companies.filter((c) => c.trading), [companies]);
@@ -55,6 +59,7 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
   const qty = /^\d{1,7}$/.test(qtyText.replace(/,/g, '').trim()) ? Number(qtyText.replace(/,/g, '').trim()) : null;
   const validQty = qty !== null && qty > 0 && qty <= 1_000_000;
   const amountOk = kind === 'shares' ? company !== null && validQty : cents !== null;
+  const nameOk = /^[A-Za-z0-9_]{3,20}$/.test(newName.trim());
   const isOwnerRow = player?.role === 'owner';
   const isModRow = player?.role === 'moderator';
 
@@ -107,7 +112,8 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
       const r = await api.adminBan({ requestId: confirm.id, username: player.username, reason: banReason.trim() || undefined, hours: banHours });
       setConfirm(null);
       setBanReason('');
-      return `${player.username} is banned${r.untilMs === null ? ' until you lift it' : ` until ${whenText(r.untilMs)}`}. They were signed out at once.`;
+      setSelected(null);
+      return `${player.username} is banned${r.untilMs === null ? ' until you lift it' : ` until ${whenText(r.untilMs)}`}. They were signed out at once and are now on the Banned tab.`;
     });
 
   const unban = () =>
@@ -127,6 +133,17 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
       return on ? `${player.username} is a moderator now. They were told at once.` : `${player.username} is not a moderator any more.`;
     });
 
+  /** Gives the player a new username (after "Yes"): no cost, no waiting; the old name is kept for 30 days. */
+  const renameUser = () =>
+    run(async () => {
+      if (!player || confirm?.type !== 'rename') throw new Error('Press "Change username" first.');
+      const r = await api.adminRename({ requestId: confirm.id, username: player.username, newUsername: newName.trim() });
+      setConfirm(null);
+      setNewName('');
+      setSelected(r.username);
+      return `${r.previous} is now called ${r.username}. Everything else stays with them.`;
+    });
+
   const reset = () =>
     run(async () => {
       if (!player || confirm?.type !== 'reset') throw new Error('Press "Reset" first.');
@@ -139,8 +156,16 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
     <div className="admin-grid">
       <section className="card" aria-label="Players">
         <h2>
-          Players <span className="h2-note">{players.length} shown</span>
+          {view === 'banned' ? 'Banned players' : 'Players'} <span className="h2-note">{players.length} shown</span>
         </h2>
+        <div className="seg-group" role="group" aria-label="Which players">
+          <button type="button" className={view === 'players' ? 'seg active' : 'seg'} onClick={() => { setView('players'); setSelected(null); setConfirm(null); }} data-testid="admin-view-players">
+            Players
+          </button>
+          <button type="button" className={view === 'banned' ? 'seg active' : 'seg'} onClick={() => { setView('banned'); setSelected(null); setConfirm(null); }} data-testid="admin-view-banned">
+            Banned ({bannedCount})
+          </button>
+        </div>
         <input className="qty-input" type="search" placeholder="Search by username" value={query} onChange={(e) => onQuery(e.target.value)} aria-label="Search players" data-testid="admin-player-search" />
         <div className="table-wrap">
           <table className="trades admin-players" data-testid="admin-players">
@@ -180,7 +205,7 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
             </tbody>
           </table>
         </div>
-        {state && players.length === 0 && <p className="hint">No player matches.</p>}
+        {state && players.length === 0 && <p className="hint">{view === 'banned' ? (query.trim() === '' ? 'Nobody is banned.' : 'No banned player matches.') : 'No player matches.'}</p>}
       </section>
 
       <div className="admin-col">
@@ -307,6 +332,48 @@ export function AdminPlayers({ state, query, onQuery, reload }: { state: AdminSt
               ) : (
                 <button type="button" className="btn btn-buy" disabled={busy} onClick={() => setConfirm({ type: 'mod', id: newRequestId() })} data-testid="admin-mod-add">
                   Make {player.username} a moderator…
+                </button>
+              )}
+            </>
+          )}
+        </section>
+
+        <section className="card" aria-label="Username" data-testid="admin-rename">
+          <h2>
+            Username <span className="h2-note">{player ? player.username : 'pick a player'}</span>
+          </h2>
+          {!player && <p className="hint">Click a player in the list.</p>}
+          {player && isOwnerRow && <p className="hint">The owner&apos;s username is set on the server, so it cannot be changed here.</p>}
+          {player && !isOwnerRow && (
+            <>
+              <p className="hint">
+                Give {player.username} a new username (3–20 letters, numbers or underscores). It costs them nothing. Their money, friends, messages and everything else stay with them. The old name is kept for 30 days so nobody can copy it, and you can still find them by it in this
+                list.
+              </p>
+              <fieldset className="admin-fields" disabled={busy || confirm?.type === 'rename'}>
+                <label className="qty-label" htmlFor="adm-new-name">
+                  New username
+                </label>
+                <input id="adm-new-name" className="qty-input" type="text" maxLength={20} autoCapitalize="none" autoComplete="off" spellCheck={false} placeholder="for example Player_4821" value={newName} onChange={(e) => setNewName(e.target.value)} data-testid="admin-new-name" />
+              </fieldset>
+              {newName.trim() !== '' && !nameOk && <p className="notice warn">Use 3–20 letters, numbers or underscores.</p>}
+              {confirm?.type === 'rename' ? (
+                <div className="admin-confirm" data-testid="admin-rename-confirm-box">
+                  <p>
+                    Change <strong>{player.username}</strong> to <strong>{newName.trim()}</strong>?
+                  </p>
+                  <div className="row-buttons">
+                    <button type="button" className="btn btn-buy" disabled={busy} onClick={() => void renameUser()} data-testid="admin-rename-confirm">
+                      Yes, change it
+                    </button>
+                    <button type="button" className="btn" disabled={busy} onClick={() => setConfirm(null)} data-testid="admin-rename-cancel">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="btn btn-buy" disabled={busy || !nameOk} onClick={() => setConfirm({ type: 'rename', id: newRequestId() })} data-testid="admin-rename-start">
+                  Change username…
                 </button>
               )}
             </>

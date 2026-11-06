@@ -66,8 +66,8 @@ export function AdminMarket({ state, reload }: { state: AdminState | null; reloa
               : style === 'custom' && headline.trim() === ''
                 ? 'Write a headline for your custom event.'
                 : null;
-  // (A stock or an older coin is never below $1.00 and is counted in whole cents; a launched coin costs a tiny fraction of a cent.)
-  const target = percent !== null && price > 0 ? (price < 100 ? price * (1 + percent / 100) : Math.max(100, Math.round(price * (1 + percent / 100)))) : 0;
+  // (A stock or an older coin is counted in whole cents and is never below one cent, so a penny stock is too; a launched coin costs a tiny fraction of a cent, which is why its price is not a whole number.)
+  const target = percent !== null && price > 0 ? (Number.isInteger(price) ? Math.max(1, Math.round(price * (1 + percent / 100))) : price * (1 + percent / 100)) : 0;
   const speedNote = PACES.find((s) => s.id === speed)?.note ?? '';
   const canReview = company !== null && percentError === null && !busy;
 
@@ -200,7 +200,7 @@ export function AdminMarket({ state, reload }: { state: AdminState | null; reloa
 
         {company && percentError === null && percent !== null && (
           <p className="hint" data-testid="admin-preview">
-            {company.ticker} is {formatCents(price)} now. A move of {formatBps(Math.round(percent * 100))} aims for about {formatCents(target)} ({speedNote}). The real result can differ a little, and no price goes below $1.00.
+            {company.ticker} is {formatCents(price)} now. A move of {formatBps(Math.round(percent * 100))} aims for about {formatCents(target)} ({speedNote}). The real result can differ a little, and no stock goes below one cent.
           </p>
         )}
         {percentError && company && <p className="notice warn">{percentError}</p>}

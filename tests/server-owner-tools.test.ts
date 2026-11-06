@@ -164,9 +164,10 @@ describe('banning players', () => {
     expect(again.json.error.message).toContain('spamming the chat');
     expect((await login(r, 'alice', 'wrong-password-1')).json.error.code).toBe('bad_login');
 
-    // The owner sees it, and the player's money was not touched.
+    // The owner sees him on the Banned list (not in the main list any more), and the player's money was not touched.
     const state = (await call(r, '/api/admin/state', { cookie: boss })).json;
-    const row = state.players.find((p: any) => p.username === 'alice');
+    expect(state.players.find((p: any) => p.username === 'alice')).toBeUndefined();
+    const row = state.bannedPlayers.find((p: any) => p.username === 'alice');
     expect(row.banned).toMatchObject({ reason: 'spamming the chat', untilMs: null });
     expect(row.cashCents).toBe(100_000);
     expect(state.players.find((p: any) => p.username === 'boss').banned).toBeNull();

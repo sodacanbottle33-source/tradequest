@@ -25,6 +25,14 @@ export function registerProfileRoutes(router: Router, s: Services): void {
     }
   }
 
+  /** The owner gives an ordinary player a new username (no cost, no waiting). */
+  router.post('/api/admin/rename', async (ctx) => {
+    const user = ctx.requireUser();
+    if (user.role !== 'owner') throw new HttpError(403, 'owner_only', 'Only the owner can do that.');
+    const b = await ctx.body();
+    return guard(() => s.renames.forceChange(user, { requestId: b.requestId, username: b.username, newUsername: b.newUsername }));
+  });
+
   function staff(ctx: Ctx): User {
     const user = ctx.requireUser();
     if (!isStaff(user.role)) throw new HttpError(403, 'staff_only', 'Only the owner or a moderator can do that.');

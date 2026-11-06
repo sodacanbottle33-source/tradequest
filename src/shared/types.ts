@@ -873,6 +873,8 @@ export interface AdminState {
     priceAtEnd: number | null;
   }[];
   readonly players: AdminPlayer[];
+  /** Players with a ban in force (they are not in `players`). */
+  readonly bannedPlayers: AdminPlayer[];
   /** Companies the owner made (newest first) and what the form offers. */
   readonly stocks: OwnStock[];
   readonly stockForm: StockFormOptions;

@@ -90,6 +90,8 @@ export interface AppOptions {
   readonly worldSeed?: number;
   /** Add the thirty memecoins to the world once (the game turns this on in main.ts; tests leave it off unless they test coins). */
   readonly memecoins?: boolean;
+  /** Add the six penny stocks to the world once (the game turns this on in main.ts; tests leave it off unless they test them). */
+  readonly pennyStocks?: boolean;
   /** For tests only: how many times the real-market size the pushes of player trades are (default 1, the only strength the game has; 0 = no pushes). */
   readonly flowGain?: number;
   /** Automatic trading pauses after a 10 % move in 5 minutes (server/breaker.ts). On unless this is false (tests of other things). */
@@ -184,6 +186,7 @@ export function createApp(options: AppOptions): App {
     warmupDays: config.warmupDays,
     worldSeed: options.worldSeed,
     memecoins: options.memecoins === true,
+    pennyStocks: options.pennyStocks === true,
     news: newsService && flow ? combineHooks(newsService, flow) : options.news === undefined ? newsService : options.news,
   });
   // Leveraged positions whose margin is gone are closed at every market tick, also the ticks replayed below after a stop. So the
@@ -391,6 +394,7 @@ export function createApp(options: AppOptions): App {
     now,
     log,
     ownerUsername: config.ownerUsername,
+    audit: (who, requestId, action, target, detail) => admin.logOnce(who, requestId, action, target, detail),
     publish: (event, data) => {
       social.invalidate(); // the friends list and the boards keep names for up to 30 seconds: forget them so the new name shows at once
       hub.publishSignedIn(event, data);

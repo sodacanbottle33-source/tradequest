@@ -63,6 +63,10 @@ function describe(e: Entry): string {
       return `closed the reports about a comment (${e.target})`;
     case 'pm_dismiss':
       return `closed the reports about a private message (${e.target})`;
+    case 'pm_delete':
+      return `deleted a reported private message by ${String(d.author)} (${e.target})`;
+    case 'user_rename':
+      return `changed the username ${e.target} to ${String(d.to)}`;
     case 'chat_pictures':
       return d.on === false ? 'switched pictures in chats off' : 'switched pictures in chats on';
     case 'avatar_remove':

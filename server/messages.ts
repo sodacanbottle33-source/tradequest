@@ -245,7 +245,7 @@ export interface MessagesDeps {
   readonly notifyFriends?: (userId: number) => void;
   readonly notifyChallenges?: (userId: number) => void;
   /** Writes one moderation action to the admin log. False when that requestId was already used for the same action (do nothing again). */
-  readonly audit: (admin: User, requestId: unknown, action: 'pm_dismiss', target: string, detail: Record<string, unknown>) => boolean;
+  readonly audit: (admin: User, requestId: unknown, action: 'pm_dismiss' | 'pm_delete', target: string, detail: Record<string, unknown>) => boolean;
 }
 
 interface ConvRow {
@@ -1137,6 +1137,42 @@ export class Messages {
       this.d.db.run('UPDATE private_reports SET resolved_ms = ? WHERE message_id = ? AND resolved_ms IS NULL', this.d.now(), id);
       this.d.db.run('UPDATE private_reports SET picture = NULL, picture_mime = NULL WHERE message_id = ?', id); // nothing left to look at
     });
+    return { ok: true, duplicate };
+  }
+
+  /**
+   * The owner deletes a message that players REPORTED, in a private chat or a group: it disappears for everybody in the chat at once, the
+   * reports about it are closed and their copy of the picture is thrown away. Only a reported message can be deleted this way, because the owner
+   * never browses conversations (he sees only what was reported). Deleting it twice, or after the writer deleted it, is not an error.
+   */
+  removeReported(admin: User, input: { requestId: unknown; messageId: unknown }): { ok: true; duplicate: boolean } {
+    const id = this.idOf(input.messageId, 'messageId');
+    const report = this.d.db.get<{ conversation_id: number; author_id: number }>('SELECT conversation_id, author_id FROM private_reports WHERE message_id = ? ORDER BY id LIMIT 1', id);
+    if (!report) throw new MessageError('no_such_message', 'There is no report about that message.', 404);
+    const msg = this.d.db.get<{ deleted_ms: number | null }>('SELECT deleted_ms FROM private_messages WHERE id = ?', id);
+    const conv = this.d.db.get<{ kind: 'direct' | 'group'; title: string | null }>('SELECT kind, title FROM conversations WHERE id = ?', report.conversation_id);
+    const author = this.userById(report.author_id);
+    const now = this.d.now();
+    let duplicate = false;
+    let removed = false;
+    this.d.db.tx(() => {
+      if (!this.d.audit(admin, input.requestId, 'pm_delete', `message ${id}`, { messageId: id, author: author?.username ?? '(gone)', kind: conv?.kind ?? null })) {
+        duplicate = true;
+        return;
+      }
+      if (msg && msg.deleted_ms === null) {
+        this.d.db.run('UPDATE private_messages SET deleted_ms = ? WHERE id = ? AND deleted_ms IS NULL', now, id);
+        removed = true;
+      }
+      this.d.db.run('UPDATE private_reports SET resolved_ms = ? WHERE message_id = ? AND resolved_ms IS NULL', now, id);
+      this.d.db.run('UPDATE private_reports SET picture = NULL, picture_mime = NULL WHERE message_id = ?', id); // the message is gone: nothing left to look at
+      this.d.pictures.drop('pm', id);
+    });
+    if (removed) {
+      const members = this.memberIds(report.conversation_id);
+      for (const member of new Set(members)) this.d.publishTo(member, 'pm_deleted', { conversationId: report.conversation_id, id });
+      this.nudge(members);
+    }
     return { ok: true, duplicate };
   }
 

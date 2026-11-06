@@ -18,6 +18,7 @@ export function AdminChat({ staff = false }: { staff?: boolean }) {
   const [comments, setComments] = useState<AdminCommentsView | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -224,7 +225,7 @@ export function AdminChat({ staff = false }: { staff?: boolean }) {
         </h2>
         {priv !== null && priv.reports.length === 0 && (
           <p className="hint" data-testid="admin-private-none">
-            Nobody has reported a private message. You cannot read private chats; you see only a message a player presses Report on, with the few lines before it.
+            Nobody has reported a private message. You cannot read private chats; you see only a message a player presses Report on, with the few lines before it. You can delete a reported message for everybody in that chat.
           </p>
         )}
         {priv !== null && priv.reports.length > 0 && (
@@ -241,9 +242,25 @@ export function AdminChat({ staff = false }: { staff?: boolean }) {
                       {r.authorOpenReports > 1 ? ` · ${r.authorOpenReports} of their messages are reported` : ''}
                     </span>
                   </span>
-                  <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => void run('Report closed.', () => api.adminPrivateDismiss({ requestId: newRequestId(), messageId: r.messageId }))} data-testid={`admin-private-dismiss-${r.messageId}`}>
-                    Dismiss
-                  </button>
+                  <span className="row-buttons">
+                    {confirmDelete === r.messageId ? (
+                      <>
+                        <button type="button" className="btn btn-small btn-sell" disabled={busy} onClick={() => void run('Message deleted for everybody in the chat.', () => api.adminPrivateDelete({ requestId: newRequestId(), messageId: r.messageId })).then(() => setConfirmDelete(null))} data-testid={`admin-private-delete-yes-${r.messageId}`}>
+                          Yes, delete it
+                        </button>
+                        <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => setConfirmDelete(null)} data-testid={`admin-private-delete-no-${r.messageId}`}>
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" className="btn btn-small btn-sell" disabled={busy} onClick={() => setConfirmDelete(r.messageId)} data-testid={`admin-private-delete-${r.messageId}`}>
+                        Delete message
+                      </button>
+                    )}
+                    <button type="button" className="btn btn-small btn-ghost" disabled={busy} onClick={() => void run('Report closed.', () => api.adminPrivateDismiss({ requestId: newRequestId(), messageId: r.messageId }))} data-testid={`admin-private-dismiss-${r.messageId}`}>
+                      Dismiss
+                    </button>
+                  </span>
                 </div>
                 <ul className="pm-report-lines">
                   {r.lines.map((l, i) => (

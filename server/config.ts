@@ -29,6 +29,8 @@ export interface Config {
   readonly warmupDays: number;
   /** Whether the world has the thirty memecoins (TQ_MEMECOINS=0 keeps them out of a world that does not have them yet). */
   readonly memecoins: boolean;
+  /** Whether the world has the six penny stocks (TQ_PENNY_STOCKS=0 keeps them out of a world that does not have them yet). */
+  readonly pennyStocks: boolean;
   /** Computer opponents in the 1v1 lobby (TQ_BOTS=0 switches them off). */
   readonly bots: boolean;
   /** The same bots trading in the main market with their own money (on with the bots; TQ_MARKET_BOTS=0 switches only this off). */
@@ -112,6 +114,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     companies: int(env, 'TQ_COMPANIES', 66, 1, 5000),
     warmupDays: int(env, 'TQ_WARMUP_DAYS', 7, 0, 60),
     memecoins: (env.TQ_MEMECOINS ?? '1') !== '0',
+    pennyStocks: (env.TQ_PENNY_STOCKS ?? '1') !== '0',
     bots: (env.TQ_BOTS ?? '1') !== '0',
     marketBots: (env.TQ_BOTS ?? '1') !== '0' && (env.TQ_MARKET_BOTS ?? '1') !== '0',
     events: (env.TQ_EVENTS ?? '1') !== '0',

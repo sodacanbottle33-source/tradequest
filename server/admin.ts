@@ -63,7 +63,7 @@ export const ANNOUNCEMENT_MAX = 200;
 const ANNOUNCEMENT_KEY = 'announcement';
 
 /** Every kind of entry in the admin log. */
-export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin' | 'chat_delete' | 'chat_mute' | 'chat_ban' | 'chat_lift' | 'chat_dismiss' | 'pm_dismiss' | 'avatar_remove' | 'company_pic_set' | 'company_pic_remove' | 'kick' | 'mod_appoint' | 'mod_remove' | 'chat_pictures' | 'comment_delete' | 'comment_dismiss' | 'black_monday';
+export type AdminAction = 'shock' | 'halt' | 'resume' | 'cash' | 'coins' | 'ban' | 'unban' | 'shares' | 'reset' | 'announce' | 'pause' | 'unpause' | 'stock' | 'coin' | 'chat_delete' | 'chat_mute' | 'chat_ban' | 'chat_lift' | 'chat_dismiss' | 'pm_dismiss' | 'avatar_remove' | 'company_pic_set' | 'company_pic_remove' | 'kick' | 'mod_appoint' | 'mod_remove' | 'chat_pictures' | 'comment_delete' | 'comment_dismiss' | 'black_monday' | 'pm_delete' | 'user_rename';
 
 export interface Announcement {
   readonly text: string;
@@ -186,6 +186,8 @@ export interface AdminState {
     priceAtEnd: number | null;
   }[];
   readonly players: PlayerRow[];
+  /** Players with a ban in force (they are not in `players`): the owner finds them here to look at the reason or lift the ban. */
+  readonly bannedPlayers: PlayerRow[];
   /** Companies the owner made (newest first) and what the "Create stock" form offers. */
   readonly stocks: OwnStock[];
   readonly stockForm: StockOptions;
@@ -254,6 +256,11 @@ function likeEscape(text: string): string {
   return text.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
+/** SQL (one `?` for the time in milliseconds): true for a player who has a BAN in force right now. A kick is not a ban; a ban whose time has passed no longer counts. */
+function BANNED_NOW(alias: string): string {
+  return `EXISTS (SELECT 1 FROM user_bans hb2 WHERE hb2.user_id = ${alias}.id AND hb2.kind = 'ban' AND (hb2.until_ms IS NULL OR hb2.until_ms > ?))`;
+}
+
 function money(cents: number): string {
   const sign = cents < 0 ? '−' : '';
   const abs = Math.abs(cents);
@@ -265,20 +272,29 @@ export class Admin {
 
   // ---- reading -----------------------------------------------------------------------------------------------------
 
-  state(query: string): AdminState {
-    const { db, world, trading, halts } = this.d;
+  /**
+   * The players the owner's list shows. A player with a BAN in force (a kick lasts minutes and does not count) is not in the main list at
+   * all: he is in the "Banned" list (`banned` = true), where the owner can still find him and lift the ban. Both lists take the search.
+   */
+  private playerRows(query: string, banned: boolean): PlayerRow[] {
+    const { db, trading } = this.d;
     const q = query.trim();
+    const like = `%${likeEscape(q)}%`;
+    const now = this.d.now();
     const rows = db.all<{ id: number; username: string; role: Role; created_ms: number; account_id: number; cash_cents: number; coins: number | null }>(
       `SELECT u.id, u.username, ${roleSql('u')} AS role, u.created_ms, a.id AS account_id, a.cash_cents, w.balance_cents AS coins
          FROM users u JOIN accounts a ON a.user_id = u.id AND a.kind = 'career' LEFT JOIN wallets w ON w.user_id = u.id
-        WHERE ? = '' OR u.username LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM username_changes c WHERE c.user_id = u.id AND c.changed_ms > ? AND c.old_name LIKE ? ESCAPE '\\') ORDER BY u.id LIMIT 200`,
+        WHERE (? = '' OR u.username LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM username_changes c WHERE c.user_id = u.id AND c.changed_ms > ? AND c.old_name LIKE ? ESCAPE '\\'))
+          AND ${banned ? '' : 'NOT '}${BANNED_NOW('u')}
+        ORDER BY ${banned ? '(SELECT hb.banned_ms FROM user_bans hb WHERE hb.user_id = u.id) DESC, ' : ''}u.id LIMIT 200`,
       q,
-      `%${likeEscape(q)}%`,
-      this.d.now() - NAME_KEPT_MS,
-      `%${likeEscape(q)}%`,
+      like,
+      now - NAME_KEPT_MS,
+      like,
+      now,
     );
     const former = this.formerNames(rows.map((r) => r.id));
-    const players: PlayerRow[] = rows.map((r) => ({
+    return rows.map((r) => ({
       id: r.id,
       username: r.username,
       role: r.role,
@@ -289,6 +305,12 @@ export class Admin {
       banned: this.d.auth.banOf(r.id),
       formerNames: former.get(r.id) ?? [],
     }));
+  }
+
+  state(query: string): AdminState {
+    const { db, world, halts } = this.d;
+    const players = this.playerRows(query, false);
+    const bannedPlayers = this.playerRows(query, true);
     const events = db
       .all<{ id: number; company_id: number | null; headline: string; direction: string; publish_tick: number; start_tick: number; end_tick: number; price_at_publish: number | null; price_at_end: number | null }>(
         "SELECT id, company_id, headline, direction, publish_tick, start_tick, end_tick, price_at_publish, price_at_end FROM news_items WHERE source = 'admin' ORDER BY id DESC LIMIT 20",
@@ -380,6 +402,7 @@ export class Admin {
       ],
       events,
       players,
+      bannedPlayers,
       stocks,
       stockForm: stockOptions(OWN_LISTING_SECONDS),
       launches,
@@ -858,19 +881,27 @@ export class Admin {
     return { ok: true, duplicate: false, username: user.username, moderator: input.on };
   }
 
-  /** The list the moderators see to find a player (no money, only who he is and whether he is banned): up to 30 matches, newest account first. */
-  staffPlayers(query: string): { players: { username: string; displayName: string; role: Role; createdMs: number; banned: BanInfo | null; formerNames: readonly string[] }[] } {
+  /**
+   * The list the moderators see to find a player (no money, only who he is and whether he is banned): up to 30 matches, newest account first.
+   * A player with a ban in force is not in the main list; he is in the "Banned" list (`banned` = true), newest ban first, so a moderator can still
+   * find him to look at the ban.
+   */
+  staffPlayers(query: string, banned = false): { players: { username: string; displayName: string; role: Role; createdMs: number; banned: BanInfo | null; formerNames: readonly string[] }[] } {
     const q = query.trim().replace(/^@+/, '');
+    const like = `%${likeEscape(q)}%`;
+    const now = this.d.now();
     const rows = this.d.db.all<{ username: string; display_name: string; role: Role; created_ms: number; id: number }>(
       `SELECT u.id, u.username, u.display_name, ${roleSql('u')} AS role, u.created_ms
          FROM users u
         WHERE u.pw_hash <> 'bot' AND NOT EXISTS (SELECT 1 FROM bots b WHERE b.user_id = u.id)
           AND (? = '' OR u.username LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM username_changes c WHERE c.user_id = u.id AND c.changed_ms > ? AND c.old_name LIKE ? ESCAPE '\\'))
-        ORDER BY u.id DESC LIMIT 30`,
+          AND ${banned ? '' : 'NOT '}${BANNED_NOW('u')}
+        ORDER BY ${banned ? '(SELECT hb.banned_ms FROM user_bans hb WHERE hb.user_id = u.id) DESC, ' : ''}u.id DESC LIMIT 30`,
       q,
-      `%${likeEscape(q)}%`,
-      this.d.now() - NAME_KEPT_MS,
-      `%${likeEscape(q)}%`,
+      like,
+      now - NAME_KEPT_MS,
+      like,
+      now,
     );
     const former = this.formerNames(rows.map((r) => r.id));
     return { players: rows.map((r) => ({ username: r.username, displayName: r.display_name, role: r.role, createdMs: r.created_ms, banned: this.d.auth.banOf(r.id), formerNames: former.get(r.id) ?? [] })) };

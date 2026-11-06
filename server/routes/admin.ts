@@ -105,7 +105,7 @@ export function registerAdminRoutes(router: Router, s: Services, admin: Admin): 
   /** The moderators' way to find a player: names and whether he is banned, no money. */
   router.get('/api/mod/players', (ctx) => {
     staff(ctx);
-    return admin.staffPlayers(ctx.url.searchParams.get('q') ?? '');
+    return admin.staffPlayers(ctx.url.searchParams.get('q') ?? '', ctx.url.searchParams.get('banned') === '1');
   });
 
   router.post('/api/admin/shares', async (ctx) => {

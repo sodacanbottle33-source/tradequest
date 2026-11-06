@@ -29,6 +29,7 @@ import {
   ladder,
   marketCapCents,
   memeEntries,
+  pennyEntries,
   quoteOf,
   scaleOf,
   tickAtMs,
@@ -52,6 +53,8 @@ export const RETENTION_C10_TICKS = 90_000;
 export const CATCHUP_CHUNK_TICKS = TICKS_PER_HOUR;
 /** The meta key that says the thirty memecoins were added to this world. */
 export const MEMECOINS_SEEDED = 'memecoins_seeded';
+/** The meta key that says the six penny stocks (src/world/pennyStocks.ts) were added to this world. */
+export const PENNY_STOCKS_SEEDED = 'penny_stocks_seeded';
 /**
  * The tick from which stocks have calmer fast jitter (src/world/params.ts `STOCK_JITTER_CALM`). A world made after that change has 0; an older
  * world gets the first tick after the moment it was first started by this program, so everything that happened before stays as it was.
@@ -116,6 +119,8 @@ export interface RuntimeOptions {
   readonly worldSeed?: number;
   /** Add the thirty memecoins to the world (once). The game turns this on; most tests leave it off so their worlds stay small. */
   readonly memecoins?: boolean;
+  /** Add the six penny stocks to the world (once, after the memecoins). The game turns this on (TQ_PENNY_STOCKS); tests leave it off. */
+  readonly pennyStocks?: boolean;
   readonly news?: NewsHooks | null;
 }
 
@@ -247,6 +252,12 @@ export class WorldRuntime {
     // exists changes; they list like any new company (at the start in a brand-new world, a few minutes from now otherwise).
     const seeding = this.options.memecoins === true && this.meta(MEMECOINS_SEEDED) === undefined ? this.planMemecoins(Math.max(this.options.companyCount, known.length, CURATED.length)) : [];
     for (const m of seeding) this.own.set(m.id, m.entry);
+    // The penny stocks join a world once as well, after everything else (the memecoins that were just planned included), so no id changes.
+    const pennySeeding =
+      this.options.pennyStocks === true && this.meta(PENNY_STOCKS_SEEDED) === undefined
+        ? this.planPennyStocks(Math.max(this.options.companyCount, known.length, CURATED.length, ...[...this.own.keys()].map((id) => id + 1)))
+        : [];
+    for (const m of pennySeeding) this.own.set(m.id, m.entry);
     const wanted = Math.max(this.options.companyCount, known.length, ...[...this.own.keys()].map((id) => id + 1));
     const catalog = buildCatalog(wanted, (id) => listingOf.get(id) ?? (firstBoot ? 0 : newListing), this.own);
     for (const k of known) {
@@ -254,11 +265,18 @@ export class WorldRuntime {
       if (!c || c.ticker !== k.ticker) throw new Error(`The company catalog changed: id ${k.id} was ${k.ticker} but is now ${c?.ticker ?? 'missing'}. Existing companies must never change.`);
     }
     this.checkMemecoinNames(catalog, seeding);
+    this.checkMemecoinNames(catalog, pennySeeding, 'penny stock');
     db.tx(() => {
       for (const m of seeding) {
         db.run('INSERT INTO meme_companies(company_id, ticker, name, entry_json, created_ms) VALUES (?, ?, ?, ?, ?)', m.id, m.entry.ticker, m.entry.name, JSON.stringify(m.entry), nowMs);
       }
       if (seeding.length > 0) this.setMeta(MEMECOINS_SEEDED, String(nowMs));
+      // (The penny stocks are saved whole in the same table as the coins: the table holds every company the program added by itself with
+      // its own numbers, and it has no price check, which a stock under a dollar needs.)
+      for (const m of pennySeeding) {
+        db.run('INSERT INTO meme_companies(company_id, ticker, name, entry_json, created_ms) VALUES (?, ?, ?, ?, ?)', m.id, m.entry.ticker, m.entry.name, JSON.stringify(m.entry), nowMs);
+      }
+      if (pennySeeding.length > 0) this.setMeta(PENNY_STOCKS_SEEDED, String(nowMs));
       for (const c of catalog) {
         if (listingOf.has(c.id)) continue;
         db.run('INSERT INTO companies(id, ticker, name, listing_tick, listed_ms) VALUES (?, ?, ?, ?, ?)', c.id, c.ticker, c.name, c.listingTick, nowMs);
@@ -359,12 +377,17 @@ export class WorldRuntime {
     return memeEntries().map((entry, i) => ({ id: first + i, entry }));
   }
 
+  /** The ids the six penny stocks would take: one after another, from `first`. */
+  private planPennyStocks(first: number): { id: number; entry: CatalogEntry }[] {
+    return pennyEntries().map((entry, i) => ({ id: first + i, entry }));
+  }
+
   /** A coin's name and ticker must not be used by any other company (they identify it everywhere). Throws a plain sentence if they are. */
-  private checkMemecoinNames(catalog: readonly Company[], seeding: readonly { id: number; entry: CatalogEntry }[]): void {
+  private checkMemecoinNames(catalog: readonly Company[], seeding: readonly { id: number; entry: CatalogEntry }[], what = 'memecoin'): void {
     for (const m of seeding) {
       for (const c of catalog) {
         if (c.id !== m.id && (c.ticker === m.entry.ticker || c.name === m.entry.name)) {
-          throw new Error(`The memecoin ${m.entry.ticker} (${m.entry.name}) cannot be added: ${c.ticker} (${c.name}) already has that ticker or name.`);
+          throw new Error(`The ${what} ${m.entry.ticker} (${m.entry.name}) cannot be added: ${c.ticker} (${c.name}) already has that ticker or name.`);
         }
       }
     }

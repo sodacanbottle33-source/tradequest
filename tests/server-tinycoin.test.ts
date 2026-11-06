@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createApp, type App } from '../server/app';
 import { loadConfig } from '../server/config';
 import { Logger } from '../server/log';
+import { MIN_PRICE } from '../src/world';
 import { Clock } from './helpers/server';
 
 const LONG = 240_000;
@@ -220,7 +221,7 @@ describe('a rug-pulled coin', () => {
     expect(r2.app.services.world.sim.isDead(id)).toBe(true);
   }, LONG * 2);
 
-  it('TINYS-02: a coin from before the tiny prices that already had a pool and was rug pulled falls 99 % as before and then freezes (it used to keep moving)', async () => {
+  it('TINYS-02: a coin from before the tiny prices that already had a pool and was rug pulled falls 99 % as before, lands on the floor and then freezes (it used to keep moving)', async () => {
     const first = await players();
     expect((await launchCoin(first.r, first.alice)).status).toBe(200);
     const { r, cookies } = await asOldCoin(first.r, true, 'alice', 'bob');
@@ -238,7 +239,8 @@ describe('a rug-pulled coin', () => {
     advance(r, 120);
     const after = await priceOf(r, 'MPEP');
     expect(after).toBeLessThan(before);
-    expect(after).toBe(100); // a $2 coin falling 99 % lands on the old floor of $1.00 and stays there
+    expect(after).toBe(MIN_PRICE); // a $2 coin falling 99 % lands on the floor of the world and stays there (one cent since the penny-stock update; it was $1.00 before)
+    expect(MIN_PRICE).toBe(1);
     // Frozen: for hours it does not move at all (before this update such a coin went on moving after its fall).
     advance(r, 6 * 3600);
     expect(await priceOf(r, 'MPEP')).toBe(after);

@@ -313,7 +313,10 @@ export const api = {
   marketEvents: () => request<MarketEventsView>('GET', '/api/events'),
 
   // Moderators and the owner (staff): the server answers 403 to an ordinary player, and refuses a moderator anything that touches the owner or another moderator.
-  modPlayers: (q = '') => request<StaffPlayers>('GET', `/api/mod/players${q.trim() === '' ? '' : `?q=${enc(q.trim())}`}`),
+  modPlayers: (q = '', banned = false) => {
+    const parts = [q.trim() === '' ? '' : `q=${enc(q.trim())}`, banned ? 'banned=1' : ''].filter((x) => x !== '');
+    return request<StaffPlayers>('GET', `/api/mod/players${parts.length === 0 ? '' : `?${parts.join('&')}`}`);
+  },
   adminKick: (body: { requestId: string; username: string; minutes: number; reason?: string }) => request<{ ok: boolean; duplicate: boolean; username: string; untilMs: number }>('POST', '/api/admin/kick', body),
   /** Owner only: choose a moderator (on = true) or take the job away (on = false). */
   adminModerator: (body: { requestId: string; username: string; on: boolean }) => request<{ ok: boolean; duplicate: boolean; username: string; moderator: boolean }>('POST', '/api/admin/moderator', body),
@@ -333,6 +336,8 @@ export const api = {
   adminCommentDismiss: (body: { requestId: string; commentId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/comments/dismiss', body),
   adminPrivateReports: () => request<AdminPrivateView>('GET', '/api/admin/private-reports'),
   adminPrivateDismiss: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/private-reports/dismiss', body),
+  adminRename: (body: { requestId: string; username: string; newUsername: string }) => request<{ ok: boolean; duplicate: boolean; username: string; previous: string }>('POST', '/api/admin/rename', body),
+  adminPrivateDelete: (body: { requestId: string; messageId: number }) => request<{ ok: boolean; duplicate: boolean }>('POST', '/api/admin/private-reports/delete', body),
   adminState: (q = '') => request<AdminState>('GET', `/api/admin/state${q.trim() === '' ? '' : `?q=${enc(q.trim())}`}`),
   adminShock: (body: { requestId: string; ticker: string; percent: number; style: AdminStyle; speed: AdminSpeed; headline?: string; body?: string; breaking?: boolean }) =>
     request<{ ok: boolean; duplicate: boolean; ticker: string; startsAtTick: number; priceBeforeCents: number }>('POST', '/api/admin/shock', body),

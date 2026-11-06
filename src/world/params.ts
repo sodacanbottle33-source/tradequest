@@ -21,7 +21,12 @@ export const NEWS_CYCLE_TICKS = TICKS_PER_DAY;
 export const MATCH_TICKS = 180;
 
 // ---- prices -----------------------------------------------------------------------------------------------------
-export const MIN_PRICE = 100; // $1.00 in cents
+/**
+ * The lowest price a share can have: one cent, so penny stocks exist. It was $1.00 (100) until the penny stocks were added. Only a price
+ * that would have gone below $1.00 is affected, so nothing that stayed above a dollar changes; WORLD_ENGINE_VERSION stays 4 (like MAX_PRICE
+ * before it, this is a limit on the price, not a new way of making it). Prices are whole cents, so one cent is also the smallest step.
+ */
+export const MIN_PRICE = 1;
 /**
  * The highest price a share can reach: $1,000,000.00. The most expensive real share (Berkshire Hathaway A) costs around $700,000, so
  * this is as high as real stocks go, with a little room. It was $50,000, then $1,000,000,000 while the owner could pump a company

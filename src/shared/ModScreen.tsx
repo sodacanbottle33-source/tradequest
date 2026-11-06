@@ -20,6 +20,10 @@ function ModPlayers() {
   const [query, setQuery] = useState('');
   const queryRef = useRef(query);
   queryRef.current = query;
+  // Somebody with a ban in force is not in the main list: a moderator finds him on the Banned tab.
+  const [view, setView] = useState<'players' | 'banned'>('players');
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const [players, setPlayers] = useState<readonly StaffPlayer[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [reason, setReason] = useState('');
@@ -29,7 +33,7 @@ function ModPlayers() {
 
   const load = useCallback(async () => {
     try {
-      setPlayers((await api.modPlayers(queryRef.current)).players);
+      setPlayers((await api.modPlayers(queryRef.current, viewRef.current === 'banned')).players);
     } catch (e) {
       setMessage({ kind: 'error', text: problemText(e) });
     }
@@ -38,7 +42,7 @@ function ModPlayers() {
   useEffect(() => {
     const id = setTimeout(() => void load(), 250);
     return () => clearTimeout(id);
-  }, [query, load]);
+  }, [query, view, load]);
 
   const player = (players ?? []).find((p) => p.username === selected) ?? null;
   const blocked = player ? cannotActOn(player.role) : null;
@@ -71,7 +75,7 @@ function ModPlayers() {
       if (confirm.type === 'ban') {
         await api.adminBan({ requestId: confirm.id, username: player.username, hours: confirm.hours, reason: why });
         setReason('');
-        return `${player.username} is banned for ${confirm.label}. They were signed out at once.`;
+        return `${player.username} is banned for ${confirm.label}. They were signed out at once and are on the Banned tab now.`;
       }
       await api.adminKick({ requestId: confirm.id, username: player.username, minutes: confirm.minutes, reason: why });
       setReason('');
@@ -82,8 +86,16 @@ function ModPlayers() {
     <div className="admin-grid" data-testid="mod-players">
       <section className="card" aria-label="Find a player">
         <h2>
-          Players <span className="h2-note">{players ? `${players.length} shown` : ''}</span>
+          {view === 'banned' ? 'Banned players' : 'Players'} <span className="h2-note">{players ? `${players.length} shown` : ''}</span>
         </h2>
+        <div className="seg-group" role="group" aria-label="Which players">
+          <button type="button" className={view === 'players' ? 'seg active' : 'seg'} onClick={() => { setView('players'); setSelected(null); setConfirm(null); }} data-testid="mod-view-players">
+            Players
+          </button>
+          <button type="button" className={view === 'banned' ? 'seg active' : 'seg'} onClick={() => { setView('banned'); setSelected(null); setConfirm(null); }} data-testid="mod-view-banned">
+            Banned
+          </button>
+        </div>
         <input className="qty-input" type="search" placeholder="Search by username" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search players" data-testid="mod-player-search" />
         <div className="table-wrap">
           <table className="trades admin-players" data-testid="mod-player-list">
@@ -122,7 +134,7 @@ function ModPlayers() {
             </tbody>
           </table>
         </div>
-        {players !== null && players.length === 0 && <p className="hint">No player matches.</p>}
+        {players !== null && players.length === 0 && <p className="hint">{view === 'banned' ? (query.trim() === '' ? 'Nobody is banned.' : 'No banned player matches.') : 'No player matches.'}</p>}
         <p className="hint">You see names only: moderators never see anybody&apos;s money or private chats.</p>
       </section>
 

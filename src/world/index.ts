@@ -14,4 +14,5 @@ export * from './blackMonday';
 export * from './matchRules';
 export * from './rankedRules';
 export * from './memecoins';
+export * from './pennyStocks';
 export type { MemeProfile } from './catalogData';

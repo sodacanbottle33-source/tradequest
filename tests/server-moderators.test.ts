@@ -320,12 +320,15 @@ describe('banning and kicking', () => {
     expect((await call(r, '/api/mod/players?q=ali', { cookie: alice })).json.error.code).toBe('staff_only');
     expect((await call(r, '/api/mod/players?q=ali')).status).toBe(401);
     expect((await post(r, mia, '/api/admin/ban', { username: 'alice', hours: 1, reason: 'x' })).status).toBe(200);
-    const found = await call(r, '/api/mod/players?q=ali', { cookie: mia });
+    // A banned player is on the Banned list, not in the main one.
+    expect((await call(r, '/api/mod/players?q=ali', { cookie: mia })).json.players).toEqual([]);
+    const found = await call(r, '/api/mod/players?q=ali&banned=1', { cookie: mia });
     expect(found.json.players).toHaveLength(1);
     expect(Object.keys(found.json.players[0]).sort()).toEqual(['banned', 'createdMs', 'displayName', 'formerNames', 'role', 'username']);
     expect(found.json.players[0]).toMatchObject({ username: 'alice', role: 'player', banned: { kind: 'ban', reason: 'x' } });
     const all = await call(r, '/api/mod/players', { cookie: boss });
-    expect(all.json.players.map((p: any) => [p.username, p.role]).sort()).toEqual([['alice', 'player'], ['bob', 'player'], ['boss', 'owner'], ['max', 'moderator'], ['mia', 'moderator']]);
+    expect(all.json.players.map((p: any) => [p.username, p.role]).sort()).toEqual([['bob', 'player'], ['boss', 'owner'], ['max', 'moderator'], ['mia', 'moderator']]);
+    expect((await call(r, '/api/mod/players?banned=1', { cookie: boss })).json.players.map((p: any) => [p.username, p.role])).toEqual([['alice', 'player']]);
     // Wildcards in the search are just letters.
     expect((await call(r, '/api/mod/players?q=%25', { cookie: mia })).json.players).toEqual([]);
   }, LONG);
